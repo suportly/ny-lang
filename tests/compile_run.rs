@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// Phase F tests (Vec)
+
+#[test]
+fn test_vec() {
+    assert_eq!(compile_and_run("vec_test.ny"), 57);
+}
+
 // Phase E tests (generics)
 
 #[test]

@@ -146,8 +146,40 @@ impl Parser {
             });
         }
 
-        // Named type
+        // Named type (possibly generic: Vec<i32>)
         let (name, span) = self.expect_ident()?;
+
+        // Check for generic type args: Name<T1, T2>
+        // Only parse < as generic args for known generic types to avoid ambiguity with < operator
+        let is_generic_type = matches!(name.as_str(), "Vec" | "Option" | "Result" | "HashMap");
+        if is_generic_type && *self.peek() == TokenKind::Lt {
+            self.advance(); // consume <
+            let mut type_args = Vec::new();
+            while *self.peek() != TokenKind::Gt {
+                if !type_args.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                type_args.push(self.parse_type_annotation()?);
+            }
+            let end = self.peek_span();
+            self.expect(&TokenKind::Gt)?;
+
+            // For Vec<T>, encode as a special name
+            if name == "Vec" && type_args.len() == 1 {
+                return Ok(TypeAnnotation::Named {
+                    name: format!("Vec<{}>", type_args[0].name_str()),
+                    span: span.merge(end),
+                });
+            }
+
+            // Generic named type — encode the full name for now
+            let args_str: Vec<String> = type_args.iter().map(|a| a.name_str().to_string()).collect();
+            return Ok(TypeAnnotation::Named {
+                name: format!("{}<{}>", name, args_str.join(",")),
+                span: span.merge(end),
+            });
+        }
+
         Ok(TypeAnnotation::Named { name, span })
     }
 

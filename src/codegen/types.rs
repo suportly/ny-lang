@@ -56,6 +56,19 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 context.i32_type().into()
             }
         }
+        NyType::Vec(_) => {
+            // Vec is { ptr, len: i64, cap: i64 }
+            context
+                .struct_type(
+                    &[
+                        context.ptr_type(AddressSpace::default()).into(),
+                        context.i64_type().into(),
+                        context.i64_type().into(),
+                    ],
+                    false,
+                )
+                .into()
+        }
         NyType::Slice(_) => {
             // Slice is { ptr, len } like str
             context

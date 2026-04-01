@@ -548,6 +548,44 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
 
+                // Built-in vec_new() -> Vec<i32> (creates empty vector)
+                if callee == "vec_new" {
+                    return NyType::Vec(Box::new(NyType::I32));
+                }
+
+                // Built-in vec_push(v: Vec<T>, val: T) -> Unit
+                if callee == "vec_push" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Unit;
+                }
+
+                // Built-in vec_len(v: Vec<T>) -> i64
+                if callee == "vec_len" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I64;
+                }
+
+                // Built-in vec_get(v: Vec<T>, idx: i32) -> T
+                if callee == "vec_get" {
+                    if args.len() >= 1 {
+                        let vec_ty = self.check_expr(&args[0]);
+                        if let NyType::Vec(elem) = &vec_ty {
+                            for arg in args.iter().skip(1) {
+                                self.check_expr(arg);
+                            }
+                            return *elem.clone();
+                        }
+                    }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
                 // Built-in read_line() -> str (reads a line from stdin)
                 if callee == "read_line" {
                     return NyType::Str;
@@ -1234,6 +1272,40 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> NyType {
+        // Built-in Vec methods
+        if let NyType::Vec(elem) = receiver_ty {
+            match method {
+                "push" => {
+                    if args.len() == 1 {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if arg_ty != **elem {
+                            self.errors.push(CompileError::type_error(
+                                format!("Vec push: expected '{}', found '{}'", elem, arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Unit;
+                }
+                "len" => return NyType::I64,
+                "get" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return *elem.clone();
+                }
+                "pop" => return *elem.clone(),
+                _ => {
+                    for arg in args { self.check_expr(arg); }
+                    self.errors.push(CompileError::type_error(
+                        format!("no method '{}' found for Vec type", method),
+                        span,
+                    ));
+                    return NyType::I32;
+                }
+            }
+        }
+
         // Built-in slice methods
         if let NyType::Slice(_) = receiver_ty {
             match method {

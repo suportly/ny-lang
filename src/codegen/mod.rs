@@ -368,6 +368,8 @@ impl<'ctx> CodeGen<'ctx> {
                         "sizeof" => NyType::I64,
                         "fclose" | "fread_byte" | "fwrite_str" | "str_to_int" => NyType::I32,
                         "read_line" | "int_to_str" => NyType::Str,
+                        "vec_new" => NyType::Vec(Box::new(NyType::I32)),
+                        "vec_len" => NyType::I64,
                         _ => NyType::Unit,
                     }
                 }
@@ -435,6 +437,11 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MethodCall { object, method, .. } => {
                 let obj_ty = self.infer_expr_type(object);
                 match &obj_ty {
+                    NyType::Vec(elem) => match method.as_str() {
+                        "len" => return NyType::I64,
+                        "get" | "pop" => return *elem.clone(),
+                        _ => return NyType::Unit,
+                    },
                     NyType::Slice(_) => match method.as_str() {
                         "len" => return NyType::I64,
                         _ => return NyType::Unit,
@@ -982,6 +989,62 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     self.builder.build_unreachable().unwrap();
                     return Ok(None);
+                }
+
+                // Handle vec_new() — creates empty Vec<i32>
+                if callee == "vec_new" {
+                    let initial_cap: u64 = 8;
+                    let elem_size = self.context.i64_type().const_int(4, false); // i32 = 4 bytes
+                    let alloc_size = self
+                        .builder
+                        .build_int_mul(
+                            self.context.i64_type().const_int(initial_cap, false),
+                            elem_size,
+                            "vec_alloc_size",
+                        )
+                        .unwrap();
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let data_ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[alloc_size.into()], "vec_data")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    // Build { ptr, len=0, cap=8 }
+                    let vec_ty = self.context.struct_type(
+                        &[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.context.i64_type().into(),
+                            self.context.i64_type().into(),
+                        ],
+                        false,
+                    );
+                    let vec_val = vec_ty.const_zero();
+                    let vec_val = self
+                        .builder
+                        .build_insert_value(vec_val, data_ptr, 0, "vec_p")
+                        .unwrap();
+                    let vec_val = self
+                        .builder
+                        .build_insert_value(
+                            vec_val,
+                            self.context.i64_type().const_zero(),
+                            1,
+                            "vec_l",
+                        )
+                        .unwrap();
+                    let vec_val = self
+                        .builder
+                        .build_insert_value(
+                            vec_val,
+                            self.context.i64_type().const_int(initial_cap, false),
+                            2,
+                            "vec_c",
+                        )
+                        .unwrap();
+                    return Ok(Some(vec_val.into_struct_value().into()));
                 }
 
                 // Handle read_line() — reads a line from stdin using fgets
@@ -1590,6 +1653,199 @@ impl<'ctx> CodeGen<'ctx> {
                 ..
             } => {
                 let obj_ty = self.infer_expr_type(object);
+
+                // Handle built-in Vec methods
+                if let NyType::Vec(elem_ty) = &obj_ty {
+                    let elem_llvm = ny_to_llvm(self.context, elem_ty);
+                    let vec_struct_ty = self.context.struct_type(
+                        &[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.context.i64_type().into(),
+                            self.context.i64_type().into(),
+                        ],
+                        false,
+                    );
+
+                    match method.as_str() {
+                        "len" => {
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "vec_len")
+                                .unwrap();
+                            return Ok(Some(len));
+                        }
+                        "get" => {
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "vec_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let idx = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_int_value();
+                            let idx_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    idx,
+                                    self.context.i64_type(),
+                                    "idx64",
+                                )
+                                .unwrap();
+                            let gep = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm,
+                                        data_ptr,
+                                        &[idx_i64],
+                                        "vec_elem_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            let val = self
+                                .builder
+                                .build_load(elem_llvm, gep, "vec_elem")
+                                .unwrap();
+                            return Ok(Some(val));
+                        }
+                        "push" => {
+                            // Need the alloca pointer to mutate the vec
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+                            let val = self.compile_expr(&args[0], function)?.unwrap();
+
+                            // Load current data, len, cap
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 0, "data_gep")
+                                .unwrap();
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "len_gep")
+                                .unwrap();
+                            let cap_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 2, "cap_gep")
+                                .unwrap();
+
+                            let data_ptr = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "len")
+                                .unwrap()
+                                .into_int_value();
+                            let cap = self
+                                .builder
+                                .build_load(self.context.i64_type(), cap_gep, "cap")
+                                .unwrap()
+                                .into_int_value();
+
+                            // Check if we need to grow: if len >= cap, realloc
+                            let needs_grow = self
+                                .builder
+                                .build_int_compare(IntPredicate::UGE, len, cap, "needs_grow")
+                                .unwrap();
+
+                            let grow_bb =
+                                self.context.append_basic_block(*function, "vec_grow");
+                            let push_bb =
+                                self.context.append_basic_block(*function, "vec_push");
+
+                            self.builder
+                                .build_conditional_branch(needs_grow, grow_bb, push_bb)
+                                .unwrap();
+
+                            // Grow: double capacity, realloc
+                            self.builder.position_at_end(grow_bb);
+                            let new_cap = self
+                                .builder
+                                .build_int_mul(
+                                    cap,
+                                    self.context.i64_type().const_int(2, false),
+                                    "new_cap",
+                                )
+                                .unwrap();
+                            let elem_size = elem_llvm.size_of().unwrap();
+                            let new_size = self
+                                .builder
+                                .build_int_mul(new_cap, elem_size, "new_size")
+                                .unwrap();
+                            let realloc_fn = self.get_or_declare_realloc();
+                            let new_data = self
+                                .builder
+                                .build_call(
+                                    realloc_fn,
+                                    &[data_ptr.into(), new_size.into()],
+                                    "new_data",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+                            self.builder.build_store(data_gep, new_data).unwrap();
+                            self.builder.build_store(cap_gep, new_cap).unwrap();
+                            self.builder
+                                .build_unconditional_branch(push_bb)
+                                .unwrap();
+
+                            // Push: store value at data[len], increment len
+                            self.builder.position_at_end(push_bb);
+                            // Re-load data ptr (may have changed from realloc)
+                            let current_data = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "cur_data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let current_len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "cur_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm,
+                                        current_data,
+                                        &[current_len],
+                                        "push_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            self.builder.build_store(elem_ptr, val).unwrap();
+
+                            // len += 1
+                            let new_len = self
+                                .builder
+                                .build_int_add(
+                                    current_len,
+                                    self.context.i64_type().const_int(1, false),
+                                    "new_len",
+                                )
+                                .unwrap();
+                            self.builder.build_store(len_gep, new_len).unwrap();
+
+                            return Ok(None);
+                        }
+                        _ => {}
+                    }
+                }
 
                 // Handle built-in slice methods
                 if let NyType::Slice(_) = &obj_ty {

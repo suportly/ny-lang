@@ -36,6 +36,7 @@ pub enum NyType {
     },
     Tuple(Vec<NyType>),
     Slice(Box<NyType>),
+    Vec(Box<NyType>),
 }
 
 impl NyType {
@@ -92,6 +93,10 @@ impl NyType {
 
     pub fn is_slice(&self) -> bool {
         matches!(self, NyType::Slice(_))
+    }
+
+    pub fn is_vec(&self) -> bool {
+        matches!(self, NyType::Vec(_))
     }
 
     pub fn variant_index(&self, variant: &str) -> Option<usize> {
@@ -167,7 +172,15 @@ impl NyType {
             "f64" => Some(NyType::F64),
             "bool" => Some(NyType::Bool),
             "str" => Some(NyType::Str),
-            _ => None,
+            _ => {
+                // Check for Vec<T> pattern
+                if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(elem_ty) = NyType::from_name(inner) {
+                        return Some(NyType::Vec(Box::new(elem_ty)));
+                    }
+                }
+                None
+            }
         }
     }
 }
@@ -205,6 +218,7 @@ impl fmt::Display for NyType {
             NyType::Pointer(inner) => write!(f, "*{}", inner),
             NyType::Enum { name, .. } => write!(f, "{name}"),
             NyType::Slice(elem) => write!(f, "[]{}", elem),
+            NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
             NyType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {

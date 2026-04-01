@@ -19,6 +19,10 @@ const BUILTIN_FUNCTIONS: &[&str] = &[
     "read_line",
     "str_to_int",
     "int_to_str",
+    "vec_new",
+    "vec_push",
+    "vec_len",
+    "vec_get",
 ];
 
 #[derive(Debug, Clone)]

@@ -336,6 +336,9 @@ impl Resolver {
             Expr::Deref { operand, .. } => {
                 self.resolve_expr(operand);
             }
+            Expr::Cast { expr, .. } => {
+                self.resolve_expr(expr);
+            }
         }
     }
 

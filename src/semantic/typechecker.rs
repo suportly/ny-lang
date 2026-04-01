@@ -237,6 +237,42 @@ impl TypeChecker {
                         }
                         NyType::Bool
                     }
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                        if !lhs_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "bitwise operator requires integer type, found '{}'",
+                                    lhs_ty
+                                ),
+                                lhs.span(),
+                            ));
+                        }
+                        if lhs_ty != rhs_ty {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "type mismatch in bitwise op: '{}' and '{}'",
+                                    lhs_ty, rhs_ty
+                                ),
+                                *span,
+                            ));
+                        }
+                        lhs_ty
+                    }
+                    BinOp::Shl | BinOp::Shr => {
+                        if !lhs_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("shift operator requires integer type, found '{}'", lhs_ty),
+                                lhs.span(),
+                            ));
+                        }
+                        if !rhs_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("shift amount must be integer, found '{}'", rhs_ty),
+                                rhs.span(),
+                            ));
+                        }
+                        lhs_ty
+                    }
                 }
             }
 
@@ -261,6 +297,18 @@ impl TypeChecker {
                             ));
                         }
                         NyType::Bool
+                    }
+                    UnaryOp::BitNot => {
+                        if !operand_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "bitwise NOT requires integer type, found '{}'",
+                                    operand_ty
+                                ),
+                                *span,
+                            ));
+                        }
+                        operand_ty
                     }
                 }
             }
@@ -519,6 +567,33 @@ impl TypeChecker {
             } => {
                 let receiver_ty = self.check_expr(object);
                 self.check_method_call(&receiver_ty, method, args, *span)
+            }
+
+            Expr::Cast {
+                expr,
+                target_type,
+                span,
+            } => {
+                let source_ty = self.check_expr(expr);
+                let target_ty = self
+                    .resolve_type_annotation(target_type)
+                    .unwrap_or(NyType::I32);
+
+                let valid = match (&source_ty, &target_ty) {
+                    (s, t) if s == t => true,
+                    (s, t) if s.is_numeric() && t.is_numeric() => true,
+                    (NyType::Bool, t) if t.is_integer() => true,
+                    _ => false,
+                };
+
+                if !valid {
+                    self.errors.push(CompileError::type_error(
+                        format!("cannot cast '{}' to '{}'", source_ty, target_ty),
+                        *span,
+                    ));
+                }
+
+                target_ty
             }
         }
     }

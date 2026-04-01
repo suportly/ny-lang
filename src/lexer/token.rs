@@ -24,6 +24,7 @@ pub enum TokenKind {
     In,
     Break,
     Continue,
+    As,
 
     // Operators
     Plus,
@@ -42,11 +43,28 @@ pub enum TokenKind {
     Not,
     Assign,
 
-    // Operators (new)
+    // Operators (Phase 2)
     Dot,
     DotDot,
     DotDotEq,
     Ampersand,
+
+    // Operators (Phase 3)
+    Pipe,
+    Caret,
+    Tilde,
+    LtLt,
+    GtGt,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+    PercentAssign,
+    AmpAssign,
+    PipeAssign,
+    CaretAssign,
+    LtLtAssign,
+    GtGtAssign,
 
     // Punctuation
     LParen,

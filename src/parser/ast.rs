@@ -162,6 +162,11 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    Cast {
+        expr: Box<Expr>,
+        target_type: TypeAnnotation,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -180,7 +185,8 @@ impl Expr {
             | Expr::StructInit { span, .. }
             | Expr::AddrOf { span, .. }
             | Expr::Deref { span, .. }
-            | Expr::MethodCall { span, .. } => *span,
+            | Expr::MethodCall { span, .. }
+            | Expr::Cast { span, .. } => *span,
         }
     }
 }
@@ -208,12 +214,18 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone)]

@@ -273,10 +273,28 @@ impl Parser {
     ) -> Result<(), CompileError> {
         let expr = self.parse_expr(0)?;
 
-        // Check for assignment: lhs = rhs;
-        if *self.peek() == TokenKind::Assign {
+        // Check for assignment: lhs = rhs; or compound assignment: lhs += rhs;
+        let is_assign = *self.peek() == TokenKind::Assign;
+        let compound_op = compound_to_binop(self.peek());
+
+        if is_assign || compound_op.is_some() {
             self.advance();
-            let value = self.parse_expr(0)?;
+            let rhs = self.parse_expr(0)?;
+
+            // For compound assignment, desugar: target op= rhs → target = target op rhs
+            let value = if let Some(op) = compound_op {
+                let target_expr = expr.clone();
+                let span = target_expr.span().merge(rhs.span());
+                Expr::BinOp {
+                    op,
+                    lhs: Box::new(target_expr),
+                    rhs: Box::new(rhs),
+                    span,
+                }
+            } else {
+                rhs
+            };
+
             let span = expr.span().merge(value.span());
             let end = self.peek_span();
             self.expect(&TokenKind::Semi)?;
@@ -592,6 +610,17 @@ impl Parser {
                     };
                     continue;
                 }
+                TokenKind::As => {
+                    self.advance();
+                    let target_type = self.parse_type_annotation()?;
+                    let span = lhs.span().merge(target_type.span());
+                    lhs = Expr::Cast {
+                        expr: Box::new(lhs),
+                        target_type,
+                        span,
+                    };
+                    continue;
+                }
                 _ => {}
             }
 
@@ -720,12 +749,13 @@ impl Parser {
                 })
             }
             TokenKind::If => self.parse_if_expr(),
-            TokenKind::Minus | TokenKind::Not => {
+            TokenKind::Minus | TokenKind::Not | TokenKind::Tilde => {
                 let bp = prefix_bp(self.peek()).unwrap();
                 let op_token = self.advance().clone();
                 let op = match op_token.kind {
                     TokenKind::Minus => UnaryOp::Neg,
                     TokenKind::Not => UnaryOp::Not,
+                    TokenKind::Tilde => UnaryOp::BitNot,
                     _ => unreachable!(),
                 };
                 let operand = self.parse_expr(bp)?;
@@ -797,7 +827,28 @@ fn token_to_binop(kind: &TokenKind) -> BinOp {
         TokenKind::Ge => BinOp::Ge,
         TokenKind::And => BinOp::And,
         TokenKind::Or => BinOp::Or,
+        TokenKind::Ampersand => BinOp::BitAnd,
+        TokenKind::Pipe => BinOp::BitOr,
+        TokenKind::Caret => BinOp::BitXor,
+        TokenKind::LtLt => BinOp::Shl,
+        TokenKind::GtGt => BinOp::Shr,
         _ => unreachable!("not a binary operator: {:?}", kind),
+    }
+}
+
+fn compound_to_binop(kind: &TokenKind) -> Option<BinOp> {
+    match kind {
+        TokenKind::PlusAssign => Some(BinOp::Add),
+        TokenKind::MinusAssign => Some(BinOp::Sub),
+        TokenKind::StarAssign => Some(BinOp::Mul),
+        TokenKind::SlashAssign => Some(BinOp::Div),
+        TokenKind::PercentAssign => Some(BinOp::Mod),
+        TokenKind::AmpAssign => Some(BinOp::BitAnd),
+        TokenKind::PipeAssign => Some(BinOp::BitOr),
+        TokenKind::CaretAssign => Some(BinOp::BitXor),
+        TokenKind::LtLtAssign => Some(BinOp::Shl),
+        TokenKind::GtGtAssign => Some(BinOp::Shr),
+        _ => None,
     }
 }
 

@@ -266,12 +266,22 @@ impl<'ctx> CodeGen<'ctx> {
                 | BinOp::Ge
                 | BinOp::And
                 | BinOp::Or => NyType::Bool,
-                _ => self.infer_expr_type(lhs),
+                BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Div
+                | BinOp::Mod
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr => self.infer_expr_type(lhs),
             },
             Expr::UnaryOp { op, operand, .. } => match op {
                 UnaryOp::Not => NyType::Bool,
-                UnaryOp::Neg => self.infer_expr_type(operand),
+                UnaryOp::Neg | UnaryOp::BitNot => self.infer_expr_type(operand),
             },
+            Expr::Cast { target_type, .. } => self.resolve_type_annotation(target_type),
             Expr::Call { callee, .. } => {
                 if let Some((_, _, ret_ty)) = self.functions.get(callee) {
                     ret_ty.clone()
@@ -869,6 +879,146 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
+
+            // ---- Type cast (expr as T) ----
+            Expr::Cast {
+                expr: inner_expr,
+                target_type,
+                ..
+            } => {
+                let val = self.compile_expr(inner_expr, function)?.unwrap();
+                let source_ty = self.infer_expr_type(inner_expr);
+                let target_ty = self.resolve_type_annotation(target_type);
+                let target_llvm = ny_to_llvm(self.context, &target_ty);
+
+                if source_ty == target_ty {
+                    return Ok(Some(val)); // no-op
+                }
+
+                let result = self.compile_cast(val, &source_ty, &target_ty, target_llvm)?;
+                Ok(Some(result))
+            }
+        }
+    }
+
+    fn compile_cast(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        source_ty: &NyType,
+        target_ty: &NyType,
+        target_llvm: BasicTypeEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, Vec<CompileError>> {
+        match (source_ty, target_ty) {
+            // int → int
+            (s, t) if s.is_integer() && t.is_integer() => {
+                let src_bits = self.int_bit_width(s);
+                let tgt_bits = self.int_bit_width(t);
+                let int_val = val.into_int_value();
+                let tgt_int_ty = target_llvm.into_int_type();
+                if tgt_bits > src_bits {
+                    if s.is_signed() {
+                        Ok(self
+                            .builder
+                            .build_int_s_extend(int_val, tgt_int_ty, "sext")
+                            .unwrap()
+                            .into())
+                    } else {
+                        Ok(self
+                            .builder
+                            .build_int_z_extend(int_val, tgt_int_ty, "zext")
+                            .unwrap()
+                            .into())
+                    }
+                } else if tgt_bits < src_bits {
+                    Ok(self
+                        .builder
+                        .build_int_truncate(int_val, tgt_int_ty, "trunc")
+                        .unwrap()
+                        .into())
+                } else {
+                    Ok(val) // same width
+                }
+            }
+            // int → float
+            (s, _t) if s.is_integer() && target_ty.is_float() => {
+                let int_val = val.into_int_value();
+                let float_ty = target_llvm.into_float_type();
+                if s.is_signed() {
+                    Ok(self
+                        .builder
+                        .build_signed_int_to_float(int_val, float_ty, "sitofp")
+                        .unwrap()
+                        .into())
+                } else {
+                    Ok(self
+                        .builder
+                        .build_unsigned_int_to_float(int_val, float_ty, "uitofp")
+                        .unwrap()
+                        .into())
+                }
+            }
+            // float → int
+            (_s, t) if source_ty.is_float() && t.is_integer() => {
+                let float_val = val.into_float_value();
+                let int_ty = target_llvm.into_int_type();
+                if t.is_signed() {
+                    Ok(self
+                        .builder
+                        .build_float_to_signed_int(float_val, int_ty, "fptosi")
+                        .unwrap()
+                        .into())
+                } else {
+                    Ok(self
+                        .builder
+                        .build_float_to_unsigned_int(float_val, int_ty, "fptoui")
+                        .unwrap()
+                        .into())
+                }
+            }
+            // float → float
+            (_s, _t) if source_ty.is_float() && target_ty.is_float() => {
+                let float_val = val.into_float_value();
+                let float_ty = target_llvm.into_float_type();
+                if matches!(target_ty, NyType::F64) {
+                    Ok(self
+                        .builder
+                        .build_float_ext(float_val, float_ty, "fpext")
+                        .unwrap()
+                        .into())
+                } else {
+                    Ok(self
+                        .builder
+                        .build_float_trunc(float_val, float_ty, "fptrunc")
+                        .unwrap()
+                        .into())
+                }
+            }
+            // bool → int
+            (NyType::Bool, t) if t.is_integer() => {
+                let bool_val = val.into_int_value();
+                let int_ty = target_llvm.into_int_type();
+                Ok(self
+                    .builder
+                    .build_int_z_extend(bool_val, int_ty, "boolext")
+                    .unwrap()
+                    .into())
+            }
+            _ => Err(vec![CompileError::type_error(
+                format!("unsupported cast from {} to {}", source_ty, target_ty),
+                Span::empty(0),
+            )]),
+        }
+    }
+
+    fn int_bit_width(&self, ty: &NyType) -> u32 {
+        match ty {
+            NyType::I8 | NyType::U8 => 8,
+            NyType::I16 | NyType::U16 => 16,
+            NyType::I32 | NyType::U32 => 32,
+            NyType::I64 | NyType::U64 => 64,
+            NyType::I128 | NyType::U128 => 128,
+            NyType::Bool => 1,
+            _ => 32,
         }
     }
 
@@ -1810,6 +1960,15 @@ impl<'ctx> CodeGen<'ctx> {
                     .into(),
                 BinOp::And => self.builder.build_and(l, r, "and").unwrap().into(),
                 BinOp::Or => self.builder.build_or(l, r, "or").unwrap().into(),
+                BinOp::BitAnd => self.builder.build_and(l, r, "bitand").unwrap().into(),
+                BinOp::BitOr => self.builder.build_or(l, r, "bitor").unwrap().into(),
+                BinOp::BitXor => self.builder.build_xor(l, r, "bitxor").unwrap().into(),
+                BinOp::Shl => self.builder.build_left_shift(l, r, "shl").unwrap().into(),
+                BinOp::Shr => self
+                    .builder
+                    .build_right_shift(l, r, true, "shr")
+                    .unwrap()
+                    .into(),
             };
             Ok(result)
         } else if lhs.is_float_value() && rhs.is_float_value() {
@@ -1851,7 +2010,15 @@ impl<'ctx> CodeGen<'ctx> {
                     .build_float_compare(FloatPredicate::OGE, l, r, "fge")
                     .unwrap()
                     .into(),
-                BinOp::And | BinOp::Or => unreachable!("logical ops on floats"),
+                BinOp::And
+                | BinOp::Or
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr => {
+                    unreachable!("logical/bitwise ops on floats")
+                }
             };
             Ok(result)
         } else {
@@ -1886,6 +2053,11 @@ impl<'ctx> CodeGen<'ctx> {
             UnaryOp::Not => Ok(self
                 .builder
                 .build_not(operand.into_int_value(), "not")
+                .unwrap()
+                .into()),
+            UnaryOp::BitNot => Ok(self
+                .builder
+                .build_not(operand.into_int_value(), "bitnot")
                 .unwrap()
                 .into()),
         }

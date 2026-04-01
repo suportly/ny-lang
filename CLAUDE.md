@@ -5,6 +5,7 @@ Auto-generated from all feature plans. Last updated: 2026-04-01
 ## Active Technologies
 - Rust 1.75+ (2021 edition) + inkwell (LLVM 18 via llvm18-1-force-dynamic), codespan-reporting, clap (002-ny-core-features)
 - N/A (file-based I/O only) (002-ny-core-features)
+- Rust 1.75+ (2021 edition) + inkwell (LLVM 18), codespan-reporting, clap (003-operators-casting)
 
 - Rust 1.75+ (2021 edition) + inkwell (LLVM 18 safe Rust bindings), codespan-reporting (error diagnostics), clap (CLI argument parsing) (001-lnge-compiler)
 
@@ -24,6 +25,7 @@ cargo test [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECH
 Rust 1.75+ (2021 edition): Follow standard conventions
 
 ## Recent Changes
+- 003-operators-casting: Added Rust 1.75+ (2021 edition) + inkwell (LLVM 18), codespan-reporting, clap
 - 002-ny-core-features: Added Rust 1.75+ (2021 edition) + inkwell (LLVM 18 via llvm18-1-force-dynamic), codespan-reporting, clap
 
 - 001-lnge-compiler: Added Rust 1.75+ (2021 edition) + inkwell (LLVM 18 safe Rust bindings), codespan-reporting (error diagnostics), clap (CLI argument parsing)

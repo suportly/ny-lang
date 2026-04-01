@@ -110,3 +110,25 @@ fn test_hello_print() {
     assert!(stdout.contains("42"), "stdout: {}", stdout);
     assert!(stdout.contains("true"), "stdout: {}", stdout);
 }
+
+// Phase 3 tests
+
+#[test]
+fn test_compound_assign() {
+    assert_eq!(compile_and_run("compound_assign.ny"), 45);
+}
+
+#[test]
+fn test_bitwise() {
+    assert_eq!(compile_and_run("bitwise.ny"), 39); // 15+16+8
+}
+
+#[test]
+fn test_casting() {
+    assert_eq!(compile_and_run("casting.ny"), 46); // 3+42+1
+}
+
+#[test]
+fn test_block_comments() {
+    assert_eq!(compile_and_run("block_comments.ny"), 42);
+}

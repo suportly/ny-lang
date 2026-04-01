@@ -52,6 +52,29 @@ impl Lexer {
                         self.advance();
                     }
                 }
+                Some('/') if self.peek_next() == Some('*') => {
+                    self.advance(); // consume /
+                    self.advance(); // consume *
+                    let mut depth = 1u32;
+                    while depth > 0 {
+                        match (self.peek(), self.peek_next()) {
+                            (Some('/'), Some('*')) => {
+                                self.advance();
+                                self.advance();
+                                depth += 1;
+                            }
+                            (Some('*'), Some('/')) => {
+                                self.advance();
+                                self.advance();
+                                depth -= 1;
+                            }
+                            (Some(_), _) => {
+                                self.advance();
+                            }
+                            (None, _) => break, // unterminated — will be caught by next_token
+                        }
+                    }
+                }
                 _ => break,
             }
         }
@@ -126,6 +149,7 @@ impl Lexer {
             "struct" => TokenKind::Struct,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "as" => TokenKind::As,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
             _ => TokenKind::Ident(text),
@@ -150,14 +174,54 @@ impl Lexer {
             ']' => TokenKind::RBracket,
             ',' => TokenKind::Comma,
             ';' => TokenKind::Semi,
-            '+' => TokenKind::Plus,
-            '/' => TokenKind::Slash,
-            '%' => TokenKind::Percent,
-            '*' => TokenKind::Star,
+            '~' => TokenKind::Tilde,
+            '+' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::PlusAssign
+                } else {
+                    TokenKind::Plus
+                }
+            }
+            '/' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::SlashAssign
+                } else {
+                    TokenKind::Slash
+                }
+            }
+            '%' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::PercentAssign
+                } else {
+                    TokenKind::Percent
+                }
+            }
+            '*' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::StarAssign
+                } else {
+                    TokenKind::Star
+                }
+            }
+            '^' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::CaretAssign
+                } else {
+                    TokenKind::Caret
+                }
+            }
             '&' => {
                 if self.peek() == Some('&') {
                     self.advance();
                     TokenKind::And
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::AmpAssign
                 } else {
                     TokenKind::Ampersand
                 }
@@ -198,6 +262,9 @@ impl Lexer {
                 if self.peek() == Some('>') {
                     self.advance();
                     TokenKind::Arrow
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::MinusAssign
                 } else {
                     TokenKind::Minus
                 }
@@ -219,7 +286,15 @@ impl Lexer {
                 }
             }
             '<' => {
-                if self.peek() == Some('=') {
+                if self.peek() == Some('<') {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        TokenKind::LtLtAssign
+                    } else {
+                        TokenKind::LtLt
+                    }
+                } else if self.peek() == Some('=') {
                     self.advance();
                     TokenKind::Le
                 } else {
@@ -227,7 +302,15 @@ impl Lexer {
                 }
             }
             '>' => {
-                if self.peek() == Some('=') {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        TokenKind::GtGtAssign
+                    } else {
+                        TokenKind::GtGt
+                    }
+                } else if self.peek() == Some('=') {
                     self.advance();
                     TokenKind::Ge
                 } else {
@@ -238,11 +321,11 @@ impl Lexer {
                 if self.peek() == Some('|') {
                     self.advance();
                     TokenKind::Or
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::PipeAssign
                 } else {
-                    return Err(CompileError::syntax(
-                        "unexpected character '|', did you mean '||'?".to_string(),
-                        self.make_span(),
-                    ));
+                    TokenKind::Pipe
                 }
             }
             '"' => {

@@ -764,6 +764,38 @@ impl Resolver {
                     ));
                 }
             }
+            // ---- if let ----
+            Stmt::IfLet {
+                pattern,
+                expr,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.resolve_expr(expr);
+                // Declare bindings from pattern in then_body scope
+                if let Pattern::EnumVariant { bindings, .. } = pattern {
+                    self.push_scope();
+                    for binding in bindings {
+                        self.declare(
+                            binding,
+                            Symbol {
+                                name: binding.clone(),
+                                ty: NyType::I32,
+                                mutability: Mutability::Immutable,
+                                span: expr.span(),
+                            },
+                        );
+                    }
+                    self.resolve_expr(then_body);
+                    self.pop_scope();
+                } else {
+                    self.resolve_expr(then_body);
+                }
+                if let Some(eb) = else_body {
+                    self.resolve_expr(eb);
+                }
+            }
             // ---- Phase 5: Defer ----
             Stmt::Defer { body, .. } => {
                 self.resolve_expr(body);

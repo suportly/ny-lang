@@ -876,6 +876,12 @@ impl Parser {
     fn parse_if_expr(&mut self) -> Result<Expr, CompileError> {
         let start = self.peek_span();
         self.expect(&TokenKind::If)?;
+
+        // Check for `if let Pattern = expr { ... }`
+        if *self.peek() == TokenKind::Let {
+            return self.parse_if_let_expr(start);
+        }
+
         let condition = Box::new(self.parse_expr(0)?);
         let then_branch = Box::new(self.parse_block_expr()?);
 
@@ -899,6 +905,40 @@ impl Parser {
             condition,
             then_branch,
             else_branch,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_if_let_expr(&mut self, start: Span) -> Result<Expr, CompileError> {
+        self.expect(&TokenKind::Let)?;
+        let pattern = self.parse_pattern()?;
+        self.expect(&TokenKind::Assign)?;
+        let expr = self.parse_expr(0)?;
+        let then_body = self.parse_block_expr()?;
+
+        let else_body = if *self.peek() == TokenKind::Else {
+            self.advance();
+            Some(self.parse_block_expr()?)
+        } else {
+            None
+        };
+
+        let end = else_body
+            .as_ref()
+            .map(|e| e.span())
+            .unwrap_or_else(|| then_body.span());
+
+        // Desugar: wrap as a statement in a block
+        // This becomes: match expr { pattern => then, _ => else }
+        Ok(Expr::Block {
+            stmts: vec![Stmt::IfLet {
+                pattern,
+                expr,
+                then_body,
+                else_body,
+                span: start.merge(end),
+            }],
+            tail_expr: None,
             span: start.merge(end),
         })
     }

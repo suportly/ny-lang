@@ -2756,6 +2756,41 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
 
+            Stmt::IfLet {
+                pattern,
+                expr: match_expr,
+                then_body,
+                else_body,
+                ..
+            } => {
+                // Desugar if let to: match expr { pattern => then, _ => else }
+                let wildcard_body = if let Some(eb) = else_body {
+                    eb.clone()
+                } else {
+                    Expr::Block {
+                        stmts: Vec::new(),
+                        tail_expr: None,
+                        span: Span::empty(0),
+                    }
+                };
+                let match_expr_ast = Expr::Match {
+                    subject: Box::new(match_expr.clone()),
+                    arms: vec![
+                        MatchArm {
+                            pattern: pattern.clone(),
+                            body: then_body.clone(),
+                        },
+                        MatchArm {
+                            pattern: Pattern::Wildcard(Span::empty(0)),
+                            body: wildcard_body,
+                        },
+                    ],
+                    span: Span::empty(0),
+                };
+                self.compile_expr(&match_expr_ast, function)?;
+                Ok(())
+            }
+
             Stmt::Loop { body, .. } => {
                 let body_bb = self.context.append_basic_block(*function, "loop_body");
                 let exit_bb = self.context.append_basic_block(*function, "loop_exit");

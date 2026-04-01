@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// if let test
+
+#[test]
+fn test_if_let() {
+    assert_eq!(compile_and_run("if_let.ny"), 42);
+}
+
 // Phase H tests (extern FFI)
 
 #[test]

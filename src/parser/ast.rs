@@ -133,6 +133,14 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// if let Pattern = expr { then } else { else }
+    IfLet {
+        pattern: Pattern,
+        expr: Expr,
+        then_body: Expr,
+        else_body: Option<Expr>,
+        span: Span,
+    },
     Loop {
         body: Expr,
         span: Span,

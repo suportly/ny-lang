@@ -1647,6 +1647,55 @@ impl TypeChecker {
                 }
             }
 
+            // ── IfLet ─────────────────────────────────────────────────
+            Stmt::IfLet {
+                pattern,
+                expr,
+                then_body,
+                else_body,
+                ..
+            } => {
+                let expr_ty = self.check_expr(expr);
+                // Declare bindings in then_body scope
+                if let Pattern::EnumVariant {
+                    enum_name,
+                    variant,
+                    bindings,
+                    ..
+                } = pattern
+                {
+                    if let NyType::Enum { variants, .. } = &expr_ty {
+                        if let Some((_, payload)) =
+                            variants.iter().find(|(n, _)| n == variant)
+                        {
+                            if !bindings.is_empty() {
+                                self.push_scope();
+                                for (i, binding) in bindings.iter().enumerate() {
+                                    let ty =
+                                        payload.get(i).cloned().unwrap_or(NyType::I32);
+                                    self.declare(binding, ty);
+                                }
+                                self.check_expr(then_body);
+                                self.pop_scope();
+                            } else {
+                                self.check_expr(then_body);
+                            }
+                        } else {
+                            self.errors.push(CompileError::type_error(
+                                format!("enum '{}' has no variant '{}'", enum_name, variant),
+                                expr.span(),
+                            ));
+                            self.check_expr(then_body);
+                        }
+                    }
+                } else {
+                    self.check_expr(then_body);
+                }
+                if let Some(eb) = else_body {
+                    self.check_expr(eb);
+                }
+            }
+
             // ── Defer ─────────────────────────────────────────────────
             Stmt::Defer { body, .. } => {
                 self.check_expr(body);

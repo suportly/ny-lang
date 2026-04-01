@@ -157,6 +157,30 @@ fn test_defer_alloc() {
     assert_eq!(compile_and_run("defer_alloc.ny"), 42);
 }
 
+#[test]
+fn test_defer_lifo() {
+    assert_eq!(compile_and_run("defer_lifo.ny"), 42);
+}
+
+#[test]
+fn test_substr() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny")
+        .unwrap()
+        .args(["build", "tests/fixtures/valid/substr_test.ny", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let out = process::Command::new(&output)
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("hello"), "stdout: {}", stdout);
+    assert!(stdout.contains("world"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
+}
+
 // Phase 6 tests
 
 #[test]
@@ -167,6 +191,11 @@ fn test_loop_stmt() {
 #[test]
 fn test_tagged_union() {
     assert_eq!(compile_and_run("tagged_union.ny"), 42);
+}
+
+#[test]
+fn test_multi_field_enum() {
+    assert_eq!(compile_and_run("multi_field_enum.ny"), 47);
 }
 
 // Phase 7 tests
@@ -187,7 +216,35 @@ fn test_traits() {
 
 #[test]
 fn test_slices() {
-    assert_eq!(compile_and_run("slices.ny"), 47);
+    assert_eq!(compile_and_run("slices.ny"), 23);
+}
+
+// Phase C tests (? operator)
+
+#[test]
+fn test_try_operator() {
+    assert_eq!(compile_and_run("try_operator.ny"), 42);
+}
+
+// Phase B tests (stdin/to_str)
+
+#[test]
+fn test_int_to_str() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny")
+        .unwrap()
+        .args(["build", "tests/fixtures/valid/int_to_str.ny", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let out = process::Command::new(&output)
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("42"), "stdout: {}", stdout);
+    assert!(stdout.contains("value=42"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 5);
 }
 
 // Phase 11 tests

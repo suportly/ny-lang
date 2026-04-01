@@ -366,7 +366,8 @@ impl<'ctx> CodeGen<'ctx> {
                     match callee.as_str() {
                         "alloc" | "fopen" => NyType::Pointer(Box::new(NyType::U8)),
                         "sizeof" => NyType::I64,
-                        "fclose" | "fread_byte" | "fwrite_str" => NyType::I32,
+                        "fclose" | "fread_byte" | "fwrite_str" | "str_to_int" => NyType::I32,
+                        "read_line" | "int_to_str" => NyType::Str,
                         _ => NyType::Unit,
                     }
                 }
@@ -483,6 +484,23 @@ impl<'ctx> CodeGen<'ctx> {
                 let obj_ty = self.infer_expr_type(object);
                 match obj_ty {
                     NyType::Tuple(elems) => elems.get(*index).cloned().unwrap_or(NyType::I32),
+                    _ => NyType::I32,
+                }
+            }
+            Expr::Try { operand, .. } => {
+                let op_ty = self.infer_expr_type(operand);
+                match &op_ty {
+                    NyType::Enum { variants, .. } => {
+                        if let Some((_, payload)) = variants.first() {
+                            if payload.is_empty() {
+                                NyType::Unit
+                            } else {
+                                payload[0].clone()
+                            }
+                        } else {
+                            NyType::I32
+                        }
+                    }
                     _ => NyType::I32,
                 }
             }
@@ -927,6 +945,179 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     self.builder.build_unreachable().unwrap();
                     return Ok(None);
+                }
+
+                // Handle read_line() — reads a line from stdin using fgets
+                if callee == "read_line" {
+                    // Allocate a 1024-byte buffer
+                    let buf_size = self.context.i64_type().const_int(1024, false);
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let buf_ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[buf_size.into()], "line_buf")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Call fgets(buf, 1024, stdin)
+                    let fgets_fn = self.get_or_declare_fgets();
+                    let stdin_fn = self.get_or_declare_stdin();
+                    let stdin_val = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            stdin_fn.as_pointer_value(),
+                            "stdin_val",
+                        )
+                        .unwrap();
+                    let size_i32 = self.context.i32_type().const_int(1024, false);
+                    self.builder
+                        .build_call(
+                            fgets_fn,
+                            &[buf_ptr.into(), size_i32.into(), stdin_val.into()],
+                            "fgets_ret",
+                        )
+                        .unwrap();
+
+                    // Compute length with strlen
+                    let strlen_fn = self.get_or_declare_strlen();
+                    let len = self
+                        .builder
+                        .build_call(strlen_fn, &[buf_ptr.into()], "line_len")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_int_value();
+
+                    // Strip trailing newline: if buf[len-1] == '\n', len--
+                    let one = self.context.i64_type().const_int(1, false);
+                    let len_minus_1 = self
+                        .builder
+                        .build_int_sub(len, one, "len_m1")
+                        .unwrap();
+                    let last_char_ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                self.context.i8_type(),
+                                buf_ptr,
+                                &[len_minus_1],
+                                "last_ptr",
+                            )
+                            .unwrap()
+                    };
+                    let last_char = self
+                        .builder
+                        .build_load(self.context.i8_type(), last_char_ptr, "last_char")
+                        .unwrap()
+                        .into_int_value();
+                    let newline = self.context.i8_type().const_int(10, false); // '\n'
+                    let is_newline = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, last_char, newline, "is_nl")
+                        .unwrap();
+                    let final_len = self
+                        .builder
+                        .build_select(is_newline, len_minus_1, len, "final_len")
+                        .unwrap()
+                        .into_int_value();
+
+                    // Build {ptr, len} str
+                    let str_ty = str_type(self.context);
+                    let str_val = str_ty.const_zero();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, buf_ptr, 0, "rl_ptr")
+                        .unwrap();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, final_len, 1, "rl_len")
+                        .unwrap();
+                    return Ok(Some(str_val.into_struct_value().into()));
+                }
+
+                // Handle str_to_int(s) — wraps atoi
+                if callee == "str_to_int" {
+                    let str_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let ptr = self
+                        .builder
+                        .build_extract_value(str_val, 0, "s2i_ptr")
+                        .unwrap();
+                    let atoi_fn = self.get_or_declare_atoi();
+                    let result = self
+                        .builder
+                        .build_call(atoi_fn, &[ptr.into()], "atoi_ret")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle int_to_str(n) — wraps snprintf
+                if callee == "int_to_str" {
+                    let int_val = self.compile_expr(&args[0], function)?.unwrap();
+
+                    // Allocate buffer for the string representation
+                    let buf_size = self.context.i64_type().const_int(32, false);
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let buf_ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[buf_size.into()], "i2s_buf")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // snprintf(buf, 32, "%d", val)
+                    let snprintf_fn = self.get_or_declare_snprintf();
+                    let fmt = self
+                        .builder
+                        .build_global_string_ptr("%d", "i2s_fmt")
+                        .unwrap();
+                    let size_i64 = self.context.i64_type().const_int(32, false);
+                    self.builder
+                        .build_call(
+                            snprintf_fn,
+                            &[
+                                buf_ptr.into(),
+                                size_i64.into(),
+                                fmt.as_pointer_value().into(),
+                                int_val.into(),
+                            ],
+                            "snprintf_ret",
+                        )
+                        .unwrap();
+
+                    // Get length with strlen
+                    let strlen_fn = self.get_or_declare_strlen();
+                    let len = self
+                        .builder
+                        .build_call(strlen_fn, &[buf_ptr.into()], "i2s_len")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_int_value();
+
+                    // Build {ptr, len} str
+                    let str_ty = str_type(self.context);
+                    let str_val = str_ty.const_zero();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, buf_ptr, 0, "i2s_p")
+                        .unwrap();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, len, 1, "i2s_l")
+                        .unwrap();
+                    return Ok(Some(str_val.into_struct_value().into()));
                 }
 
                 // Handle sleep_ms(ms) — wraps usleep(ms * 1000)
@@ -1533,6 +1724,86 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             // ---- Enum variant ----
+            // ---- Try (?) operator ----
+            Expr::Try { operand, .. } => {
+                let subject_raw = self.compile_expr(operand, function)?.unwrap();
+                let subject_ty = self.infer_expr_type(operand);
+
+                let enum_name = match &subject_ty {
+                    NyType::Enum { name, .. } => name.clone(),
+                    _ => {
+                        return Err(vec![CompileError::type_error(
+                            "? requires enum type".to_string(),
+                            expr.span(),
+                        )]);
+                    }
+                };
+
+                if self.enum_has_payload(&enum_name) {
+                    let enum_ty = self.enum_struct_type(&enum_name);
+                    let alloca = self
+                        .builder
+                        .build_alloca(enum_ty, "try_subject")
+                        .unwrap();
+                    self.builder.build_store(alloca, subject_raw).unwrap();
+
+                    // Extract tag
+                    let tag_ptr = self
+                        .builder
+                        .build_struct_gep(enum_ty, alloca, 0, "try_tag_ptr")
+                        .unwrap();
+                    let tag = self
+                        .builder
+                        .build_load(self.context.i32_type(), tag_ptr, "try_tag")
+                        .unwrap()
+                        .into_int_value();
+
+                    let ok_bb = self
+                        .context
+                        .append_basic_block(*function, "try_ok");
+                    let err_bb = self
+                        .context
+                        .append_basic_block(*function, "try_err");
+
+                    // tag == 0 means first variant (Ok)
+                    let zero = self.context.i32_type().const_zero();
+                    let is_ok = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, tag, zero, "is_ok")
+                        .unwrap();
+                    self.builder
+                        .build_conditional_branch(is_ok, ok_bb, err_bb)
+                        .unwrap();
+
+                    // Err path: return the whole enum from the current function
+                    self.builder.position_at_end(err_bb);
+                    // Emit defers before early return
+                    let defers: Vec<(Expr, FunctionValue<'ctx>)> =
+                        self.defer_stack.iter().rev().cloned().collect();
+                    for (defer_body, defer_fn) in &defers {
+                        self.compile_expr(defer_body, defer_fn)?;
+                    }
+                    self.builder.build_return(Some(&subject_raw)).unwrap();
+
+                    // Ok path: extract the first payload field
+                    self.builder.position_at_end(ok_bb);
+                    let payload_ptr = self
+                        .builder
+                        .build_struct_gep(enum_ty, alloca, 1, "try_payload_ptr")
+                        .unwrap();
+                    let result_ty = self.infer_expr_type(expr);
+                    let payload_llvm = ny_to_llvm(self.context, &result_ty);
+                    let payload_val = self
+                        .builder
+                        .build_load(payload_llvm, payload_ptr, "try_payload")
+                        .unwrap();
+                    Ok(Some(payload_val))
+                } else {
+                    // Simple enum — can't use ? on it meaningfully
+                    Ok(Some(subject_raw))
+                }
+            }
+
             // ---- Lambda (non-capturing → anonymous function pointer) ----
             Expr::Lambda {
                 params,
@@ -3404,6 +3675,56 @@ impl<'ctx> CodeGen<'ctx> {
         let i32_ty = self.context.i32_type();
         let exit_ty = self.context.void_type().fn_type(&[i32_ty.into()], false);
         self.module.add_function("exit", exit_ty, None)
+    }
+
+    fn get_or_declare_fgets(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fgets") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fgets_ty = ptr_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("fgets", fgets_ty, None)
+    }
+
+    fn get_or_declare_stdin(&self) -> inkwell::values::GlobalValue<'ctx> {
+        if let Some(g) = self.module.get_global("stdin") {
+            return g;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_global(ptr_ty, None, "stdin")
+    }
+
+    fn get_or_declare_strlen(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("strlen") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let strlen_ty = i64_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("strlen", strlen_ty, None)
+    }
+
+    fn get_or_declare_atoi(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("atoi") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let atoi_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("atoi", atoi_ty, None)
+    }
+
+    fn get_or_declare_snprintf(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("snprintf") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        let snprintf_ty =
+            i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], true);
+        self.module.add_function("snprintf", snprintf_ty, None)
     }
 
     fn get_or_declare_usleep(&self) -> FunctionValue<'ctx> {

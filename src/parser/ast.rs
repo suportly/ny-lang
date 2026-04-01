@@ -232,6 +232,11 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// expr? — try operator, extracts Ok or returns Err
+    Try {
+        operand: Box<Expr>,
+        span: Span,
+    },
     /// |params| -> RetType { body } (non-capturing lambda)
     Lambda {
         params: Vec<Param>,
@@ -271,7 +276,8 @@ impl Expr {
             | Expr::TupleIndex { span, .. }
             | Expr::EnumVariant { span, .. }
             | Expr::RangeIndex { span, .. }
-            | Expr::Lambda { span, .. } => *span,
+            | Expr::Lambda { span, .. }
+            | Expr::Try { span, .. } => *span,
         }
     }
 }

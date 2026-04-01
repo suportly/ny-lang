@@ -88,6 +88,14 @@ fn test_unknown_enum_variant() {
 }
 
 #[test]
+fn test_missing_trait_method() {
+    compile_invalid("missing_trait_method.ny")
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("is missing method 'describe'"));
+}
+
+#[test]
 fn test_nonexistent_file() {
     let mut cmd = Command::cargo_bin("ny").unwrap();
     cmd.arg("build").arg("nonexistent.lnge");

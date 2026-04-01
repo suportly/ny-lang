@@ -16,6 +16,9 @@ const BUILTIN_FUNCTIONS: &[&str] = &[
     "fread_byte",
     "exit",
     "sleep_ms",
+    "read_line",
+    "str_to_int",
+    "int_to_str",
 ];
 
 #[derive(Debug, Clone)]
@@ -588,6 +591,10 @@ impl Resolver {
             // ---- Phase 4: Tuple index ----
             Expr::TupleIndex { object, .. } => {
                 self.resolve_expr(object);
+            }
+            // ---- Phase C: Try ----
+            Expr::Try { operand, .. } => {
+                self.resolve_expr(operand);
             }
             // ---- Phase 11: Lambda ----
             Expr::Lambda { params, body, .. } => {

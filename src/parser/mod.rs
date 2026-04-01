@@ -328,14 +328,10 @@ impl Parser {
         let (first_name, _) = self.expect_ident()?;
 
         // Check for `impl Trait for Type { ... }`
-        let (trait_name, type_name) = if let TokenKind::Ident(next) = self.peek().clone() {
-            if next == "for" {
-                self.advance(); // consume "for"
-                let (tn, _) = self.expect_ident()?;
-                (Some(first_name), tn)
-            } else {
-                (None, first_name)
-            }
+        let (trait_name, type_name) = if *self.peek() == TokenKind::For {
+            self.advance(); // consume "for"
+            let (tn, _) = self.expect_ident()?;
+            (Some(first_name), tn)
         } else {
             (None, first_name)
         };
@@ -879,6 +875,14 @@ impl Parser {
                         object: Box::new(lhs),
                         index: Box::new(index),
                         span: lhs_span.merge(end),
+                    };
+                    continue;
+                }
+                TokenKind::Question => {
+                    let span = lhs.span().merge(self.advance().span);
+                    lhs = Expr::Try {
+                        operand: Box::new(lhs),
+                        span,
                     };
                     continue;
                 }

@@ -16,6 +16,8 @@ pub struct TypeChecker {
     current_return_type: NyType,
     errors: Vec<CompileError>,
     loop_depth: usize,
+    /// Trait definitions: trait_name → (method_sigs, span)
+    traits: HashMap<String, (Vec<(String, Vec<NyType>, NyType)>, Span)>,
 }
 
 impl TypeChecker {
@@ -38,6 +40,7 @@ impl TypeChecker {
             current_return_type: NyType::Unit,
             errors: Vec::new(),
             loop_depth: 0,
+            traits: HashMap::new(),
         }
     }
 
@@ -219,13 +222,63 @@ impl TypeChecker {
                 // Enum definitions are already registered in ResolvedInfo.
                 // No additional type checking needed at definition site.
             }
-            Item::ImplBlock { methods, .. } => {
+            Item::ImplBlock {
+                type_name,
+                trait_name,
+                methods,
+                span,
+            } => {
+                // Check trait conformance if this is `impl Trait for Type`
+                if let Some(tname) = trait_name {
+                    if let Some((required_sigs, _)) = self.traits.get(tname).cloned() {
+                        let impl_method_names: Vec<String> = methods
+                            .iter()
+                            .filter_map(|m| match m {
+                                Item::FunctionDef { name, .. } => Some(name.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        for (req_name, _, _) in &required_sigs {
+                            if !impl_method_names.contains(req_name) {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "impl '{}' for '{}' is missing method '{}'",
+                                        tname, type_name, req_name
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                    } else {
+                        self.errors.push(CompileError::type_error(
+                            format!("undeclared trait '{}'", tname),
+                            *span,
+                        ));
+                    }
+                }
                 for method in methods {
                     self.check_item(method);
                 }
             }
-            Item::TraitDef { .. } => {
-                // Trait definitions are type-checked at impl site
+            Item::TraitDef {
+                name, methods, span,
+            } => {
+                // Register trait for conformance checking
+                let sigs: Vec<(String, Vec<NyType>, NyType)> = methods
+                    .iter()
+                    .filter_map(|sig| {
+                        let param_types: Vec<NyType> = sig
+                            .params
+                            .iter()
+                            .filter_map(|p| self.resolve_type_annotation(&p.ty))
+                            .collect();
+                        let ret_ty = self
+                            .resolve_type_annotation(&sig.return_type)
+                            .unwrap_or(NyType::Unit);
+                        Some((sig.name.clone(), param_types, ret_ty))
+                    })
+                    .collect();
+                self.traits.insert(name.clone(), (sigs, *span));
             }
         }
     }
@@ -487,6 +540,39 @@ impl TypeChecker {
                         self.check_expr(arg);
                     }
                     return NyType::Unit;
+                }
+
+                // Built-in read_line() -> str (reads a line from stdin)
+                if callee == "read_line" {
+                    return NyType::Str;
+                }
+
+                // Built-in str_to_int(s: str) -> i32
+                if callee == "str_to_int" {
+                    if args.len() == 1 {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if arg_ty != NyType::Str {
+                            self.errors.push(CompileError::type_error(
+                                format!("'str_to_int' expects str, found '{}'", arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::I32;
+                }
+
+                // Built-in int_to_str(n: i32) -> str
+                if callee == "int_to_str" {
+                    if args.len() == 1 {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if !arg_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("'int_to_str' expects integer, found '{}'", arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Str;
                 }
 
                 // Built-in sleep_ms(milliseconds) -> Unit
@@ -1010,6 +1096,37 @@ impl TypeChecker {
             Expr::TupleLit { elements, .. } => {
                 let elem_types: Vec<NyType> = elements.iter().map(|e| self.check_expr(e)).collect();
                 NyType::Tuple(elem_types)
+            }
+
+            // ── Try (?) operator ─────────────────────────────────────
+            Expr::Try { operand, span } => {
+                let operand_ty = self.check_expr(operand);
+                match &operand_ty {
+                    NyType::Enum { variants, name } => {
+                        if variants.len() < 2 {
+                            self.errors.push(CompileError::type_error(
+                                format!("'?' requires enum with at least 2 variants, '{}' has {}", name, variants.len()),
+                                *span,
+                            ));
+                            NyType::I32
+                        } else {
+                            // First variant is "success" — extract its first payload type
+                            let (_, success_payload) = &variants[0];
+                            if success_payload.is_empty() {
+                                NyType::Unit
+                            } else {
+                                success_payload[0].clone()
+                            }
+                        }
+                    }
+                    _ => {
+                        self.errors.push(CompileError::type_error(
+                            format!("'?' requires enum type, found '{}'", operand_ty),
+                            *span,
+                        ));
+                        NyType::I32
+                    }
+                }
             }
 
             // ── Lambda ───────────────────────────────────────────────

@@ -97,6 +97,8 @@ pub enum TokenKind {
 
     // Phase 4
     Underscore,
+    // Phase C: Try operator
+    Question,
 
     // Special
     Eof,

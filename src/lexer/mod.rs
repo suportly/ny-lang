@@ -291,6 +291,7 @@ impl Lexer {
                     TokenKind::Assign
                 }
             }
+            '?' => TokenKind::Question,
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();

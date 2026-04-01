@@ -1,4 +1,4 @@
-// Phase 9: Slices - array range indexing and slice operations
+// Phase 9: Slices - array range indexing, slice as function param, .len()
 
 fn sum_slice(data: []i32, n: i64) -> i32 {
     total :~ i32 = 0;
@@ -21,9 +21,12 @@ fn main() -> i32 {
 
     // Slice indexing
     first := s[0];  // 20
-    second := s[1]; // 30
 
-    // first + second - len as i32 = 20 + 30 - 3 = 47
-    // We want exit code 47
-    return first + second - len as i32;
+    // Call function with slice param
+    total := sum_slice(s, len);  // 20+30+40 = 90
+
+    // total - first - len as i32 = 90 - 20 - 3 = 67
+    // But we want something in 0-255 range
+    // Let's use: total - first - len as i32 - 20 = 47
+    return first + len as i32 + total - 90;  // 20 + 3 + 90 - 90 = 23
 }

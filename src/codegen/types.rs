@@ -1,5 +1,6 @@
 use inkwell::context::Context;
-use inkwell::types::BasicTypeEnum;
+use inkwell::types::{BasicType, BasicTypeEnum, StructType};
+use inkwell::AddressSpace;
 
 use crate::common::NyType;
 
@@ -18,8 +19,32 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
         NyType::F32 => context.f32_type().into(),
         NyType::F64 => context.f64_type().into(),
         NyType::Bool => context.bool_type().into(),
+        NyType::Str => str_type(context).into(),
+        NyType::Array { elem, size } => {
+            let elem_llvm = ny_to_llvm(context, elem);
+            elem_llvm.array_type(*size as u32).into()
+        }
+        NyType::Pointer(_) => context.ptr_type(AddressSpace::default()).into(),
+        NyType::Struct { name, fields } => {
+            let field_types: Vec<BasicTypeEnum> =
+                fields.iter().map(|(_, t)| ny_to_llvm(context, t)).collect();
+            let struct_ty = context.opaque_struct_type(name);
+            struct_ty.set_body(&field_types, false);
+            struct_ty.into()
+        }
         NyType::Unit | NyType::Function { .. } => {
             panic!("cannot convert {} to LLVM basic type", ty)
         }
     }
+}
+
+/// The str type is { ptr, i64 } — pointer to bytes + byte length
+pub fn str_type<'ctx>(context: &'ctx Context) -> StructType<'ctx> {
+    context.struct_type(
+        &[
+            context.ptr_type(AddressSpace::default()).into(),
+            context.i64_type().into(),
+        ],
+        false,
+    )
 }

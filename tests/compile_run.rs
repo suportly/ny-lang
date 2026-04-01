@@ -56,3 +56,57 @@ fn test_control_flow() {
 fn test_expression_body() {
     assert_eq!(compile_and_run("expression_body.lnge"), 25); // 5 * 5
 }
+
+// Phase 2 tests
+
+#[test]
+fn test_for_range() {
+    assert_eq!(compile_and_run("for_range.ny"), 45); // sum 0..10
+}
+
+#[test]
+fn test_break_continue() {
+    assert_eq!(compile_and_run("break_continue.ny"), 20); // 0+2+4+6+8
+}
+
+#[test]
+fn test_arrays() {
+    assert_eq!(compile_and_run("arrays.ny"), 150); // 10+20+30+40+50
+}
+
+#[test]
+fn test_structs() {
+    assert_eq!(compile_and_run("structs.ny"), 11); // dot(3,4).(1,2) = 3+8
+}
+
+#[test]
+fn test_pointers() {
+    assert_eq!(compile_and_run("pointers.ny"), 20); // swap(10,20) → x=20
+}
+
+#[test]
+fn test_inference() {
+    assert_eq!(compile_and_run("inference.ny"), 15); // 5+10
+}
+
+#[test]
+fn test_hello_print() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+
+    let mut cmd = Command::cargo_bin("ny").unwrap();
+    cmd.arg("build")
+        .arg("tests/fixtures/valid/hello_print.ny")
+        .arg("-o")
+        .arg(&output);
+    cmd.assert().success();
+
+    let out = process::Command::new(&output)
+        .output()
+        .expect("failed to run");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello, Ny!"), "stdout: {}", stdout);
+    assert!(stdout.contains("42"), "stdout: {}", stdout);
+    assert!(stdout.contains("true"), "stdout: {}", stdout);
+}

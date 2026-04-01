@@ -16,10 +16,20 @@ pub enum NyType {
     F64,
     Bool,
     Unit,
+    Str,
     Function {
         params: Vec<NyType>,
         ret: Box<NyType>,
     },
+    Array {
+        elem: Box<NyType>,
+        size: usize,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, NyType)>,
+    },
+    Pointer(Box<NyType>),
 }
 
 impl NyType {
@@ -54,6 +64,56 @@ impl NyType {
         self.is_integer() || self.is_float()
     }
 
+    pub fn is_array(&self) -> bool {
+        matches!(self, NyType::Array { .. })
+    }
+
+    pub fn is_struct(&self) -> bool {
+        matches!(self, NyType::Struct { .. })
+    }
+
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, NyType::Pointer(_))
+    }
+
+    pub fn elem_type(&self) -> Option<&NyType> {
+        match self {
+            NyType::Array { elem, .. } => Some(elem),
+            NyType::Pointer(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    pub fn array_size(&self) -> Option<usize> {
+        match self {
+            NyType::Array { size, .. } => Some(*size),
+            _ => None,
+        }
+    }
+
+    pub fn field_type(&self, field_name: &str) -> Option<&NyType> {
+        match self {
+            NyType::Struct { fields, .. } => {
+                fields.iter().find(|(n, _)| n == field_name).map(|(_, t)| t)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        match self {
+            NyType::Struct { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    pub fn pointee(&self) -> Option<&NyType> {
+        match self {
+            NyType::Pointer(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<NyType> {
         match name {
             "i8" => Some(NyType::I8),
@@ -69,6 +129,7 @@ impl NyType {
             "f32" => Some(NyType::F32),
             "f64" => Some(NyType::F64),
             "bool" => Some(NyType::Bool),
+            "str" => Some(NyType::Str),
             _ => None,
         }
     }
@@ -91,6 +152,7 @@ impl fmt::Display for NyType {
             NyType::F64 => write!(f, "f64"),
             NyType::Bool => write!(f, "bool"),
             NyType::Unit => write!(f, "()"),
+            NyType::Str => write!(f, "str"),
             NyType::Function { params, ret } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
@@ -101,6 +163,9 @@ impl fmt::Display for NyType {
                 }
                 write!(f, ") -> {}", ret)
             }
+            NyType::Array { elem, size } => write!(f, "[{}]{}", size, elem),
+            NyType::Struct { name, .. } => write!(f, "{}", name),
+            NyType::Pointer(inner) => write!(f, "*{}", inner),
         }
     }
 }

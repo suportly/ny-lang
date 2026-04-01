@@ -61,9 +61,8 @@ impl Lexer {
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance();
         }
-
         if self.peek() == Some('.') && self.peek_next().is_some_and(|c| c.is_ascii_digit()) {
-            self.advance(); // consume '.'
+            self.advance();
             while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 self.advance();
             }
@@ -73,6 +72,42 @@ impl Lexer {
             let text: String = self.source[self.start..self.pos].iter().collect();
             TokenKind::IntLit(text.parse().unwrap())
         }
+    }
+
+    fn read_string(&mut self) -> Result<TokenKind, CompileError> {
+        let mut value = String::new();
+        loop {
+            match self.advance() {
+                None => {
+                    return Err(CompileError::syntax(
+                        "unterminated string literal".to_string(),
+                        self.make_span(),
+                    ));
+                }
+                Some('"') => break,
+                Some('\\') => match self.advance() {
+                    Some('n') => value.push('\n'),
+                    Some('t') => value.push('\t'),
+                    Some('\\') => value.push('\\'),
+                    Some('"') => value.push('"'),
+                    Some('0') => value.push('\0'),
+                    Some(c) => {
+                        return Err(CompileError::syntax(
+                            format!("unknown escape sequence '\\{}'", c),
+                            self.make_span(),
+                        ));
+                    }
+                    None => {
+                        return Err(CompileError::syntax(
+                            "unterminated escape sequence".to_string(),
+                            self.make_span(),
+                        ));
+                    }
+                },
+                Some(c) => value.push(c),
+            }
+        }
+        Ok(TokenKind::StringLit(value))
     }
 
     fn read_ident_or_keyword(&mut self) -> TokenKind {
@@ -85,7 +120,12 @@ impl Lexer {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,
+            "for" => TokenKind::For,
+            "in" => TokenKind::In,
             "return" => TokenKind::Return,
+            "struct" => TokenKind::Struct,
+            "break" => TokenKind::Break,
+            "continue" => TokenKind::Continue,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
             _ => TokenKind::Ident(text),
@@ -106,19 +146,50 @@ impl Lexer {
             ')' => TokenKind::RParen,
             '{' => TokenKind::LBrace,
             '}' => TokenKind::RBrace,
+            '[' => TokenKind::LBracket,
+            ']' => TokenKind::RBracket,
             ',' => TokenKind::Comma,
             ';' => TokenKind::Semi,
             '+' => TokenKind::Plus,
-            '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
             '%' => TokenKind::Percent,
+            '*' => TokenKind::Star,
+            '&' => {
+                if self.peek() == Some('&') {
+                    self.advance();
+                    TokenKind::And
+                } else {
+                    TokenKind::Ampersand
+                }
+            }
+            '.' => {
+                if self.peek() == Some('.') {
+                    self.advance();
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        TokenKind::DotDotEq
+                    } else {
+                        TokenKind::DotDot
+                    }
+                } else {
+                    TokenKind::Dot
+                }
+            }
             ':' => {
                 if self.peek() == Some('~') {
                     self.advance();
-                    TokenKind::ColonTilde
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        TokenKind::ColonTildeAssign
+                    } else {
+                        TokenKind::ColonTilde
+                    }
                 } else if self.peek() == Some(':') {
                     self.advance();
                     TokenKind::ColonColon
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::ColonAssign
                 } else {
                     TokenKind::Colon
                 }
@@ -163,17 +234,6 @@ impl Lexer {
                     TokenKind::Gt
                 }
             }
-            '&' => {
-                if self.peek() == Some('&') {
-                    self.advance();
-                    TokenKind::And
-                } else {
-                    return Err(CompileError::syntax(
-                        "unexpected character '&', did you mean '&&'?".to_string(),
-                        self.make_span(),
-                    ));
-                }
-            }
             '|' => {
                 if self.peek() == Some('|') {
                     self.advance();
@@ -185,12 +245,17 @@ impl Lexer {
                     ));
                 }
             }
+            '"' => {
+                return self
+                    .read_string()
+                    .map(|kind| Token::new(kind, self.make_span()));
+            }
             c if c.is_ascii_digit() => {
-                self.pos -= 1; // re-read from start
+                self.pos -= 1;
                 self.read_number()
             }
             c if c.is_alphabetic() || c == '_' => {
-                self.pos -= 1; // re-read from start
+                self.pos -= 1;
                 self.read_ident_or_keyword()
             }
             c => {

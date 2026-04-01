@@ -10,12 +10,20 @@ pub enum TokenKind {
     // Identifier
     Ident(String),
 
+    // Literals (new)
+    StringLit(String),
+
     // Keywords
     Fn,
     If,
     Else,
     While,
     Return,
+    Struct,
+    For,
+    In,
+    Break,
+    Continue,
 
     // Operators
     Plus,
@@ -34,15 +42,25 @@ pub enum TokenKind {
     Not,
     Assign,
 
+    // Operators (new)
+    Dot,
+    DotDot,
+    DotDotEq,
+    Ampersand,
+
     // Punctuation
     LParen,
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     ColonTilde,
     ColonColon,
+    ColonAssign,
+    ColonTildeAssign,
     Semi,
     Arrow,
 

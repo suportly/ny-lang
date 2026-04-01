@@ -39,7 +39,9 @@ pub fn generate(
         variables: HashMap::new(),
         functions: HashMap::new(),
         struct_types: HashMap::new(),
+        enum_variants: HashMap::new(),
         loop_stack: Vec::new(),
+        defer_stack: Vec::new(),
     };
 
     codegen.compile_program(program)?;
@@ -134,6 +136,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg(obj_path)
         .arg("-o")
         .arg(output_path)
+        .arg("-no-pie")
         .arg("-lm")
         .arg("-lc")
         .status()
@@ -175,7 +178,11 @@ struct CodeGen<'ctx> {
     functions: HashMap<String, (FunctionValue<'ctx>, Vec<NyType>, NyType)>,
     /// Struct name -> ordered list of (field_name, field_type)
     struct_types: HashMap<String, Vec<(String, NyType)>>,
+    /// Enum name -> ordered list of (variant_name, payload_types)
+    enum_variants: HashMap<String, Vec<(String, Vec<NyType>)>>,
     loop_stack: Vec<LoopFrame<'ctx>>,
+    /// Stack of deferred expressions per function scope
+    defer_stack: Vec<(Expr, FunctionValue<'ctx>)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -199,6 +206,13 @@ impl<'ctx> CodeGen<'ctx> {
                         fields: fields.clone(),
                     };
                 }
+                // Check registered enum types
+                if let Some(variant_defs) = self.enum_variants.get(name) {
+                    return NyType::Enum {
+                        name: name.clone(),
+                        variants: variant_defs.clone(),
+                    };
+                }
                 // Fallback
                 NyType::I32
             }
@@ -212,6 +226,17 @@ impl<'ctx> CodeGen<'ctx> {
             TypeAnnotation::Pointer { inner, .. } => {
                 let inner_ty = self.resolve_type_annotation(inner);
                 NyType::Pointer(Box::new(inner_ty))
+            }
+            TypeAnnotation::Tuple { elements, .. } => {
+                let elem_types: Vec<NyType> = elements
+                    .iter()
+                    .map(|e| self.resolve_type_annotation(e))
+                    .collect();
+                NyType::Tuple(elem_types)
+            }
+            TypeAnnotation::Slice { elem, .. } => {
+                let elem_ty = self.resolve_type_annotation(elem);
+                NyType::Slice(Box::new(elem_ty))
             }
         }
     }
@@ -286,7 +311,13 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some((_, _, ret_ty)) = self.functions.get(callee) {
                     ret_ty.clone()
                 } else {
-                    NyType::Unit
+                    // Built-in return types
+                    match callee.as_str() {
+                        "alloc" | "fopen" => NyType::Pointer(Box::new(NyType::U8)),
+                        "sizeof" => NyType::I64,
+                        "fclose" | "fread_byte" | "fwrite_str" => NyType::I32,
+                        _ => NyType::Unit,
+                    }
                 }
             }
             Expr::If { then_branch, .. } => self.infer_expr_type(then_branch),
@@ -349,7 +380,67 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => NyType::I32,
                 }
             }
-            Expr::MethodCall { .. } => NyType::Unit,
+            Expr::MethodCall { object, method, .. } => {
+                let obj_ty = self.infer_expr_type(object);
+                match &obj_ty {
+                    NyType::Str => match method.as_str() {
+                        "len" => NyType::I64,
+                        "substr" => NyType::Str,
+                        _ => NyType::Unit,
+                    },
+                    _ => {
+                        // Look up by method name first
+                        if let Some((_, _, ret_ty)) = self.functions.get(method) {
+                            return ret_ty.clone();
+                        }
+                        // Try TypeName_method convention
+                        let type_name = match &obj_ty {
+                            NyType::Struct { name, .. } => name.clone(),
+                            NyType::Pointer(inner) => match inner.as_ref() {
+                                NyType::Struct { name, .. } => name.clone(),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        };
+                        if !type_name.is_empty() {
+                            let qualified = format!("{}_{}", type_name, method);
+                            if let Some((_, _, ret_ty)) = self.functions.get(&qualified) {
+                                return ret_ty.clone();
+                            }
+                        }
+                        NyType::Unit
+                    }
+                }
+            }
+            Expr::Match { arms, .. } => {
+                if let Some(first_arm) = arms.first() {
+                    self.infer_expr_type(&first_arm.body)
+                } else {
+                    NyType::Unit
+                }
+            }
+            Expr::TupleLit { elements, .. } => {
+                let elem_types: Vec<NyType> =
+                    elements.iter().map(|e| self.infer_expr_type(e)).collect();
+                NyType::Tuple(elem_types)
+            }
+            Expr::TupleIndex { object, index, .. } => {
+                let obj_ty = self.infer_expr_type(object);
+                match obj_ty {
+                    NyType::Tuple(elems) => elems.get(*index).cloned().unwrap_or(NyType::I32),
+                    _ => NyType::I32,
+                }
+            }
+            Expr::EnumVariant { enum_name, .. } => {
+                if let Some(variant_defs) = self.enum_variants.get(enum_name) {
+                    NyType::Enum {
+                        name: enum_name.clone(),
+                        variants: variant_defs.clone(),
+                    }
+                } else {
+                    NyType::I32
+                }
+            }
         }
     }
 
@@ -358,7 +449,7 @@ impl<'ctx> CodeGen<'ctx> {
     // ------------------------------------------------------------------
 
     fn compile_program(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
-        // Pass 0: Register all LLVM named struct types
+        // Pass 0: Register all LLVM named struct types and enum variant lists
         for item in &program.items {
             if let Item::StructDef { name, fields, .. } = item {
                 let resolved_fields: Vec<(String, NyType)> = fields
@@ -371,9 +462,71 @@ impl<'ctx> CodeGen<'ctx> {
                 self.get_or_create_llvm_struct_type(name, &resolved_fields);
                 self.struct_types.insert(name.clone(), resolved_fields);
             }
+            if let Item::EnumDef { name, variants, .. } = item {
+                // Convert EnumVariantDef to (name, payload_types)
+                let resolved: Vec<(String, Vec<NyType>)> = variants
+                    .iter()
+                    .map(|v| {
+                        let payload_types: Vec<NyType> = v
+                            .payload
+                            .iter()
+                            .map(|ty_ann| self.resolve_type_annotation(ty_ann))
+                            .collect();
+                        (v.name.clone(), payload_types)
+                    })
+                    .collect();
+                self.enum_variants.insert(name.clone(), resolved);
+            }
+        }
+
+        // Pass 0b: Flatten impl methods into top-level functions with qualified names
+        let mut impl_methods: Vec<(String, &Vec<Param>, &TypeAnnotation, &Expr, Span)> = Vec::new();
+        for item in &program.items {
+            if let Item::ImplBlock {
+                type_name, methods, trait_name: _, ..
+            } = item
+            {
+                for method in methods {
+                    if let Item::FunctionDef {
+                        name,
+                        params,
+                        return_type,
+                        body,
+                        span,
+                    } = method
+                    {
+                        let qualified_name = format!("{}_{}", type_name, name);
+                        impl_methods.push((qualified_name, params, return_type, body, *span));
+                    }
+                }
+            }
         }
 
         // Pass 1: Declare all functions (forward references)
+        for (qualified_name, params, return_type, _, _) in &impl_methods {
+            let ret_ty = self.resolve_type_annotation(return_type);
+            let param_types: Vec<NyType> = params
+                .iter()
+                .map(|p| self.resolve_type_annotation(&p.ty))
+                .collect();
+
+            let llvm_param_types: Vec<BasicTypeEnum> = param_types
+                .iter()
+                .map(|t| ny_to_llvm(self.context, t))
+                .collect();
+
+            let param_meta: Vec<_> = llvm_param_types.iter().map(|t| (*t).into()).collect();
+
+            let fn_type = match &ret_ty {
+                NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
+                ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
+            };
+
+            let function = self.module.add_function(qualified_name, fn_type, None);
+            self.functions
+                .insert(qualified_name.clone(), (function, param_types, ret_ty));
+        }
+
         for item in &program.items {
             if let Item::FunctionDef {
                 name,
@@ -406,7 +559,44 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
-        // Pass 2: Compile function bodies
+        // Pass 2a: Compile impl method bodies
+        for (qualified_name, params, _, body, _) in &impl_methods {
+            let (function, param_types, _) = self.functions[qualified_name].clone();
+            let entry = self.context.append_basic_block(function, "entry");
+            self.builder.position_at_end(entry);
+
+            let outer_vars = self.variables.clone();
+            self.variables.clear();
+            let outer_defers = std::mem::take(&mut self.defer_stack);
+
+            for (i, param) in params.iter().enumerate() {
+                let ty = &param_types[i];
+                let llvm_ty = ny_to_llvm(self.context, ty);
+                let alloca = self.builder.build_alloca(llvm_ty, &param.name).unwrap();
+                self.builder
+                    .build_store(alloca, function.get_nth_param(i as u32).unwrap())
+                    .unwrap();
+                self.variables
+                    .insert(param.name.clone(), (alloca, ty.clone()));
+            }
+
+            self.compile_expr(body, &function)?;
+
+            let current_block = self.builder.get_insert_block().unwrap();
+            if current_block.get_terminator().is_none() {
+                let defers: Vec<(Expr, FunctionValue<'ctx>)> =
+                    self.defer_stack.iter().rev().cloned().collect();
+                for (defer_body, defer_fn) in &defers {
+                    self.compile_expr(defer_body, defer_fn)?;
+                }
+                self.builder.build_return(None).unwrap();
+            }
+
+            self.defer_stack = outer_defers;
+            self.variables = outer_vars;
+        }
+
+        // Pass 2b: Compile function bodies
         for item in &program.items {
             if let Item::FunctionDef {
                 name, params, body, ..
@@ -432,15 +622,24 @@ impl<'ctx> CodeGen<'ctx> {
                         .insert(param.name.clone(), (alloca, ty.clone()));
                 }
 
+                // Save outer defer stack and start fresh for this function
+                let outer_defers = std::mem::take(&mut self.defer_stack);
+
                 self.compile_expr(body, &function)?;
 
-                // Add return void if no terminator
+                // Emit deferred expressions in LIFO order if no terminator yet
                 let current_block = self.builder.get_insert_block().unwrap();
                 if current_block.get_terminator().is_none() {
+                    let defers: Vec<(Expr, FunctionValue<'ctx>)> =
+                        self.defer_stack.iter().rev().cloned().collect();
+                    for (defer_body, defer_fn) in &defers {
+                        self.compile_expr(defer_body, defer_fn)?;
+                    }
                     self.builder.build_return(None).unwrap();
                 }
 
-                // Restore outer scope
+                // Restore outer scope and defers
+                self.defer_stack = outer_defers;
                 self.variables = outer_vars;
             }
         }
@@ -514,6 +713,172 @@ impl<'ctx> CodeGen<'ctx> {
                 if callee == "print" || callee == "println" {
                     self.compile_print_call(callee, args, function)?;
                     return Ok(None);
+                }
+
+                // Handle alloc(Type) builtin — returns *Type via malloc
+                if callee == "alloc" {
+                    // alloc expects exactly 1 argument which evaluates to a size
+                    let size_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_int_value();
+                    let size_i64 = self
+                        .builder
+                        .build_int_z_extend_or_bit_cast(
+                            size_val,
+                            self.context.i64_type(),
+                            "alloc_size",
+                        )
+                        .unwrap();
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[size_i64.into()], "alloc_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(ptr));
+                }
+
+                // Handle free(ptr) builtin
+                if callee == "free" {
+                    let ptr_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let free_fn = self.get_or_declare_free();
+                    self.builder
+                        .build_call(free_fn, &[ptr_val.into()], "")
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // Handle fopen(path_str, mode_str) -> FILE*
+                if callee == "fopen" {
+                    let path_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let mode_val = self.compile_expr(&args[1], function)?.unwrap();
+                    // Extract ptr from {ptr, len} str structs
+                    let path_ptr = self
+                        .builder
+                        .build_extract_value(path_val.into_struct_value(), 0, "path_ptr")
+                        .unwrap();
+                    let mode_ptr = self
+                        .builder
+                        .build_extract_value(mode_val.into_struct_value(), 0, "mode_ptr")
+                        .unwrap();
+                    let fopen_fn = self.get_or_declare_fopen();
+                    let result = self
+                        .builder
+                        .build_call(fopen_fn, &[path_ptr.into(), mode_ptr.into()], "fp")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle fclose(fp) -> i32
+                if callee == "fclose" {
+                    let fp = self.compile_expr(&args[0], function)?.unwrap();
+                    let fclose_fn = self.get_or_declare_fclose();
+                    let result = self
+                        .builder
+                        .build_call(fclose_fn, &[fp.into()], "fclose_ret")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle fwrite_str(fp, str) -> bytes written
+                if callee == "fwrite_str" {
+                    let fp = self.compile_expr(&args[0], function)?.unwrap();
+                    let str_val = self.compile_expr(&args[1], function)?.unwrap();
+                    let ptr = self
+                        .builder
+                        .build_extract_value(str_val.into_struct_value(), 0, "str_ptr")
+                        .unwrap();
+                    let len = self
+                        .builder
+                        .build_extract_value(str_val.into_struct_value(), 1, "str_len")
+                        .unwrap();
+                    let fwrite_fn = self.get_or_declare_fwrite();
+                    let one = self.context.i64_type().const_int(1, false);
+                    let result = self
+                        .builder
+                        .build_call(
+                            fwrite_fn,
+                            &[ptr.into(), one.into(), len.into(), fp.into()],
+                            "fwrite_ret",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    // Cast size_t result to i32
+                    let i32_result = self
+                        .builder
+                        .build_int_truncate(
+                            result.into_int_value(),
+                            self.context.i32_type(),
+                            "fwrite_i32",
+                        )
+                        .unwrap();
+                    return Ok(Some(i32_result.into()));
+                }
+
+                // Handle fread_byte(fp) -> i32 (fgetc)
+                if callee == "fread_byte" {
+                    let fp = self.compile_expr(&args[0], function)?.unwrap();
+                    let fgetc_fn = self.get_or_declare_fgetc();
+                    let result = self
+                        .builder
+                        .build_call(fgetc_fn, &[fp.into()], "fgetc_ret")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle exit(code)
+                if callee == "exit" {
+                    let code = self.compile_expr(&args[0], function)?.unwrap();
+                    let exit_fn = self.get_or_declare_exit();
+                    self.builder
+                        .build_call(exit_fn, &[code.into()], "")
+                        .unwrap();
+                    self.builder.build_unreachable().unwrap();
+                    return Ok(None);
+                }
+
+                // Handle sleep_ms(ms) — wraps usleep(ms * 1000)
+                if callee == "sleep_ms" {
+                    let ms_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_int_value();
+                    let us_val = self
+                        .builder
+                        .build_int_mul(
+                            ms_val,
+                            self.context.i32_type().const_int(1000, false),
+                            "us",
+                        )
+                        .unwrap();
+                    let usleep_fn = self.get_or_declare_usleep();
+                    self.builder
+                        .build_call(usleep_fn, &[us_val.into()], "")
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // Handle sizeof(Type) builtin — compile-time size
+                if callee == "sizeof" {
+                    // sizeof takes 1 arg — we infer its type and return the size
+                    let arg_ty = self.infer_expr_type(&args[0]);
+                    let llvm_ty = ny_to_llvm(self.context, &arg_ty);
+                    let size = llvm_ty.size_of().unwrap();
+                    return Ok(Some(size.into()));
                 }
 
                 let (func, _, ret_ty) = self.functions[callee].clone();
@@ -825,6 +1190,88 @@ impl<'ctx> CodeGen<'ctx> {
                 args,
                 ..
             } => {
+                let obj_ty = self.infer_expr_type(object);
+
+                // Handle built-in string methods
+                if obj_ty == NyType::Str {
+                    let obj_val = self.compile_expr(object, function)?.unwrap();
+                    let str_val = obj_val.into_struct_value();
+
+                    match method.as_str() {
+                        "len" => {
+                            // Extract length field (index 1) from {ptr, len}
+                            let len_val = self
+                                .builder
+                                .build_extract_value(str_val, 1, "str_len")
+                                .unwrap();
+                            return Ok(Some(len_val));
+                        }
+                        "substr" => {
+                            // substr(start, end) -> {new_ptr, new_len}
+                            let start_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_int_value();
+                            let end_val = self
+                                .compile_expr(&args[1], function)?
+                                .unwrap()
+                                .into_int_value();
+
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "str_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+
+                            // Cast start to i64 for GEP
+                            let start_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    start_val,
+                                    self.context.i64_type(),
+                                    "start_ext",
+                                )
+                                .unwrap();
+                            let end_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    end_val,
+                                    self.context.i64_type(),
+                                    "end_ext",
+                                )
+                                .unwrap();
+
+                            // new_ptr = GEP(ptr, start)
+                            let i8_ty = self.context.i8_type();
+                            let new_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, ptr, &[start_i64], "substr_ptr")
+                                    .unwrap()
+                            };
+
+                            // new_len = end - start
+                            let new_len = self
+                                .builder
+                                .build_int_sub(end_i64, start_i64, "substr_len")
+                                .unwrap();
+
+                            // Build {new_ptr, new_len}
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, new_ptr, 0, "sub_ptr")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, new_len, 1, "sub_len")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Compile the object as the first argument (pass by value or pointer)
                 let obj_val = self.compile_expr(object, function)?.unwrap();
                 let callee = method.clone();
@@ -846,7 +1293,6 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 } else {
                     // Try struct_name.method_name convention
-                    let obj_ty = self.infer_expr_type(object);
                     let struct_name = match &obj_ty {
                         NyType::Struct { name, .. } => name.clone(),
                         NyType::Pointer(inner) => match inner.as_ref() {
@@ -897,6 +1343,172 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let result = self.compile_cast(val, &source_ty, &target_ty, target_llvm)?;
                 Ok(Some(result))
+            }
+
+            // ---- Enum variant (produces i32 discriminant for simple enums) ----
+            Expr::EnumVariant {
+                enum_name, variant, ..
+            } => {
+                if let Some(variant_defs) = self.enum_variants.get(enum_name) {
+                    let idx = variant_defs
+                        .iter()
+                        .position(|(name, _)| name == variant)
+                        .unwrap_or(0);
+                    let val = self.context.i32_type().const_int(idx as u64, false);
+                    Ok(Some(val.into()))
+                } else {
+                    Err(vec![CompileError::type_error(
+                        format!("unknown enum '{}'", enum_name),
+                        expr.span(),
+                    )])
+                }
+            }
+
+            // ---- Match expression ----
+            Expr::Match { subject, arms, .. } => {
+                let subject_val = self
+                    .compile_expr(subject, function)?
+                    .unwrap()
+                    .into_int_value();
+                let result_ty = self.infer_expr_type(expr);
+                let has_result = result_ty != NyType::Unit;
+
+                let merge_bb = self.context.append_basic_block(*function, "match_merge");
+
+                // Find the wildcard arm (default), if any
+                let wildcard_idx = arms
+                    .iter()
+                    .position(|arm| matches!(arm.pattern, Pattern::Wildcard(_)));
+
+                // Create basic blocks for each arm
+                let arm_bbs: Vec<BasicBlock> = arms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        self.context
+                            .append_basic_block(*function, &format!("match_arm_{}", i))
+                    })
+                    .collect();
+
+                // Save current block (where subject was evaluated)
+                let switch_bb = self.builder.get_insert_block().unwrap();
+
+                // Default block: wildcard arm or unreachable
+                let default_bb = if let Some(wi) = wildcard_idx {
+                    arm_bbs[wi]
+                } else {
+                    let unreachable_bb = self
+                        .context
+                        .append_basic_block(*function, "match_unreachable");
+                    self.builder.position_at_end(unreachable_bb);
+                    self.builder.build_unreachable().unwrap();
+                    unreachable_bb
+                };
+
+                // Build switch cases (exclude wildcard)
+                let mut cases: Vec<(inkwell::values::IntValue<'ctx>, BasicBlock<'ctx>)> =
+                    Vec::new();
+                for (i, arm) in arms.iter().enumerate() {
+                    match &arm.pattern {
+                        Pattern::EnumVariant {
+                            enum_name, variant, ..
+                        } => {
+                            if let Some(variant_defs) = self.enum_variants.get(enum_name) {
+                                let idx = variant_defs
+                                    .iter()
+                                    .position(|(name, _)| name == variant)
+                                    .unwrap_or(0);
+                                let const_val =
+                                    self.context.i32_type().const_int(idx as u64, false);
+                                cases.push((const_val, arm_bbs[i]));
+                            }
+                        }
+                        Pattern::IntLit(n, _) => {
+                            let const_val = self.context.i32_type().const_int(*n as u64, true);
+                            cases.push((const_val, arm_bbs[i]));
+                        }
+                        Pattern::Wildcard(_) => {
+                            // Handled as default_bb
+                        }
+                    }
+                }
+
+                // Position back at the block where subject was evaluated to emit the switch
+                self.builder.position_at_end(switch_bb);
+                self.builder
+                    .build_switch(subject_val, default_bb, &cases)
+                    .unwrap();
+
+                // Compile each arm body
+                let mut incoming: Vec<(BasicValueEnum<'ctx>, BasicBlock<'ctx>)> = Vec::new();
+                for (i, arm) in arms.iter().enumerate() {
+                    self.builder.position_at_end(arm_bbs[i]);
+                    let arm_val = self.compile_expr(&arm.body, function)?;
+                    let arm_end_bb = self.builder.get_insert_block().unwrap();
+                    let has_terminator = arm_end_bb.get_terminator().is_some();
+                    if !has_terminator {
+                        if has_result {
+                            if let Some(v) = arm_val {
+                                incoming.push((v, arm_end_bb));
+                            }
+                        }
+                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    }
+                }
+
+                self.builder.position_at_end(merge_bb);
+
+                if has_result && !incoming.is_empty() {
+                    let llvm_ty = ny_to_llvm(self.context, &result_ty);
+                    let phi = self.builder.build_phi(llvm_ty, "match_val").unwrap();
+                    let refs: Vec<(&dyn inkwell::values::BasicValue, BasicBlock)> = incoming
+                        .iter()
+                        .map(|(v, bb)| (v as &dyn inkwell::values::BasicValue, *bb))
+                        .collect();
+                    phi.add_incoming(&refs);
+                    Ok(Some(phi.as_basic_value()))
+                } else {
+                    Ok(None)
+                }
+            }
+
+            // ---- Tuple literal ----
+            Expr::TupleLit { elements, .. } => {
+                let mut elem_values = Vec::new();
+                for elem in elements {
+                    let val = self.compile_expr(elem, function)?.unwrap();
+                    elem_values.push(val);
+                }
+
+                let elem_types: Vec<BasicTypeEnum> =
+                    elem_values.iter().map(|v| v.get_type()).collect();
+                let tuple_ty = self.context.struct_type(&elem_types, false);
+                let alloca = self.builder.build_alloca(tuple_ty, "tuple").unwrap();
+
+                for (i, val) in elem_values.iter().enumerate() {
+                    let field_ptr = self
+                        .builder
+                        .build_struct_gep(tuple_ty, alloca, i as u32, &format!("tuple_field_{}", i))
+                        .unwrap();
+                    self.builder.build_store(field_ptr, *val).unwrap();
+                }
+
+                let tuple_val = self
+                    .builder
+                    .build_load(tuple_ty, alloca, "tuple_val")
+                    .unwrap();
+                Ok(Some(tuple_val))
+            }
+
+            // ---- Tuple index ----
+            Expr::TupleIndex { object, index, .. } => {
+                let obj_val = self.compile_expr(object, function)?.unwrap();
+                let struct_val = obj_val.into_struct_value();
+                let extracted = self
+                    .builder
+                    .build_extract_value(struct_val, *index as u32, "tuple_idx")
+                    .unwrap();
+                Ok(Some(extracted))
             }
         }
     }
@@ -1193,13 +1805,22 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::Return { value, .. } => {
-                if let Some(val_expr) = value {
-                    let val = self.compile_expr(val_expr, function)?;
-                    if let Some(v) = val {
-                        self.builder.build_return(Some(&v)).unwrap();
-                    } else {
-                        self.builder.build_return(None).unwrap();
-                    }
+                // Evaluate the return value first
+                let ret_val = if let Some(val_expr) = value {
+                    self.compile_expr(val_expr, function)?
+                } else {
+                    None
+                };
+
+                // Emit all deferred expressions in LIFO order before returning
+                let defers: Vec<(Expr, FunctionValue<'ctx>)> =
+                    self.defer_stack.iter().rev().cloned().collect();
+                for (defer_body, defer_fn) in &defers {
+                    self.compile_expr(defer_body, defer_fn)?;
+                }
+
+                if let Some(v) = ret_val {
+                    self.builder.build_return(Some(&v)).unwrap();
                 } else {
                     self.builder.build_return(None).unwrap();
                 }
@@ -1356,6 +1977,64 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .build_unconditional_branch(continue_bb)
                         .unwrap();
+                }
+                Ok(())
+            }
+
+            Stmt::Loop { body, .. } => {
+                let body_bb = self.context.append_basic_block(*function, "loop_body");
+                let exit_bb = self.context.append_basic_block(*function, "loop_exit");
+
+                self.builder.build_unconditional_branch(body_bb).unwrap();
+
+                self.loop_stack.push(LoopFrame {
+                    break_bb: exit_bb,
+                    continue_bb: body_bb,
+                });
+
+                self.builder.position_at_end(body_bb);
+                self.compile_expr(body, function)?;
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    self.builder.build_unconditional_branch(body_bb).unwrap();
+                }
+
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                Ok(())
+            }
+
+            Stmt::Defer { body, .. } => {
+                // Push the deferred expression onto the stack; it will be emitted
+                // when the function returns or the scope exits.
+                self.defer_stack.push((body.clone(), *function));
+                Ok(())
+            }
+
+            Stmt::TupleDestructure { names, init, .. } => {
+                let val = self.compile_expr(init, function)?.unwrap();
+                let struct_val = val.into_struct_value();
+                let tuple_ty = self.infer_expr_type(init);
+                let elem_types = match &tuple_ty {
+                    NyType::Tuple(elems) => elems.clone(),
+                    _ => vec![NyType::I32; names.len()],
+                };
+
+                for (i, name) in names.iter().enumerate() {
+                    let elem_val = self
+                        .builder
+                        .build_extract_value(struct_val, i as u32, name)
+                        .unwrap();
+                    let elem_ty = elem_types.get(i).cloned().unwrap_or(NyType::I32);
+                    let llvm_ty = ny_to_llvm(self.context, &elem_ty);
+                    let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                    self.builder.build_store(alloca, elem_val).unwrap();
+                    self.variables.insert(name.clone(), (alloca, elem_ty));
                 }
                 Ok(())
             }
@@ -1826,6 +2505,274 @@ impl<'ctx> CodeGen<'ctx> {
                         )
                         .unwrap();
                 }
+                NyType::Enum { name, variants } => {
+                    // Print enum variant name using a switch on the discriminant
+                    let printf_fn = self.get_or_declare_printf();
+                    let fmt_s = self
+                        .builder
+                        .build_global_string_ptr("%s", "fmt_enum")
+                        .unwrap();
+                    let disc_val = val.unwrap().into_int_value();
+
+                    // Extract variant names for printing
+                    let variant_names: Vec<String> =
+                        variants.iter().map(|(name, _)| name.clone()).collect();
+
+                    // Capture the current block before creating new ones
+                    let origin_bb = self.builder.get_insert_block().unwrap();
+
+                    let merge_bb = self
+                        .context
+                        .append_basic_block(*function, "enum_print_merge");
+                    let default_bb = self
+                        .context
+                        .append_basic_block(*function, "enum_print_default");
+
+                    // Create basic blocks for each variant
+                    let variant_bbs: Vec<BasicBlock> = variant_names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            self.context
+                                .append_basic_block(*function, &format!("enum_print_{}", i))
+                        })
+                        .collect();
+
+                    // Build default block: print "EnumName::?" for unknown discriminant
+                    self.builder.position_at_end(default_bb);
+                    let unknown_str = self
+                        .builder
+                        .build_global_string_ptr(&format!("{}::?", name), "enum_unknown")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[
+                                fmt_s.as_pointer_value().into(),
+                                unknown_str.as_pointer_value().into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
+                    self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                    // Build each variant print block
+                    for (i, variant_name) in variant_names.iter().enumerate() {
+                        self.builder.position_at_end(variant_bbs[i]);
+                        let var_str = self
+                            .builder
+                            .build_global_string_ptr(
+                                &format!("{}::{}", name, variant_name),
+                                &format!("enum_var_{}", i),
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_call(
+                                printf_fn,
+                                &[
+                                    fmt_s.as_pointer_value().into(),
+                                    var_str.as_pointer_value().into(),
+                                ],
+                                "",
+                            )
+                            .unwrap();
+                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    }
+
+                    // Go back to the origin block and emit the switch
+                    self.builder.position_at_end(origin_bb);
+                    let cases: Vec<(inkwell::values::IntValue, BasicBlock)> = variant_names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            (
+                                self.context.i32_type().const_int(i as u64, false),
+                                variant_bbs[i],
+                            )
+                        })
+                        .collect();
+                    self.builder
+                        .build_switch(disc_val, default_bb, &cases)
+                        .unwrap();
+
+                    self.builder.position_at_end(merge_bb);
+                }
+                NyType::Tuple(ref elem_types) => {
+                    // Print tuple as (elem1, elem2, ...)
+                    let printf_fn = self.get_or_declare_printf();
+                    let tuple_val = val.unwrap().into_struct_value();
+
+                    // Print opening paren
+                    let open_paren = self
+                        .builder
+                        .build_global_string_ptr("(", "tuple_open")
+                        .unwrap();
+                    let fmt_s = self
+                        .builder
+                        .build_global_string_ptr("%s", "fmt_s_tuple")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[
+                                fmt_s.as_pointer_value().into(),
+                                open_paren.as_pointer_value().into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
+
+                    for (i, et) in elem_types.iter().enumerate() {
+                        if i > 0 {
+                            let sep = self
+                                .builder
+                                .build_global_string_ptr(", ", "tuple_sep")
+                                .unwrap();
+                            self.builder
+                                .build_call(
+                                    printf_fn,
+                                    &[
+                                        fmt_s.as_pointer_value().into(),
+                                        sep.as_pointer_value().into(),
+                                    ],
+                                    "",
+                                )
+                                .unwrap();
+                        }
+
+                        let elem_val = self
+                            .builder
+                            .build_extract_value(tuple_val, i as u32, &format!("tup_el_{}", i))
+                            .unwrap();
+
+                        match et {
+                            NyType::I32 => {
+                                let fmt_d = self
+                                    .builder
+                                    .build_global_string_ptr("%d", "fmt_d_tup")
+                                    .unwrap();
+                                self.builder
+                                    .build_call(
+                                        printf_fn,
+                                        &[fmt_d.as_pointer_value().into(), elem_val.into()],
+                                        "",
+                                    )
+                                    .unwrap();
+                            }
+                            NyType::I64 => {
+                                let fmt_ld = self
+                                    .builder
+                                    .build_global_string_ptr("%ld", "fmt_ld_tup")
+                                    .unwrap();
+                                self.builder
+                                    .build_call(
+                                        printf_fn,
+                                        &[fmt_ld.as_pointer_value().into(), elem_val.into()],
+                                        "",
+                                    )
+                                    .unwrap();
+                            }
+                            NyType::F64 | NyType::F32 => {
+                                let fmt_f = self
+                                    .builder
+                                    .build_global_string_ptr("%f", "fmt_f_tup")
+                                    .unwrap();
+                                let float_val = if *et == NyType::F32 {
+                                    let f32_val = elem_val.into_float_value();
+                                    self.builder
+                                        .build_float_ext(
+                                            f32_val,
+                                            self.context.f64_type(),
+                                            "fpext_tup",
+                                        )
+                                        .unwrap()
+                                        .into()
+                                } else {
+                                    elem_val
+                                };
+                                self.builder
+                                    .build_call(
+                                        printf_fn,
+                                        &[fmt_f.as_pointer_value().into(), float_val.into()],
+                                        "",
+                                    )
+                                    .unwrap();
+                            }
+                            NyType::Bool => {
+                                let bool_v = elem_val.into_int_value();
+                                let ts = self
+                                    .builder
+                                    .build_global_string_ptr("true", "t_tup")
+                                    .unwrap();
+                                let fs = self
+                                    .builder
+                                    .build_global_string_ptr("false", "f_tup")
+                                    .unwrap();
+                                let sel = self
+                                    .builder
+                                    .build_select(
+                                        bool_v,
+                                        ts.as_pointer_value(),
+                                        fs.as_pointer_value(),
+                                        "bs_tup",
+                                    )
+                                    .unwrap();
+                                self.builder
+                                    .build_call(
+                                        printf_fn,
+                                        &[fmt_s.as_pointer_value().into(), sel.into()],
+                                        "",
+                                    )
+                                    .unwrap();
+                            }
+                            NyType::Str => {
+                                let write_fn = self.get_or_declare_write();
+                                let sv = elem_val.into_struct_value();
+                                let ptr = self
+                                    .builder
+                                    .build_extract_value(sv, 0, "tup_str_ptr")
+                                    .unwrap();
+                                let len = self
+                                    .builder
+                                    .build_extract_value(sv, 1, "tup_str_len")
+                                    .unwrap();
+                                let fd = self.context.i32_type().const_int(1, false);
+                                self.builder
+                                    .build_call(write_fn, &[fd.into(), ptr.into(), len.into()], "")
+                                    .unwrap();
+                            }
+                            _ => {
+                                let fmt_d = self
+                                    .builder
+                                    .build_global_string_ptr("%d", "fmt_d_tup_fb")
+                                    .unwrap();
+                                self.builder
+                                    .build_call(
+                                        printf_fn,
+                                        &[fmt_d.as_pointer_value().into(), elem_val.into()],
+                                        "",
+                                    )
+                                    .unwrap();
+                            }
+                        }
+                    }
+
+                    // Print closing paren
+                    let close_paren = self
+                        .builder
+                        .build_global_string_ptr(")", "tuple_close")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[
+                                fmt_s.as_pointer_value().into(),
+                                close_paren.as_pointer_value().into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
+                }
                 _ => {
                     // Fallback: try to print as i32
                     if let Some(v) = val {
@@ -1901,6 +2848,117 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("abort", abort_ty, None)
     }
 
+    fn get_or_declare_malloc(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("malloc") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
+        self.module.add_function("malloc", malloc_ty, None)
+    }
+
+    fn get_or_declare_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("free") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let free_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("free", free_ty, None)
+    }
+
+    fn get_or_declare_realloc(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("realloc") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let realloc_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("realloc", realloc_ty, None)
+    }
+
+    fn get_or_declare_memcpy(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("memcpy") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // void *memcpy(void *dest, const void *src, size_t n)
+        let memcpy_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("memcpy", memcpy_ty, None)
+    }
+
+    fn get_or_declare_fopen(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fopen") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fopen_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("fopen", fopen_ty, None)
+    }
+
+    fn get_or_declare_fclose(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fclose") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fclose_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("fclose", fclose_ty, None)
+    }
+
+    fn get_or_declare_fwrite(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fwrite") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
+        let fwrite_ty =
+            i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("fwrite", fwrite_ty, None)
+    }
+
+    fn get_or_declare_fgetc(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fgetc") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fgetc_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("fgetc", fgetc_ty, None)
+    }
+
+    fn get_or_declare_exit(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("exit") {
+            return f;
+        }
+        let i32_ty = self.context.i32_type();
+        let exit_ty = self.context.void_type().fn_type(&[i32_ty.into()], false);
+        self.module.add_function("exit", exit_ty, None)
+    }
+
+    fn get_or_declare_usleep(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("usleep") {
+            return f;
+        }
+        let i32_ty = self.context.i32_type();
+        let usleep_ty = i32_ty.fn_type(&[i32_ty.into()], false);
+        self.module.add_function("usleep", usleep_ty, None)
+    }
+
+    fn get_or_declare_memcmp(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("memcmp") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        // int memcmp(const void *s1, const void *s2, size_t n)
+        let memcmp_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("memcmp", memcmp_ty, None)
+    }
+
     // ------------------------------------------------------------------
     // Binary and unary operations
     // ------------------------------------------------------------------
@@ -1911,6 +2969,144 @@ impl<'ctx> CodeGen<'ctx> {
         lhs: BasicValueEnum<'ctx>,
         rhs: BasicValueEnum<'ctx>,
     ) -> Result<BasicValueEnum<'ctx>, Vec<CompileError>> {
+        // Handle string operations (both operands are {ptr, len} struct values)
+        if lhs.is_struct_value() && rhs.is_struct_value() {
+            let l = lhs.into_struct_value();
+            let r = rhs.into_struct_value();
+
+            match op {
+                BinOp::Add => {
+                    // String concatenation
+                    let l_ptr = self.builder.build_extract_value(l, 0, "l_ptr").unwrap();
+                    let l_len = self
+                        .builder
+                        .build_extract_value(l, 1, "l_len")
+                        .unwrap()
+                        .into_int_value();
+                    let r_ptr = self.builder.build_extract_value(r, 0, "r_ptr").unwrap();
+                    let r_len = self
+                        .builder
+                        .build_extract_value(r, 1, "r_len")
+                        .unwrap()
+                        .into_int_value();
+
+                    let total_len = self
+                        .builder
+                        .build_int_add(l_len, r_len, "total_len")
+                        .unwrap();
+
+                    // malloc(total_len)
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let result_ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[total_len.into()], "concat_buf")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // memcpy(result_ptr, l_ptr, l_len)
+                    let memcpy_fn = self.get_or_declare_memcpy();
+                    self.builder
+                        .build_call(
+                            memcpy_fn,
+                            &[result_ptr.into(), l_ptr.into(), l_len.into()],
+                            "",
+                        )
+                        .unwrap();
+
+                    // memcpy(result_ptr + l_len, r_ptr, r_len)
+                    let i8_ty = self.context.i8_type();
+                    let dest_offset = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(i8_ty, result_ptr, &[l_len], "concat_dest")
+                            .unwrap()
+                    };
+                    self.builder
+                        .build_call(
+                            memcpy_fn,
+                            &[dest_offset.into(), r_ptr.into(), r_len.into()],
+                            "",
+                        )
+                        .unwrap();
+
+                    // Build {result_ptr, total_len} struct
+                    let str_ty = str_type(self.context);
+                    let str_val = str_ty.const_zero();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, result_ptr, 0, "cat_ptr")
+                        .unwrap();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, total_len, 1, "cat_len")
+                        .unwrap();
+                    return Ok(str_val.into_struct_value().into());
+                }
+                BinOp::Eq | BinOp::Ne => {
+                    // String comparison
+                    let l_ptr = self.builder.build_extract_value(l, 0, "l_ptr").unwrap();
+                    let l_len = self
+                        .builder
+                        .build_extract_value(l, 1, "l_len")
+                        .unwrap()
+                        .into_int_value();
+                    let r_ptr = self.builder.build_extract_value(r, 0, "r_ptr").unwrap();
+                    let r_len = self
+                        .builder
+                        .build_extract_value(r, 1, "r_len")
+                        .unwrap()
+                        .into_int_value();
+
+                    // Compare lengths
+                    let len_eq = self
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, l_len, r_len, "len_eq")
+                        .unwrap();
+
+                    // If lengths are equal, compare contents with memcmp
+                    let memcmp_fn = self.get_or_declare_memcmp();
+                    let cmp_result = self
+                        .builder
+                        .build_call(
+                            memcmp_fn,
+                            &[l_ptr.into(), r_ptr.into(), l_len.into()],
+                            "memcmp_res",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_int_value();
+                    let cmp_eq = self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            cmp_result,
+                            self.context.i32_type().const_zero(),
+                            "cmp_eq",
+                        )
+                        .unwrap();
+
+                    // Final result: lengths equal AND contents equal
+                    let str_eq = self.builder.build_and(len_eq, cmp_eq, "str_eq").unwrap();
+
+                    if op == BinOp::Ne {
+                        let negated = self.builder.build_not(str_eq, "str_ne").unwrap();
+                        return Ok(negated.into());
+                    }
+                    return Ok(str_eq.into());
+                }
+                _ => {
+                    return Err(vec![CompileError::type_error(
+                        format!("unsupported binary operation on struct/string types"),
+                        Span::empty(0),
+                    )]);
+                }
+            }
+        }
+
         if lhs.is_int_value() && rhs.is_int_value() {
             let l = lhs.into_int_value();
             let r = rhs.into_int_value();

@@ -132,3 +132,81 @@ fn test_casting() {
 fn test_block_comments() {
     assert_eq!(compile_and_run("block_comments.ny"), 42);
 }
+
+// Phase 4 tests
+
+#[test]
+fn test_enums() {
+    assert_eq!(compile_and_run("enums.ny"), 2); // Color::Green → 2
+}
+
+#[test]
+fn test_match_expr() {
+    assert_eq!(compile_and_run("match_expr.ny"), 119); // describe(1)+describe(5) = 20+99
+}
+
+#[test]
+fn test_tuples() {
+    assert_eq!(compile_and_run("tuples.ny"), 3); // 10/3 = 3
+}
+
+// Phase 5 tests
+
+#[test]
+fn test_defer_alloc() {
+    assert_eq!(compile_and_run("defer_alloc.ny"), 42);
+}
+
+// Phase 6 tests
+
+#[test]
+fn test_loop_stmt() {
+    assert_eq!(compile_and_run("loop_stmt.ny"), 45);
+}
+
+// Phase 7 tests
+
+#[test]
+fn test_impl_block() {
+    assert_eq!(compile_and_run("impl_block.ny"), 52);
+}
+
+// Phase 8 tests
+
+#[test]
+fn test_traits() {
+    assert_eq!(compile_and_run("traits.ny"), 52);
+}
+
+// Phase 10 tests
+
+#[test]
+fn test_file_io() {
+    assert_eq!(compile_and_run("file_io.ny"), 42);
+}
+
+// Phase 11 tests
+
+#[test]
+fn test_unsafe_ptr() {
+    assert_eq!(compile_and_run("unsafe_ptr.ny"), 42);
+}
+
+#[test]
+fn test_string_ops() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny")
+        .unwrap()
+        .args(["build", "tests/fixtures/valid/string_ops.ny", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let out = process::Command::new(&output)
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("hello world"), "stdout: {}", stdout);
+    assert!(stdout.contains("5"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
+}

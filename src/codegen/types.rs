@@ -32,6 +32,24 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
             struct_ty.set_body(&field_types, false);
             struct_ty.into()
         }
+        NyType::Enum { .. } => context.i32_type().into(),
+        NyType::Slice(_) => {
+            // Slice is { ptr, len } like str
+            context
+                .struct_type(
+                    &[
+                        context.ptr_type(AddressSpace::default()).into(),
+                        context.i64_type().into(),
+                    ],
+                    false,
+                )
+                .into()
+        }
+        NyType::Tuple(elems) => {
+            let field_types: Vec<BasicTypeEnum> =
+                elems.iter().map(|t| ny_to_llvm(context, t)).collect();
+            context.struct_type(&field_types, false).into()
+        }
         NyType::Unit | NyType::Function { .. } => {
             panic!("cannot convert {} to LLVM basic type", ty)
         }

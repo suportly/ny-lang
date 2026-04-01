@@ -71,9 +71,19 @@ impl Parser {
             });
         }
 
-        // Array type: [N]T
+        // Array type: [N]T or Slice type: []T
         if *self.peek() == TokenKind::LBracket {
             self.advance();
+            // Check for slice: []T (no size)
+            if *self.peek() == TokenKind::RBracket {
+                self.advance();
+                let elem = self.parse_type_annotation()?;
+                let span = start.merge(elem.span());
+                return Ok(TypeAnnotation::Slice {
+                    elem: Box::new(elem),
+                    span,
+                });
+            }
             let size = match self.peek().clone() {
                 TokenKind::IntLit(n) => {
                     self.advance();
@@ -81,7 +91,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(CompileError::syntax(
-                        "expected array size (integer literal)".to_string(),
+                        "expected array size (integer literal) or ']' for slice".to_string(),
                         self.peek_span(),
                     ));
                 }
@@ -93,6 +103,24 @@ impl Parser {
                 elem: Box::new(elem),
                 size,
                 span,
+            });
+        }
+
+        // Tuple type: (T1, T2, ...)
+        if *self.peek() == TokenKind::LParen {
+            self.advance();
+            let mut elements = Vec::new();
+            while *self.peek() != TokenKind::RParen {
+                if !elements.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                elements.push(Box::new(self.parse_type_annotation()?));
+            }
+            let end = self.peek_span();
+            self.expect(&TokenKind::RParen)?;
+            return Ok(TypeAnnotation::Tuple {
+                elements,
+                span: start.merge(end),
             });
         }
 
@@ -112,7 +140,12 @@ impl Parser {
                     errors.push(e);
                     while !matches!(
                         self.peek(),
-                        TokenKind::Fn | TokenKind::Struct | TokenKind::Eof
+                        TokenKind::Fn
+                            | TokenKind::Struct
+                            | TokenKind::Enum
+                            | TokenKind::Impl
+                            | TokenKind::Trait
+                            | TokenKind::Eof
                     ) {
                         self.advance();
                     }
@@ -128,11 +161,21 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> Result<Item, CompileError> {
+        // Skip optional `pub` keyword
+        if *self.peek() == TokenKind::Pub {
+            self.advance();
+        }
         match self.peek() {
             TokenKind::Fn => self.parse_function(),
             TokenKind::Struct => self.parse_struct_def(),
+            TokenKind::Enum => self.parse_enum_def(),
+            TokenKind::Impl => self.parse_impl_block(),
+            TokenKind::Trait => self.parse_trait_def(),
             _ => Err(CompileError::syntax(
-                format!("expected 'fn' or 'struct', found {:?}", self.peek()),
+                format!(
+                    "expected 'fn', 'struct', 'enum', or 'impl', found {:?}",
+                    self.peek()
+                ),
                 self.peek_span(),
             )),
         }
@@ -160,6 +203,138 @@ impl Parser {
         Ok(Item::StructDef {
             name,
             fields,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_enum_def(&mut self) -> Result<Item, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Enum)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut variants = Vec::new();
+        while *self.peek() != TokenKind::RBrace {
+            let var_start = self.peek_span();
+            let (variant_name, _) = self.expect_ident()?;
+            // Check for payload: Variant(Type1, Type2, ...)
+            let mut payload = Vec::new();
+            if *self.peek() == TokenKind::LParen {
+                self.advance();
+                while *self.peek() != TokenKind::RParen {
+                    if !payload.is_empty() {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                    payload.push(self.parse_type_annotation()?);
+                }
+                self.expect(&TokenKind::RParen)?;
+            }
+            let var_span = var_start.merge(self.tokens[self.pos.saturating_sub(1)].span);
+            variants.push(EnumVariantDef {
+                name: variant_name,
+                payload,
+                span: var_span,
+            });
+            if *self.peek() == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Item::EnumDef {
+            name,
+            variants,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_trait_def(&mut self) -> Result<Item, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Trait)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut methods = Vec::new();
+        while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
+            let sig_start = self.peek_span();
+            self.expect(&TokenKind::Fn)?;
+            let (method_name, _) = self.expect_ident()?;
+            self.expect(&TokenKind::LParen)?;
+
+            let mut params = Vec::new();
+            while *self.peek() != TokenKind::RParen {
+                if !params.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                let param_start = self.peek_span();
+                let (param_name, _) = self.expect_ident()?;
+                self.expect(&TokenKind::Colon)?;
+                let ty = self.parse_type_annotation()?;
+                let param_span = param_start.merge(ty.span());
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    span: param_span,
+                });
+            }
+            self.expect(&TokenKind::RParen)?;
+            self.expect(&TokenKind::Arrow)?;
+            let return_type = self.parse_type_annotation()?;
+            let end = self.peek_span();
+            self.expect(&TokenKind::Semi)?;
+            methods.push(TraitMethodSig {
+                name: method_name,
+                params,
+                return_type,
+                span: sig_start.merge(end),
+            });
+        }
+
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Item::TraitDef {
+            name,
+            methods,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_impl_block(&mut self) -> Result<Item, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Impl)?;
+        let (first_name, _) = self.expect_ident()?;
+
+        // Check for `impl Trait for Type { ... }`
+        let (trait_name, type_name) = if let TokenKind::Ident(next) = self.peek().clone() {
+            if next == "for" {
+                self.advance(); // consume "for"
+                let (tn, _) = self.expect_ident()?;
+                (Some(first_name), tn)
+            } else {
+                (None, first_name)
+            }
+        } else {
+            (None, first_name)
+        };
+
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut methods = Vec::new();
+        while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
+            // Skip optional pub inside impl
+            if *self.peek() == TokenKind::Pub {
+                self.advance();
+            }
+            methods.push(self.parse_function()?);
+        }
+
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Item::ImplBlock {
+            type_name,
+            trait_name,
+            methods,
             span: start.merge(end),
         })
     }
@@ -239,6 +414,15 @@ impl Parser {
                     let span = self.advance().span;
                     self.expect(&TokenKind::Semi)?;
                     stmts.push(Stmt::Continue { span });
+                }
+                TokenKind::Defer => {
+                    stmts.push(self.parse_defer_stmt()?);
+                }
+                TokenKind::Loop => {
+                    stmts.push(self.parse_loop_stmt()?);
+                }
+                TokenKind::LParen if self.is_tuple_destructure() => {
+                    stmts.push(self.parse_tuple_destructure()?);
                 }
                 TokenKind::Ident(_) => {
                     if self.is_var_decl_or_assign() {
@@ -343,15 +527,25 @@ impl Parser {
     fn is_var_decl_or_assign(&self) -> bool {
         if let TokenKind::Ident(_) = &self.tokens[self.pos].kind {
             if self.pos + 1 < self.tokens.len() {
-                matches!(
-                    self.tokens[self.pos + 1].kind,
+                match &self.tokens[self.pos + 1].kind {
                     TokenKind::Colon
-                        | TokenKind::ColonTilde
-                        | TokenKind::ColonColon
-                        | TokenKind::ColonAssign
-                        | TokenKind::ColonTildeAssign
-                        | TokenKind::Assign
-                )
+                    | TokenKind::ColonTilde
+                    | TokenKind::ColonAssign
+                    | TokenKind::ColonTildeAssign
+                    | TokenKind::Assign => true,
+                    // ColonColon could be const decl (name :: Type = value)
+                    // or enum variant (EnumName::Variant). Distinguish by checking
+                    // if token at pos+3 is Assign (const decl) vs anything else (enum variant).
+                    TokenKind::ColonColon => {
+                        if self.pos + 3 < self.tokens.len() {
+                            // For simple named types: name :: Type = ...
+                            matches!(self.tokens[self.pos + 3].kind, TokenKind::Assign)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
             } else {
                 false
             }
@@ -526,6 +720,37 @@ impl Parser {
         })
     }
 
+    fn parse_loop_stmt(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Loop)?;
+        let body = self.parse_block_expr()?;
+        let span = start.merge(body.span());
+        Ok(Stmt::Loop { body, span })
+    }
+
+    fn parse_defer_stmt(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Defer)?;
+        let body = if *self.peek() == TokenKind::LBrace {
+            self.parse_block_expr()?
+        } else {
+            let expr = self.parse_expr(0)?;
+            let end = self.peek_span();
+            self.expect(&TokenKind::Semi)?;
+            let span = expr.span().merge(end);
+            Expr::Block {
+                stmts: vec![Stmt::ExprStmt {
+                    expr: expr.clone(),
+                    span: expr.span(),
+                }],
+                tail_expr: None,
+                span,
+            }
+        };
+        let span = start.merge(body.span());
+        Ok(Stmt::Defer { body, span })
+    }
+
     fn parse_if_expr(&mut self) -> Result<Expr, CompileError> {
         let start = self.peek_span();
         self.expect(&TokenKind::If)?;
@@ -568,6 +793,17 @@ impl Parser {
             match self.peek() {
                 TokenKind::Dot => {
                     self.advance();
+                    // Tuple index: expr.0, expr.1, etc.
+                    if let TokenKind::IntLit(n) = self.peek().clone() {
+                        let idx_span = self.advance().span;
+                        let span = lhs.span().merge(idx_span);
+                        lhs = Expr::TupleIndex {
+                            object: Box::new(lhs),
+                            index: n as usize,
+                            span,
+                        };
+                        continue;
+                    }
                     let (field, field_span) = self.expect_ident()?;
                     if *self.peek() == TokenKind::LParen {
                         self.advance();
@@ -682,6 +918,34 @@ impl Parser {
                 let name = name.clone();
                 let start = self.advance().span;
 
+                // Enum variant: EnumName::Variant or EnumName::Variant(args)
+                if *self.peek() == TokenKind::ColonColon {
+                    self.advance();
+                    let (variant, variant_span) = self.expect_ident()?;
+                    // Check for payload args: EnumName::Variant(arg1, arg2)
+                    let mut args = Vec::new();
+                    let end_span = if *self.peek() == TokenKind::LParen {
+                        self.advance();
+                        while *self.peek() != TokenKind::RParen {
+                            if !args.is_empty() {
+                                self.expect(&TokenKind::Comma)?;
+                            }
+                            args.push(self.parse_expr(0)?);
+                        }
+                        let end = self.peek_span();
+                        self.expect(&TokenKind::RParen)?;
+                        end
+                    } else {
+                        variant_span
+                    };
+                    return Ok(Expr::EnumVariant {
+                        enum_name: name,
+                        variant,
+                        args,
+                        span: start.merge(end_span),
+                    });
+                }
+
                 // Struct init: Name { field: expr, ... }
                 if *self.peek() == TokenKind::LBrace && self.looks_like_struct_init() {
                     return self.parse_struct_init(name, start);
@@ -709,10 +973,29 @@ impl Parser {
                 }
             }
             TokenKind::LParen => {
-                self.advance();
-                let expr = self.parse_expr(0)?;
-                self.expect(&TokenKind::RParen)?;
-                Ok(expr)
+                let start = self.advance().span;
+                let first = self.parse_expr(0)?;
+                if *self.peek() == TokenKind::Comma {
+                    // Tuple literal: (expr1, expr2, ...)
+                    let mut elements = vec![first];
+                    while *self.peek() == TokenKind::Comma {
+                        self.advance();
+                        if *self.peek() == TokenKind::RParen {
+                            break;
+                        }
+                        elements.push(self.parse_expr(0)?);
+                    }
+                    let end = self.peek_span();
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(Expr::TupleLit {
+                        elements,
+                        span: start.merge(end),
+                    })
+                } else {
+                    // Parenthesized expression
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             TokenKind::LBracket => {
                 let start = self.advance().span;
@@ -749,6 +1032,7 @@ impl Parser {
                 })
             }
             TokenKind::If => self.parse_if_expr(),
+            TokenKind::Match => self.parse_match_expr(),
             TokenKind::Minus | TokenKind::Not | TokenKind::Tilde => {
                 let bp = prefix_bp(self.peek()).unwrap();
                 let op_token = self.advance().clone();
@@ -771,6 +1055,143 @@ impl Parser {
                 self.peek_span(),
             )),
         }
+    }
+
+    fn parse_match_expr(&mut self) -> Result<Expr, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Match)?;
+        let subject = Box::new(self.parse_expr(0)?);
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut arms = Vec::new();
+        while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::FatArrow)?;
+            let body = if *self.peek() == TokenKind::LBrace {
+                self.parse_block_expr()?
+            } else {
+                self.parse_expr(0)?
+            };
+            arms.push(MatchArm { pattern, body });
+            if *self.peek() == TokenKind::Comma {
+                self.advance();
+            }
+        }
+
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Expr::Match {
+            subject,
+            arms,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        match self.peek().clone() {
+            TokenKind::Underscore => {
+                let span = self.advance().span;
+                Ok(Pattern::Wildcard(span))
+            }
+            TokenKind::IntLit(n) => {
+                let span = self.advance().span;
+                Ok(Pattern::IntLit(n, span))
+            }
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                let start = self.advance().span;
+                self.expect(&TokenKind::ColonColon)?;
+                let (variant, variant_span) = self.expect_ident()?;
+                // Check for bindings: Pattern::Variant(a, b)
+                let mut bindings = Vec::new();
+                let end_span = if *self.peek() == TokenKind::LParen {
+                    self.advance();
+                    while *self.peek() != TokenKind::RParen {
+                        if !bindings.is_empty() {
+                            self.expect(&TokenKind::Comma)?;
+                        }
+                        let (binding_name, _) = self.expect_ident()?;
+                        bindings.push(binding_name);
+                    }
+                    let end = self.peek_span();
+                    self.expect(&TokenKind::RParen)?;
+                    end
+                } else {
+                    variant_span
+                };
+                Ok(Pattern::EnumVariant {
+                    enum_name: name,
+                    variant,
+                    bindings,
+                    span: start.merge(end_span),
+                })
+            }
+            _ => Err(CompileError::syntax(
+                format!("expected pattern, found {:?}", self.peek()),
+                self.peek_span(),
+            )),
+        }
+    }
+
+    fn is_tuple_destructure(&self) -> bool {
+        // Look for pattern: ( ident , → likely tuple destructuring
+        if *self.peek() == TokenKind::LParen && self.pos + 3 < self.tokens.len() {
+            matches!(
+                (
+                    &self.tokens[self.pos + 1].kind,
+                    &self.tokens[self.pos + 2].kind
+                ),
+                (TokenKind::Ident(_), TokenKind::Comma)
+            )
+        } else {
+            false
+        }
+    }
+
+    fn parse_tuple_destructure(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::LParen)?;
+
+        let mut names = Vec::new();
+        while *self.peek() != TokenKind::RParen {
+            if !names.is_empty() {
+                self.expect(&TokenKind::Comma)?;
+            }
+            let (name, _) = self.expect_ident()?;
+            names.push(name);
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        let mutability = match self.peek() {
+            TokenKind::ColonAssign => {
+                self.advance();
+                Mutability::Immutable
+            }
+            TokenKind::ColonTildeAssign => {
+                self.advance();
+                Mutability::Mutable
+            }
+            _ => {
+                return Err(CompileError::syntax(
+                    format!(
+                        "expected ':=' or ':~=' after tuple destructure, found {:?}",
+                        self.peek()
+                    ),
+                    self.peek_span(),
+                ));
+            }
+        };
+
+        let init = self.parse_expr(0)?;
+        let end = self.peek_span();
+        self.expect(&TokenKind::Semi)?;
+
+        Ok(Stmt::TupleDestructure {
+            names,
+            mutability,
+            init,
+            span: start.merge(end),
+        })
     }
 
     fn looks_like_struct_init(&self) -> bool {

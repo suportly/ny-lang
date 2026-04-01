@@ -25,6 +25,16 @@ pub enum TokenKind {
     Break,
     Continue,
     As,
+    Enum,
+    Match,
+    Defer,
+    Pub,
+    Use,
+    Mod,
+    Trait,
+    Impl,
+    Loop,
+    Unsafe,
 
     // Operators
     Plus,
@@ -66,6 +76,9 @@ pub enum TokenKind {
     LtLtAssign,
     GtGtAssign,
 
+    // Operators (Phase 4)
+    FatArrow,
+
     // Punctuation
     LParen,
     RParen,
@@ -81,6 +94,9 @@ pub enum TokenKind {
     ColonTildeAssign,
     Semi,
     Arrow,
+
+    // Phase 4
+    Underscore,
 
     // Special
     Eof,

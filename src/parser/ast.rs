@@ -19,6 +19,37 @@ pub enum Item {
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
+    EnumDef {
+        name: String,
+        variants: Vec<EnumVariantDef>,
+        span: Span,
+    },
+    ImplBlock {
+        type_name: String,
+        trait_name: Option<String>,
+        methods: Vec<Item>,
+        span: Span,
+    },
+    TraitDef {
+        name: String,
+        methods: Vec<TraitMethodSig>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeAnnotation,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariantDef {
+    pub name: String,
+    pub payload: Vec<TypeAnnotation>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +104,20 @@ pub enum Stmt {
         span: Span,
     },
     Continue {
+        span: Span,
+    },
+    TupleDestructure {
+        names: Vec<String>,
+        mutability: Mutability,
+        init: Expr,
+        span: Span,
+    },
+    Defer {
+        body: Expr,
+        span: Span,
+    },
+    Loop {
+        body: Expr,
         span: Span,
     },
 }
@@ -167,6 +212,26 @@ pub enum Expr {
         target_type: TypeAnnotation,
         span: Span,
     },
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    TupleLit {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    TupleIndex {
+        object: Box<Expr>,
+        index: usize,
+        span: Span,
+    },
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -186,7 +251,11 @@ impl Expr {
             | Expr::AddrOf { span, .. }
             | Expr::Deref { span, .. }
             | Expr::MethodCall { span, .. }
-            | Expr::Cast { span, .. } => *span,
+            | Expr::Cast { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::TupleLit { span, .. }
+            | Expr::TupleIndex { span, .. }
+            | Expr::EnumVariant { span, .. } => *span,
         }
     }
 }
@@ -229,6 +298,24 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        bindings: Vec<String>,
+        span: Span,
+    },
+    IntLit(i128, Span),
+    Wildcard(Span),
+}
+
+#[derive(Debug, Clone)]
 pub enum TypeAnnotation {
     Named {
         name: String,
@@ -243,6 +330,14 @@ pub enum TypeAnnotation {
         inner: Box<TypeAnnotation>,
         span: Span,
     },
+    Tuple {
+        elements: Vec<Box<TypeAnnotation>>,
+        span: Span,
+    },
+    Slice {
+        elem: Box<TypeAnnotation>,
+        span: Span,
+    },
 }
 
 impl TypeAnnotation {
@@ -250,7 +345,9 @@ impl TypeAnnotation {
         match self {
             TypeAnnotation::Named { span, .. }
             | TypeAnnotation::Array { span, .. }
-            | TypeAnnotation::Pointer { span, .. } => *span,
+            | TypeAnnotation::Pointer { span, .. }
+            | TypeAnnotation::Tuple { span, .. }
+            | TypeAnnotation::Slice { span, .. } => *span,
         }
     }
 
@@ -259,6 +356,8 @@ impl TypeAnnotation {
             TypeAnnotation::Named { name, .. } => name.as_str(),
             TypeAnnotation::Array { .. } => "<array>",
             TypeAnnotation::Pointer { .. } => "<pointer>",
+            TypeAnnotation::Tuple { .. } => "<tuple>",
+            TypeAnnotation::Slice { .. } => "<slice>",
         }
     }
 }

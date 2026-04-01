@@ -30,6 +30,12 @@ pub enum NyType {
         fields: Vec<(String, NyType)>,
     },
     Pointer(Box<NyType>),
+    Enum {
+        name: String,
+        variants: Vec<(String, Vec<NyType>)>,
+    },
+    Tuple(Vec<NyType>),
+    Slice(Box<NyType>),
 }
 
 impl NyType {
@@ -74,6 +80,37 @@ impl NyType {
 
     pub fn is_pointer(&self) -> bool {
         matches!(self, NyType::Pointer(_))
+    }
+
+    pub fn is_enum(&self) -> bool {
+        matches!(self, NyType::Enum { .. })
+    }
+
+    pub fn is_tuple(&self) -> bool {
+        matches!(self, NyType::Tuple(_))
+    }
+
+    pub fn is_slice(&self) -> bool {
+        matches!(self, NyType::Slice(_))
+    }
+
+    pub fn variant_index(&self, variant: &str) -> Option<usize> {
+        match self {
+            NyType::Enum { variants, .. } => {
+                variants.iter().position(|(name, _)| name == variant)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn variant_payload(&self, variant: &str) -> Option<&Vec<NyType>> {
+        match self {
+            NyType::Enum { variants, .. } => variants
+                .iter()
+                .find(|(name, _)| name == variant)
+                .map(|(_, payload)| payload),
+            _ => None,
+        }
     }
 
     pub fn elem_type(&self) -> Option<&NyType> {
@@ -166,6 +203,18 @@ impl fmt::Display for NyType {
             NyType::Array { elem, size } => write!(f, "[{}]{}", size, elem),
             NyType::Struct { name, .. } => write!(f, "{}", name),
             NyType::Pointer(inner) => write!(f, "*{}", inner),
+            NyType::Enum { name, .. } => write!(f, "{name}"),
+            NyType::Slice(elem) => write!(f, "[]{}", elem),
+            NyType::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

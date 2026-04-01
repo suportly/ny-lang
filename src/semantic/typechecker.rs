@@ -9,6 +9,8 @@ pub struct TypeChecker {
     functions: HashMap<String, (Vec<NyType>, NyType)>,
     /// Struct definitions: struct_name → fields
     structs: HashMap<String, Vec<(String, NyType)>>,
+    /// Enum definitions: enum_name → variants with payload types
+    enums: HashMap<String, Vec<(String, Vec<NyType>)>>,
     /// Function parameter names (needed for method call self-parameter detection)
     function_params: HashMap<String, Vec<String>>,
     current_return_type: NyType,
@@ -25,11 +27,13 @@ impl TypeChecker {
             .collect();
 
         let structs = resolved.structs.clone();
+        let enums = resolved.enums.clone();
 
         Self {
             scopes: vec![HashMap::new()],
             functions,
             structs,
+            enums,
             function_params: HashMap::new(),
             current_return_type: NyType::Unit,
             errors: Vec::new(),
@@ -73,6 +77,13 @@ impl TypeChecker {
                         fields: fields.clone(),
                     });
                 }
+                // Check enum types
+                if let Some(variant_defs) = self.enums.get(name) {
+                    return Some(NyType::Enum {
+                        name: name.clone(),
+                        variants: variant_defs.clone(),
+                    });
+                }
                 // "unit" or "()" convention
                 if name == "()" {
                     return Some(NyType::Unit);
@@ -90,6 +101,17 @@ impl TypeChecker {
                 let inner_ty = self.resolve_type_annotation(inner)?;
                 Some(NyType::Pointer(Box::new(inner_ty)))
             }
+            TypeAnnotation::Tuple { elements, .. } => {
+                let mut resolved = Vec::new();
+                for elem in elements {
+                    resolved.push(self.resolve_type_annotation(elem)?);
+                }
+                Some(NyType::Tuple(resolved))
+            }
+            TypeAnnotation::Slice { elem, .. } => {
+                let elem_ty = self.resolve_type_annotation(elem)?;
+                Some(NyType::Slice(Box::new(elem_ty)))
+            }
         }
     }
 
@@ -101,6 +123,23 @@ impl TypeChecker {
             if let Item::FunctionDef { name, params, .. } = item {
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 checker.function_params.insert(name.clone(), param_names);
+            }
+            // Register impl block methods with both original and qualified names
+            if let Item::ImplBlock {
+                type_name, methods, ..
+            } = item
+            {
+                for method in methods {
+                    if let Item::FunctionDef { name, params, .. } = method {
+                        let param_names: Vec<String> =
+                            params.iter().map(|p| p.name.clone()).collect();
+                        let qualified_name = format!("{}_{}", type_name, name);
+                        checker
+                            .function_params
+                            .insert(qualified_name, param_names.clone());
+                        checker.function_params.insert(name.clone(), param_names);
+                    }
+                }
             }
         }
 
@@ -165,6 +204,18 @@ impl TypeChecker {
                 // Struct definitions are already registered in ResolvedInfo.
                 // No additional type checking needed at definition site.
             }
+            Item::EnumDef { .. } => {
+                // Enum definitions are already registered in ResolvedInfo.
+                // No additional type checking needed at definition site.
+            }
+            Item::ImplBlock { methods, .. } => {
+                for method in methods {
+                    self.check_item(method);
+                }
+            }
+            Item::TraitDef { .. } => {
+                // Trait definitions are type-checked at impl site
+            }
         }
     }
 
@@ -192,7 +243,33 @@ impl TypeChecker {
                 let rhs_ty = self.check_expr(rhs);
 
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                    BinOp::Add => {
+                        // String concatenation: str + str → str
+                        if lhs_ty == NyType::Str && rhs_ty == NyType::Str {
+                            NyType::Str
+                        } else {
+                            if !lhs_ty.is_numeric() {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "arithmetic operator requires numeric type, found '{}'",
+                                        lhs_ty
+                                    ),
+                                    lhs.span(),
+                                ));
+                            }
+                            if lhs_ty != rhs_ty {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "type mismatch in arithmetic: '{}' and '{}'",
+                                        lhs_ty, rhs_ty
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            lhs_ty
+                        }
+                    }
+                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                         if !lhs_ty.is_numeric() {
                             self.errors.push(CompileError::type_error(
                                 format!(
@@ -321,6 +398,105 @@ impl TypeChecker {
                         self.check_expr(arg);
                     }
                     return NyType::Unit;
+                }
+
+                // Built-in alloc(size) -> *i8 (generic pointer)
+                if callee == "alloc" {
+                    if args.len() != 1 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'alloc' expects 1 argument, found {}", args.len()),
+                            *span,
+                        ));
+                    } else {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if !arg_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("'alloc' expects integer size, found '{}'", arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+
+                // Built-in free(ptr) -> Unit
+                if callee == "free" {
+                    if args.len() != 1 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'free' expects 1 argument, found {}", args.len()),
+                            *span,
+                        ));
+                    } else {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if !arg_ty.is_pointer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("'free' expects a pointer, found '{}'", arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Unit;
+                }
+
+                // Built-in fopen(path, mode) -> *u8 (FILE pointer)
+                if callee == "fopen" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+
+                // Built-in fclose(fp) -> i32
+                if callee == "fclose" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
+                // Built-in fwrite_str(fp, str) -> i32
+                if callee == "fwrite_str" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
+                // Built-in fread_byte(fp) -> i32 (-1 on EOF)
+                if callee == "fread_byte" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
+                // Built-in exit(code) -> Unit
+                if callee == "exit" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Unit;
+                }
+
+                // Built-in sleep_ms(milliseconds) -> Unit
+                if callee == "sleep_ms" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Unit;
+                }
+
+                // Built-in sizeof(expr) -> i64
+                if callee == "sizeof" {
+                    if args.len() != 1 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'sizeof' expects 1 argument, found {}", args.len()),
+                            *span,
+                        ));
+                    } else {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::I64;
                 }
 
                 if let Some((param_types, ret_type)) = self.functions.get(callee).cloned() {
@@ -463,6 +639,7 @@ impl TypeChecker {
 
                 match &obj_ty {
                     NyType::Array { elem, .. } => *elem.clone(),
+                    NyType::Slice(elem) => *elem.clone(),
                     NyType::Pointer(inner) => *inner.clone(),
                     _ => {
                         self.errors.push(CompileError::type_error(
@@ -595,6 +772,232 @@ impl TypeChecker {
 
                 target_ty
             }
+
+            // ── Enum variant ─────────────────────────────────────────
+            Expr::EnumVariant {
+                enum_name,
+                variant,
+                args,
+                span,
+            } => {
+                if let Some(variants) = self.enums.get(enum_name).cloned() {
+                    // Check args match the variant's payload types
+                    if let Some((_, payload_types)) =
+                        variants.iter().find(|(name, _)| name == variant)
+                    {
+                        if args.len() != payload_types.len() {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "variant '{}::{}' expects {} arguments, found {}",
+                                    enum_name,
+                                    variant,
+                                    payload_types.len(),
+                                    args.len()
+                                ),
+                                *span,
+                            ));
+                        } else {
+                            for (i, (arg, expected_ty)) in
+                                args.iter().zip(payload_types.iter()).enumerate()
+                            {
+                                let arg_ty = self.check_expr(arg);
+                                if arg_ty != *expected_ty {
+                                    self.errors.push(CompileError::type_error(
+                                        format!(
+                                            "argument {} of '{}::{}': expected '{}', found '{}'",
+                                            i + 1,
+                                            enum_name,
+                                            variant,
+                                            expected_ty,
+                                            arg_ty
+                                        ),
+                                        arg.span(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    NyType::Enum {
+                        name: enum_name.clone(),
+                        variants,
+                    }
+                } else {
+                    self.errors.push(CompileError::type_error(
+                        format!("unknown enum '{}'", enum_name),
+                        *span,
+                    ));
+                    NyType::I32
+                }
+            }
+
+            // ── Match expression ─────────────────────────────────────
+            Expr::Match {
+                subject,
+                arms,
+                span,
+            } => {
+                let subject_ty = self.check_expr(subject);
+
+                // Check each arm's pattern against subject type and collect arm body types
+                let mut arm_types: Vec<NyType> = Vec::new();
+                let mut covered_variants: Vec<String> = Vec::new();
+                let mut has_wildcard = false;
+
+                for arm in arms {
+                    match &arm.pattern {
+                        Pattern::EnumVariant {
+                            enum_name,
+                            variant,
+                            bindings,
+                            span: pat_span,
+                        } => {
+                            // Verify subject is the same enum type
+                            match &subject_ty {
+                                NyType::Enum { name, variants } => {
+                                    if name != enum_name {
+                                        self.errors.push(CompileError::type_error(
+                                            format!(
+                                                "pattern enum '{}' does not match subject enum '{}'",
+                                                enum_name, name
+                                            ),
+                                            *pat_span,
+                                        ));
+                                    } else if let Some((_, payload)) =
+                                        variants.iter().find(|(n, _)| n == variant)
+                                    {
+                                        covered_variants.push(variant.clone());
+                                        // Declare bindings in scope for arm body
+                                        if !bindings.is_empty() {
+                                            self.push_scope();
+                                            for (i, binding) in bindings.iter().enumerate() {
+                                                let ty = payload
+                                                    .get(i)
+                                                    .cloned()
+                                                    .unwrap_or(NyType::I32);
+                                                self.declare(binding, ty);
+                                            }
+                                            let body_ty = self.check_expr(&arm.body);
+                                            arm_types.push(body_ty);
+                                            self.pop_scope();
+                                            continue;
+                                        }
+                                    } else {
+                                        self.errors.push(CompileError::type_error(
+                                            format!(
+                                                "enum '{}' has no variant '{}'",
+                                                enum_name, variant
+                                            ),
+                                            *pat_span,
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    self.errors.push(CompileError::type_error(
+                                        format!(
+                                            "cannot match enum pattern against non-enum type '{}'",
+                                            subject_ty
+                                        ),
+                                        *pat_span,
+                                    ));
+                                }
+                            }
+                        }
+                        Pattern::IntLit(_, pat_span) => {
+                            if !subject_ty.is_integer() {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "cannot match integer pattern against type '{}'",
+                                        subject_ty
+                                    ),
+                                    *pat_span,
+                                ));
+                            }
+                        }
+                        Pattern::Wildcard(_) => {
+                            has_wildcard = true;
+                        }
+                    }
+
+                    let body_ty = self.check_expr(&arm.body);
+                    arm_types.push(body_ty);
+                }
+
+                // Check all arm bodies return the same type
+                let result_ty = if let Some(first) = arm_types.first() {
+                    for (i, arm_ty) in arm_types.iter().enumerate().skip(1) {
+                        if arm_ty != first {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "match arm {} has type '{}', expected '{}'",
+                                    i, arm_ty, first
+                                ),
+                                arms[i].body.span(),
+                            ));
+                        }
+                    }
+                    first.clone()
+                } else {
+                    NyType::Unit
+                };
+
+                // Exhaustiveness check for enums
+                if let NyType::Enum { name, variants } = &subject_ty {
+                    if !has_wildcard {
+                        for (variant_name, _) in variants {
+                            if !covered_variants.contains(variant_name) {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "non-exhaustive match: variant '{}::{}' not covered",
+                                        name, variant_name
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                result_ty
+            }
+
+            // ── Tuple literal ────────────────────────────────────────
+            Expr::TupleLit { elements, .. } => {
+                let elem_types: Vec<NyType> = elements.iter().map(|e| self.check_expr(e)).collect();
+                NyType::Tuple(elem_types)
+            }
+
+            // ── Tuple index ──────────────────────────────────────────
+            Expr::TupleIndex {
+                object,
+                index,
+                span,
+            } => {
+                let obj_ty = self.check_expr(object);
+                match &obj_ty {
+                    NyType::Tuple(elems) => {
+                        if *index >= elems.len() {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "tuple index {} out of range for tuple of length {}",
+                                    index,
+                                    elems.len()
+                                ),
+                                *span,
+                            ));
+                            NyType::I32
+                        } else {
+                            elems[*index].clone()
+                        }
+                    }
+                    _ => {
+                        self.errors.push(CompileError::type_error(
+                            format!("cannot index into non-tuple type '{}'", obj_ty),
+                            *span,
+                        ));
+                        NyType::I32
+                    }
+                }
+            }
         }
     }
 
@@ -633,6 +1036,61 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> NyType {
+        // Built-in string methods
+        if *receiver_ty == NyType::Str {
+            match method {
+                "len" => {
+                    if !args.is_empty() {
+                        self.errors.push(CompileError::type_error(
+                            format!("'len' takes no arguments, found {}", args.len()),
+                            span,
+                        ));
+                    }
+                    return NyType::I64;
+                }
+                "substr" => {
+                    if args.len() != 2 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'substr' expects 2 arguments, found {}", args.len()),
+                            span,
+                        ));
+                    } else {
+                        let arg0_ty = self.check_expr(&args[0]);
+                        let arg1_ty = self.check_expr(&args[1]);
+                        if arg0_ty != NyType::I64 {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "argument 1 of 'substr': expected 'i64', found '{}'",
+                                    arg0_ty
+                                ),
+                                args[0].span(),
+                            ));
+                        }
+                        if arg1_ty != NyType::I64 {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "argument 2 of 'substr': expected 'i64', found '{}'",
+                                    arg1_ty
+                                ),
+                                args[1].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Str;
+                }
+                _ => {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    self.errors.push(CompileError::type_error(
+                        format!("no method '{}' found for type 'str'", method),
+                        span,
+                    ));
+                    return NyType::I32;
+                }
+            }
+        }
+
         // Look up the function by method name
         let func_info = self.functions.get(method).cloned();
         let param_names = self.function_params.get(method).cloned();
@@ -963,6 +1421,60 @@ impl TypeChecker {
                         "'continue' used outside of a loop",
                         *span,
                     ));
+                }
+            }
+
+            // ── Defer ─────────────────────────────────────────────────
+            Stmt::Defer { body, .. } => {
+                self.check_expr(body);
+            }
+
+            // ── Loop ─────────────────────────────────────────────────
+            Stmt::Loop { body, .. } => {
+                self.loop_depth += 1;
+                self.check_expr(body);
+                self.loop_depth -= 1;
+            }
+
+            // ── Tuple destructure ────────────────────────────────────
+            Stmt::TupleDestructure {
+                names, init, span, ..
+            } => {
+                let init_ty = self.check_expr(init);
+                match &init_ty {
+                    NyType::Tuple(elems) => {
+                        if names.len() != elems.len() {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "tuple destructure: expected {} names for tuple of length {}, found {}",
+                                    elems.len(),
+                                    elems.len(),
+                                    names.len()
+                                ),
+                                *span,
+                            ));
+                            // Declare names with Unit as fallback
+                            for name in names {
+                                self.declare(name, NyType::Unit);
+                            }
+                        } else {
+                            for (name, elem_ty) in names.iter().zip(elems.iter()) {
+                                self.declare(name, elem_ty.clone());
+                            }
+                        }
+                    }
+                    _ => {
+                        self.errors.push(CompileError::type_error(
+                            format!(
+                                "tuple destructure requires a tuple type, found '{}'",
+                                init_ty
+                            ),
+                            *span,
+                        ));
+                        for name in names {
+                            self.declare(name, NyType::Unit);
+                        }
+                    }
                 }
             }
         }

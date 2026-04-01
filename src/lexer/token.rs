@@ -35,6 +35,7 @@ pub enum TokenKind {
     Impl,
     Loop,
     Unsafe,
+    Extern,
 
     // Operators
     Plus,

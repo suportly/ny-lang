@@ -28,6 +28,10 @@ pub enum Item {
         path: String,
         span: Span,
     },
+    ExternBlock {
+        functions: Vec<ExternFnDecl>,
+        span: Span,
+    },
     ImplBlock {
         type_name: String,
         trait_name: Option<String>,
@@ -39,6 +43,15 @@ pub enum Item {
         methods: Vec<TraitMethodSig>,
         span: Span,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeAnnotation,
+    pub variadic: bool,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

@@ -160,6 +160,7 @@ impl Lexer {
             "impl" => TokenKind::Impl,
             "loop" => TokenKind::Loop,
             "unsafe" => TokenKind::Unsafe,
+            "extern" => TokenKind::Extern,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
             "_" => TokenKind::Underscore,

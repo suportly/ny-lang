@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// Phase H tests (extern FFI)
+
+#[test]
+fn test_extern_ffi() {
+    assert_eq!(compile_and_run("extern_ffi.ny"), 42);
+}
+
 // Phase D tests (modules)
 
 #[test]

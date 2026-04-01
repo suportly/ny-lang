@@ -263,6 +263,9 @@ impl TypeChecker {
             Item::Use { .. } => {
                 // Already resolved at compile time
             }
+            Item::ExternBlock { .. } => {
+                // Extern functions registered in resolver pass
+            }
             Item::TraitDef {
                 name, methods, span,
             } => {

@@ -167,6 +167,8 @@ impl Parser {
                             | TokenKind::Enum
                             | TokenKind::Impl
                             | TokenKind::Trait
+                            | TokenKind::Extern
+                            | TokenKind::Use
                             | TokenKind::Eof
                     ) {
                         self.advance();
@@ -194,6 +196,7 @@ impl Parser {
             TokenKind::Impl => self.parse_impl_block(),
             TokenKind::Trait => self.parse_trait_def(),
             TokenKind::Use => self.parse_use_decl(),
+            TokenKind::Extern => self.parse_extern_block(),
             _ => Err(CompileError::syntax(
                 format!(
                     "expected 'fn', 'struct', 'enum', or 'impl', found {:?}",
@@ -268,6 +271,75 @@ impl Parser {
         Ok(Item::EnumDef {
             name,
             variants,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_extern_block(&mut self) -> Result<Item, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Extern)?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut functions = Vec::new();
+        while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
+            let fn_start = self.peek_span();
+            self.expect(&TokenKind::Fn)?;
+            let (name, _) = self.expect_ident()?;
+            self.expect(&TokenKind::LParen)?;
+
+            let mut params = Vec::new();
+            let mut variadic = false;
+            while *self.peek() != TokenKind::RParen {
+                if !params.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                // Check for variadic: ...
+                if *self.peek() == TokenKind::DotDot {
+                    self.advance();
+                    if *self.peek() == TokenKind::Dot {
+                        self.advance();
+                    }
+                    variadic = true;
+                    break;
+                }
+                let param_start = self.peek_span();
+                let (param_name, _) = self.expect_ident()?;
+                self.expect(&TokenKind::Colon)?;
+                let ty = self.parse_type_annotation()?;
+                let param_span = param_start.merge(ty.span());
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    span: param_span,
+                });
+            }
+            self.expect(&TokenKind::RParen)?;
+
+            let return_type = if *self.peek() == TokenKind::Arrow {
+                self.advance();
+                self.parse_type_annotation()?
+            } else {
+                TypeAnnotation::Named {
+                    name: "()".to_string(),
+                    span: self.peek_span(),
+                }
+            };
+
+            let fn_end = self.peek_span();
+            self.expect(&TokenKind::Semi)?;
+            functions.push(ExternFnDecl {
+                name,
+                params,
+                return_type,
+                variadic,
+                span: fn_start.merge(fn_end),
+            });
+        }
+
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Item::ExternBlock {
+            functions,
             span: start.merge(end),
         })
     }

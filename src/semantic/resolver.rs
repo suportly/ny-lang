@@ -227,6 +227,27 @@ impl Resolver {
         // ---- Pass 1b: Register trait definitions (for later validation) ----
         // (Currently we just parse them; trait conformance checking is future work)
 
+        // ---- Pass 1c: Register extern function declarations ----
+        for item in &program.items {
+            if let Item::ExternBlock { functions, .. } = item {
+                for ext_fn in functions {
+                    let mut param_types: Vec<NyType> = Vec::new();
+                    for p in &ext_fn.params {
+                        if let Some(ty) = resolver.resolve_type_annotation(&p.ty) {
+                            param_types.push(ty);
+                        }
+                    }
+                    let ret_type = resolver
+                        .resolve_type_annotation(&ext_fn.return_type)
+                        .unwrap_or(NyType::Unit);
+                    resolver.functions.insert(
+                        ext_fn.name.clone(),
+                        (param_types, ret_type, ext_fn.span),
+                    );
+                }
+            }
+        }
+
         // ---- Pass 2: Register all function signatures (forward references) ----
         // First, register impl block methods as TypeName_method functions
         for item in &program.items {

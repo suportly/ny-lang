@@ -575,7 +575,43 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
-        // Pass 0b: Flatten impl methods into top-level functions with qualified names
+        // Pass 0b: Register extern function declarations
+        for item in &program.items {
+            if let Item::ExternBlock { functions, .. } = item {
+                for ext_fn in functions {
+                    let ret_ty = self.resolve_type_annotation(&ext_fn.return_type);
+                    let param_types: Vec<NyType> = ext_fn
+                        .params
+                        .iter()
+                        .map(|p| self.resolve_type_annotation(&p.ty))
+                        .collect();
+
+                    let llvm_param_types: Vec<BasicTypeEnum> = param_types
+                        .iter()
+                        .map(|t| ny_to_llvm(self.context, t))
+                        .collect();
+                    let param_meta: Vec<_> =
+                        llvm_param_types.iter().map(|t| (*t).into()).collect();
+
+                    let fn_type = match &ret_ty {
+                        NyType::Unit => {
+                            self.context.void_type().fn_type(&param_meta, ext_fn.variadic)
+                        }
+                        ty => ny_to_llvm(self.context, ty)
+                            .fn_type(&param_meta, ext_fn.variadic),
+                    };
+
+                    let function =
+                        self.module.add_function(&ext_fn.name, fn_type, None);
+                    self.functions.insert(
+                        ext_fn.name.clone(),
+                        (function, param_types, ret_ty),
+                    );
+                }
+            }
+        }
+
+        // Pass 0c: Flatten impl methods into top-level functions with qualified names
         let mut impl_methods: Vec<(String, &Vec<Param>, &TypeAnnotation, &Expr, Span)> = Vec::new();
         for item in &program.items {
             if let Item::ImplBlock {

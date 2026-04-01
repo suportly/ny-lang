@@ -2,6 +2,7 @@ pub mod codegen;
 pub mod common;
 pub mod diagnostics;
 pub mod lexer;
+pub mod monomorphize;
 pub mod parser;
 pub mod semantic;
 
@@ -26,6 +27,9 @@ pub fn compile(
     let mut visited = HashSet::new();
     visited.insert(source_path.to_path_buf());
     resolve_uses(&mut program, base_dir, &mut visited)?;
+
+    // Monomorphize generic functions before semantic analysis
+    monomorphize::monomorphize(&mut program);
 
     semantic::analyze(&program)?;
     codegen::generate(&program, source_path, output_path, opt_level, emit)

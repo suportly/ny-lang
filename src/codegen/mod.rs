@@ -625,6 +625,7 @@ impl<'ctx> CodeGen<'ctx> {
                         return_type,
                         body,
                         span,
+                        type_params: _,
                     } = method
                     {
                         let qualified_name = format!("{}_{}", type_name, name);

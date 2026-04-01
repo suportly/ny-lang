@@ -465,6 +465,21 @@ impl Parser {
         let start_span = self.peek_span();
         self.expect(&TokenKind::Fn)?;
         let (name, _) = self.expect_ident()?;
+
+        // Parse optional type parameters: <T, U, ...>
+        let mut type_params = Vec::new();
+        if *self.peek() == TokenKind::Lt {
+            self.advance(); // consume <
+            while *self.peek() != TokenKind::Gt {
+                if !type_params.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                let (tp_name, _) = self.expect_ident()?;
+                type_params.push(tp_name);
+            }
+            self.expect(&TokenKind::Gt)?;
+        }
+
         self.expect(&TokenKind::LParen)?;
 
         let mut params = Vec::new();
@@ -508,6 +523,7 @@ impl Parser {
         let end_span = body.span();
         Ok(Item::FunctionDef {
             name,
+            type_params,
             params,
             return_type,
             body,

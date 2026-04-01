@@ -76,7 +76,7 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 ## Reserved Keywords
 
 fn, if, else, while, for, in, return, struct, break, continue, as, enum, match,
-defer, pub, use, mod, trait, impl, loop, unsafe
+defer, pub, use, mod, trait, impl, loop, unsafe, extern, let
 
 ## Roadmap
 

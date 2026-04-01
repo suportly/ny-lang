@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// Phase E tests (generics)
+
+#[test]
+fn test_generics() {
+    assert_eq!(compile_and_run("generics.ny"), 42);
+}
+
 // if let test
 
 #[test]

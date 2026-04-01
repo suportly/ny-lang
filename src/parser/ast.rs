@@ -9,6 +9,7 @@ pub struct Program {
 pub enum Item {
     FunctionDef {
         name: String,
+        type_params: Vec<String>,
         params: Vec<Param>,
         return_type: TypeAnnotation,
         body: Expr,

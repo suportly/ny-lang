@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    x :~ i32 = 0;
+    i :~ i32 = 0;
+    while i < 10 {
+        x = x + i;
+        i = i + 1;
+    }
+    return x;
+}

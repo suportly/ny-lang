@@ -238,6 +238,17 @@ impl<'ctx> CodeGen<'ctx> {
                 let elem_ty = self.resolve_type_annotation(elem);
                 NyType::Slice(Box::new(elem_ty))
             }
+            TypeAnnotation::Function { params, ret, .. } => {
+                let param_types: Vec<NyType> = params
+                    .iter()
+                    .map(|p| self.resolve_type_annotation(p))
+                    .collect();
+                let ret_ty = self.resolve_type_annotation(ret);
+                NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                }
+            }
         }
     }
 
@@ -261,6 +272,46 @@ impl<'ctx> CodeGen<'ctx> {
         let st = self.context.opaque_struct_type(name);
         st.set_body(&field_llvm_types, false);
         st
+    }
+
+    // ------------------------------------------------------------------
+    // Check if an enum has any data-carrying variant
+    // ------------------------------------------------------------------
+
+    fn enum_has_payload(&self, enum_name: &str) -> bool {
+        if let Some(variants) = self.enum_variants.get(enum_name) {
+            variants.iter().any(|(_, payload)| !payload.is_empty())
+        } else {
+            false
+        }
+    }
+
+    /// Build the LLVM struct type for a data-carrying enum: { i32, field0, field1, ... }
+    /// where fields are the UNION of all payload positions across variants (largest at each position).
+    fn enum_struct_type(
+        &self,
+        enum_name: &str,
+    ) -> inkwell::types::StructType<'ctx> {
+        let variants = self.enum_variants.get(enum_name).unwrap();
+        // Find max payload count across all variants
+        let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
+        let mut field_types: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()]; // tag
+        for i in 0..max_fields {
+            // Find the largest type at position i across all variants
+            // For simplicity, use the first variant that has this position
+            let mut found = false;
+            for (_, payload) in variants {
+                if let Some(ty) = payload.get(i) {
+                    field_types.push(ny_to_llvm(self.context, ty));
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                field_types.push(self.context.i32_type().into()); // fallback
+            }
+        }
+        self.context.struct_type(&field_types, false)
     }
 
     // ------------------------------------------------------------------
@@ -383,6 +434,10 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MethodCall { object, method, .. } => {
                 let obj_ty = self.infer_expr_type(object);
                 match &obj_ty {
+                    NyType::Slice(_) => match method.as_str() {
+                        "len" => return NyType::I64,
+                        _ => return NyType::Unit,
+                    },
                     NyType::Str => match method.as_str() {
                         "len" => NyType::I64,
                         "substr" => NyType::Str,
@@ -429,6 +484,29 @@ impl<'ctx> CodeGen<'ctx> {
                 match obj_ty {
                     NyType::Tuple(elems) => elems.get(*index).cloned().unwrap_or(NyType::I32),
                     _ => NyType::I32,
+                }
+            }
+            Expr::Lambda {
+                params,
+                return_type,
+                ..
+            } => {
+                let param_types: Vec<NyType> = params
+                    .iter()
+                    .map(|p| self.resolve_type_annotation(&p.ty))
+                    .collect();
+                let ret_ty = self.resolve_type_annotation(return_type);
+                NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                }
+            }
+            Expr::RangeIndex { object, .. } => {
+                let obj_ty = self.infer_expr_type(object);
+                match obj_ty {
+                    NyType::Array { elem, .. } => NyType::Slice(elem),
+                    NyType::Slice(elem) => NyType::Slice(elem),
+                    _ => NyType::Slice(Box::new(NyType::I32)),
                 }
             }
             Expr::EnumVariant { enum_name, .. } => {
@@ -881,18 +959,74 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(size.into()));
                 }
 
-                let (func, _, ret_ty) = self.functions[callee].clone();
-                let mut arg_values = Vec::new();
-                for arg in args {
-                    let val = self.compile_expr(arg, function)?.unwrap();
-                    arg_values.push(val.into());
-                }
-                let call = self.builder.build_call(func, &arg_values, "call").unwrap();
+                if let Some((func, _, ret_ty)) = self.functions.get(callee).cloned() {
+                    let mut arg_values = Vec::new();
+                    for arg in args {
+                        let val = self.compile_expr(arg, function)?.unwrap();
+                        arg_values.push(val.into());
+                    }
+                    let call =
+                        self.builder.build_call(func, &arg_values, "call").unwrap();
 
-                if ret_ty == NyType::Unit {
-                    Ok(None)
+                    if ret_ty == NyType::Unit {
+                        Ok(None)
+                    } else {
+                        Ok(call.try_as_basic_value().basic())
+                    }
+                } else if let Some((ptr, var_ty)) = self.variables.get(callee).cloned() {
+                    // Calling a function pointer variable
+                    if let NyType::Function { params: param_tys, ret } = &var_ty {
+                        let llvm_param_types: Vec<BasicTypeEnum> = param_tys
+                            .iter()
+                            .map(|t| ny_to_llvm(self.context, t))
+                            .collect();
+                        let param_meta: Vec<_> =
+                            llvm_param_types.iter().map(|t| (*t).into()).collect();
+                        let fn_type = match ret.as_ref() {
+                            NyType::Unit => {
+                                self.context.void_type().fn_type(&param_meta, false)
+                            }
+                            ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
+                        };
+
+                        // Load the function pointer
+                        let fn_ptr_val = self
+                            .builder
+                            .build_load(
+                                self.context.ptr_type(AddressSpace::default()),
+                                ptr,
+                                "fn_ptr",
+                            )
+                            .unwrap()
+                            .into_pointer_value();
+
+                        let mut arg_values = Vec::new();
+                        for arg in args {
+                            let val = self.compile_expr(arg, function)?.unwrap();
+                            arg_values.push(val.into());
+                        }
+
+                        let call = self
+                            .builder
+                            .build_indirect_call(fn_type, fn_ptr_val, &arg_values, "lcall")
+                            .unwrap();
+
+                        if **ret == NyType::Unit {
+                            Ok(None)
+                        } else {
+                            Ok(call.try_as_basic_value().basic())
+                        }
+                    } else {
+                        Err(vec![CompileError::type_error(
+                            format!("'{}' is not callable", callee),
+                            expr.span(),
+                        )])
+                    }
                 } else {
-                    Ok(call.try_as_basic_value().basic())
+                    Err(vec![CompileError::name_error(
+                        format!("undeclared function '{}'", callee),
+                        expr.span(),
+                    )])
                 }
             }
 
@@ -1061,6 +1195,43 @@ impl<'ctx> CodeGen<'ctx> {
                         let val = self.builder.build_load(elem_llvm, gep, "idx_val").unwrap();
                         Ok(Some(val))
                     }
+                    NyType::Slice(elem) => {
+                        // Slice indexing: extract ptr from {ptr, len}, GEP, load
+                        let elem_llvm = ny_to_llvm(self.context, elem);
+                        let slice_val = self
+                            .compile_expr(object, function)?
+                            .unwrap()
+                            .into_struct_value();
+                        let ptr = self
+                            .builder
+                            .build_extract_value(slice_val, 0, "slice_ptr")
+                            .unwrap()
+                            .into_pointer_value();
+                        let len = self
+                            .builder
+                            .build_extract_value(slice_val, 1, "slice_len")
+                            .unwrap()
+                            .into_int_value();
+
+                        let idx_i64 = self
+                            .builder
+                            .build_int_z_extend_or_bit_cast(
+                                idx_val,
+                                self.context.i64_type(),
+                                "idx_ext",
+                            )
+                            .unwrap();
+                        self.build_bounds_check(idx_i64, len, function);
+
+                        let gep = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(elem_llvm, ptr, &[idx_i64], "slice_idx_ptr")
+                                .unwrap()
+                        };
+                        let val =
+                            self.builder.build_load(elem_llvm, gep, "slice_idx_val").unwrap();
+                        Ok(Some(val))
+                    }
                     _ => Err(vec![CompileError::type_error(
                         "cannot index non-array type".to_string(),
                         object.span(),
@@ -1191,6 +1362,22 @@ impl<'ctx> CodeGen<'ctx> {
                 ..
             } => {
                 let obj_ty = self.infer_expr_type(object);
+
+                // Handle built-in slice methods
+                if let NyType::Slice(_) = &obj_ty {
+                    let obj_val = self.compile_expr(object, function)?.unwrap();
+                    let slice_val = obj_val.into_struct_value();
+                    match method.as_str() {
+                        "len" => {
+                            let len_val = self
+                                .builder
+                                .build_extract_value(slice_val, 1, "slice_len")
+                                .unwrap();
+                            return Ok(Some(len_val));
+                        }
+                        _ => {}
+                    }
+                }
 
                 // Handle built-in string methods
                 if obj_ty == NyType::Str {
@@ -1345,17 +1532,211 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(result))
             }
 
-            // ---- Enum variant (produces i32 discriminant for simple enums) ----
-            Expr::EnumVariant {
-                enum_name, variant, ..
+            // ---- Enum variant ----
+            // ---- Lambda (non-capturing → anonymous function pointer) ----
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                ..
             } => {
-                if let Some(variant_defs) = self.enum_variants.get(enum_name) {
+                // Generate a unique anonymous function name
+                static LAMBDA_COUNTER: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                let id = LAMBDA_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let lambda_name = format!("__lambda_{}", id);
+
+                let ret_ty = self.resolve_type_annotation(return_type);
+                let param_types: Vec<NyType> = params
+                    .iter()
+                    .map(|p| self.resolve_type_annotation(&p.ty))
+                    .collect();
+
+                let llvm_param_types: Vec<BasicTypeEnum> = param_types
+                    .iter()
+                    .map(|t| ny_to_llvm(self.context, t))
+                    .collect();
+                let param_meta: Vec<_> = llvm_param_types.iter().map(|t| (*t).into()).collect();
+
+                let fn_type = match &ret_ty {
+                    NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
+                    ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
+                };
+
+                let lambda_fn = self.module.add_function(&lambda_name, fn_type, None);
+                self.functions.insert(
+                    lambda_name.clone(),
+                    (lambda_fn, param_types.clone(), ret_ty),
+                );
+
+                // Save state
+                let outer_vars = self.variables.clone();
+                self.variables.clear();
+                let current_bb = self.builder.get_insert_block().unwrap();
+
+                // Build lambda body
+                let entry = self.context.append_basic_block(lambda_fn, "entry");
+                self.builder.position_at_end(entry);
+
+                for (i, param) in params.iter().enumerate() {
+                    let ty = &param_types[i];
+                    let llvm_ty = ny_to_llvm(self.context, ty);
+                    let alloca = self.builder.build_alloca(llvm_ty, &param.name).unwrap();
+                    self.builder
+                        .build_store(alloca, lambda_fn.get_nth_param(i as u32).unwrap())
+                        .unwrap();
+                    self.variables
+                        .insert(param.name.clone(), (alloca, ty.clone()));
+                }
+
+                self.compile_expr(body, &lambda_fn)?;
+
+                let lambda_end_bb = self.builder.get_insert_block().unwrap();
+                if lambda_end_bb.get_terminator().is_none() {
+                    self.builder.build_return(None).unwrap();
+                }
+
+                // Restore state
+                self.variables = outer_vars;
+                self.builder.position_at_end(current_bb);
+
+                // Return the function pointer
+                let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
+                Ok(Some(fn_ptr.into()))
+            }
+
+            // ---- Range index (arr[start..end] → slice {ptr, len}) ----
+            Expr::RangeIndex {
+                object,
+                start,
+                end,
+                ..
+            } => {
+                let obj_ty = self.infer_expr_type(object);
+                let start_val = self
+                    .compile_expr(start, function)?
+                    .unwrap()
+                    .into_int_value();
+                let end_val = self
+                    .compile_expr(end, function)?
+                    .unwrap()
+                    .into_int_value();
+
+                let start_i64 = self
+                    .builder
+                    .build_int_z_extend_or_bit_cast(
+                        start_val,
+                        self.context.i64_type(),
+                        "start_ext",
+                    )
+                    .unwrap();
+                let end_i64 = self
+                    .builder
+                    .build_int_z_extend_or_bit_cast(
+                        end_val,
+                        self.context.i64_type(),
+                        "end_ext",
+                    )
+                    .unwrap();
+
+                match &obj_ty {
+                    NyType::Array { elem, size } => {
+                        let elem_llvm = ny_to_llvm(self.context, elem);
+                        let arr_llvm = elem_llvm.array_type(*size as u32);
+                        let arr_ptr = self.compile_expr_as_ptr(object, function)?;
+                        let zero = self.context.i64_type().const_zero();
+                        let gep = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(
+                                    arr_llvm,
+                                    arr_ptr,
+                                    &[zero, start_i64],
+                                    "slice_ptr",
+                                )
+                                .unwrap()
+                        };
+                        let len = self
+                            .builder
+                            .build_int_sub(end_i64, start_i64, "slice_len")
+                            .unwrap();
+                        // Build {ptr, len} slice struct
+                        let slice_ty = self.context.struct_type(
+                            &[
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                                self.context.i64_type().into(),
+                            ],
+                            false,
+                        );
+                        let slice_val = slice_ty.const_zero();
+                        let slice_val = self
+                            .builder
+                            .build_insert_value(slice_val, gep, 0, "slice_p")
+                            .unwrap();
+                        let slice_val = self
+                            .builder
+                            .build_insert_value(slice_val, len, 1, "slice_l")
+                            .unwrap();
+                        Ok(Some(slice_val.into_struct_value().into()))
+                    }
+                    _ => Err(vec![CompileError::type_error(
+                        "range index on non-array type".to_string(),
+                        object.span(),
+                    )]),
+                }
+            }
+
+            Expr::EnumVariant {
+                enum_name,
+                variant,
+                args,
+                ..
+            } => {
+                if let Some(variant_defs) = self.enum_variants.get(enum_name).cloned() {
                     let idx = variant_defs
                         .iter()
                         .position(|(name, _)| name == variant)
                         .unwrap_or(0);
-                    let val = self.context.i32_type().const_int(idx as u64, false);
-                    Ok(Some(val.into()))
+                    let tag_val = self.context.i32_type().const_int(idx as u64, false);
+
+                    if !self.enum_has_payload(enum_name) || args.is_empty() {
+                        // Simple enum — just return the discriminant
+                        Ok(Some(tag_val.into()))
+                    } else {
+                        // Data-carrying enum — build { tag, payload... } struct
+                        let enum_ty = self.enum_struct_type(enum_name);
+                        let alloca = self
+                            .builder
+                            .build_alloca(enum_ty, "enum_val")
+                            .unwrap();
+
+                        // Store tag
+                        let tag_ptr = self
+                            .builder
+                            .build_struct_gep(enum_ty, alloca, 0, "tag_ptr")
+                            .unwrap();
+                        self.builder.build_store(tag_ptr, tag_val).unwrap();
+
+                        // Store payload fields
+                        for (i, arg) in args.iter().enumerate() {
+                            let val = self.compile_expr(arg, function)?.unwrap();
+                            let field_ptr = self
+                                .builder
+                                .build_struct_gep(
+                                    enum_ty,
+                                    alloca,
+                                    (i + 1) as u32,
+                                    &format!("payload_{}", i),
+                                )
+                                .unwrap();
+                            self.builder.build_store(field_ptr, val).unwrap();
+                        }
+
+                        let result = self
+                            .builder
+                            .build_load(enum_ty, alloca, "enum_loaded")
+                            .unwrap();
+                        Ok(Some(result))
+                    }
                 } else {
                     Err(vec![CompileError::type_error(
                         format!("unknown enum '{}'", enum_name),
@@ -1366,21 +1747,51 @@ impl<'ctx> CodeGen<'ctx> {
 
             // ---- Match expression ----
             Expr::Match { subject, arms, .. } => {
-                let subject_val = self
-                    .compile_expr(subject, function)?
-                    .unwrap()
-                    .into_int_value();
+                let subject_raw = self.compile_expr(subject, function)?.unwrap();
+                let subject_ty = self.infer_expr_type(subject);
                 let result_ty = self.infer_expr_type(expr);
                 let has_result = result_ty != NyType::Unit;
 
+                // Determine if subject is a data-carrying enum
+                let is_tagged_union = match &subject_ty {
+                    NyType::Enum { name, .. } => self.enum_has_payload(name),
+                    _ => false,
+                };
+
+                // Extract the tag (discriminant) for the switch
+                let (subject_val, subject_ptr) = if is_tagged_union {
+                    let enum_name = match &subject_ty {
+                        NyType::Enum { name, .. } => name.clone(),
+                        _ => unreachable!(),
+                    };
+                    let enum_ty = self.enum_struct_type(&enum_name);
+                    // Store subject to alloca so we can GEP into it
+                    let alloca = self
+                        .builder
+                        .build_alloca(enum_ty, "match_subject")
+                        .unwrap();
+                    self.builder.build_store(alloca, subject_raw).unwrap();
+                    // Extract tag
+                    let tag_ptr = self
+                        .builder
+                        .build_struct_gep(enum_ty, alloca, 0, "tag_ptr")
+                        .unwrap();
+                    let tag = self
+                        .builder
+                        .build_load(self.context.i32_type(), tag_ptr, "tag")
+                        .unwrap()
+                        .into_int_value();
+                    (tag, Some(alloca))
+                } else {
+                    (subject_raw.into_int_value(), None)
+                };
+
                 let merge_bb = self.context.append_basic_block(*function, "match_merge");
 
-                // Find the wildcard arm (default), if any
                 let wildcard_idx = arms
                     .iter()
                     .position(|arm| matches!(arm.pattern, Pattern::Wildcard(_)));
 
-                // Create basic blocks for each arm
                 let arm_bbs: Vec<BasicBlock> = arms
                     .iter()
                     .enumerate()
@@ -1390,10 +1801,8 @@ impl<'ctx> CodeGen<'ctx> {
                     })
                     .collect();
 
-                // Save current block (where subject was evaluated)
                 let switch_bb = self.builder.get_insert_block().unwrap();
 
-                // Default block: wildcard arm or unreachable
                 let default_bb = if let Some(wi) = wildcard_idx {
                     arm_bbs[wi]
                 } else {
@@ -1405,7 +1814,6 @@ impl<'ctx> CodeGen<'ctx> {
                     unreachable_bb
                 };
 
-                // Build switch cases (exclude wildcard)
                 let mut cases: Vec<(inkwell::values::IntValue<'ctx>, BasicBlock<'ctx>)> =
                     Vec::new();
                 for (i, arm) in arms.iter().enumerate() {
@@ -1427,22 +1835,82 @@ impl<'ctx> CodeGen<'ctx> {
                             let const_val = self.context.i32_type().const_int(*n as u64, true);
                             cases.push((const_val, arm_bbs[i]));
                         }
-                        Pattern::Wildcard(_) => {
-                            // Handled as default_bb
-                        }
+                        Pattern::Wildcard(_) => {}
                     }
                 }
 
-                // Position back at the block where subject was evaluated to emit the switch
                 self.builder.position_at_end(switch_bb);
                 self.builder
                     .build_switch(subject_val, default_bb, &cases)
                     .unwrap();
 
-                // Compile each arm body
+                // Compile each arm body, extracting payload bindings for tagged unions
                 let mut incoming: Vec<(BasicValueEnum<'ctx>, BasicBlock<'ctx>)> = Vec::new();
                 for (i, arm) in arms.iter().enumerate() {
                     self.builder.position_at_end(arm_bbs[i]);
+
+                    // Extract payload bindings for data-carrying enum patterns
+                    if let Pattern::EnumVariant {
+                        enum_name,
+                        bindings,
+                        variant,
+                        ..
+                    } = &arm.pattern
+                    {
+                        if !bindings.is_empty() {
+                            if let Some(alloca) = subject_ptr {
+                                let enum_ty = self.enum_struct_type(enum_name);
+                                // Find the variant's payload types
+                                let payload_types = self
+                                    .enum_variants
+                                    .get(enum_name)
+                                    .and_then(|vs| {
+                                        vs.iter()
+                                            .find(|(n, _)| n == variant)
+                                            .map(|(_, p)| p.clone())
+                                    })
+                                    .unwrap_or_default();
+
+                                for (j, binding_name) in bindings.iter().enumerate() {
+                                    let field_idx = (j + 1) as u32; // skip tag
+                                    let field_ptr = self
+                                        .builder
+                                        .build_struct_gep(
+                                            enum_ty,
+                                            alloca,
+                                            field_idx,
+                                            &format!("bind_{}", binding_name),
+                                        )
+                                        .unwrap();
+                                    let payload_ny_ty = payload_types
+                                        .get(j)
+                                        .cloned()
+                                        .unwrap_or(NyType::I32);
+                                    let payload_llvm_ty =
+                                        ny_to_llvm(self.context, &payload_ny_ty);
+                                    let val = self
+                                        .builder
+                                        .build_load(
+                                            payload_llvm_ty,
+                                            field_ptr,
+                                            binding_name,
+                                        )
+                                        .unwrap();
+                                    // Declare binding as a variable
+                                    let bind_alloca = self
+                                        .builder
+                                        .build_alloca(payload_llvm_ty, binding_name)
+                                        .unwrap();
+                                    self.builder.build_store(bind_alloca, val).unwrap();
+                                    self.variables.insert(
+                                        binding_name.clone(),
+                                        (bind_alloca, payload_ny_ty),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     let arm_val = self.compile_expr(&arm.body, function)?;
                     let arm_end_bb = self.builder.get_insert_block().unwrap();
                     let has_terminator = arm_end_bb.get_terminator().is_some();

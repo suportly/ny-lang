@@ -112,6 +112,17 @@ impl TypeChecker {
                 let elem_ty = self.resolve_type_annotation(elem)?;
                 Some(NyType::Slice(Box::new(elem_ty)))
             }
+            TypeAnnotation::Function { params, ret, .. } => {
+                let mut param_types = Vec::new();
+                for p in params {
+                    param_types.push(self.resolve_type_annotation(p)?);
+                }
+                let ret_ty = self.resolve_type_annotation(ret)?;
+                Some(NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                })
+            }
         }
     }
 
@@ -651,6 +662,41 @@ impl TypeChecker {
                 }
             }
 
+            // ── Range index (arr[start..end] → slice) ─────────────────
+            Expr::RangeIndex {
+                object,
+                start,
+                end,
+                span,
+            } => {
+                let obj_ty = self.check_expr(object);
+                let start_ty = self.check_expr(start);
+                let end_ty = self.check_expr(end);
+                if !start_ty.is_integer() {
+                    self.errors.push(CompileError::type_error(
+                        format!("slice start must be integer, found '{}'", start_ty),
+                        start.span(),
+                    ));
+                }
+                if !end_ty.is_integer() {
+                    self.errors.push(CompileError::type_error(
+                        format!("slice end must be integer, found '{}'", end_ty),
+                        end.span(),
+                    ));
+                }
+                match &obj_ty {
+                    NyType::Array { elem, .. } => NyType::Slice(elem.clone()),
+                    NyType::Slice(elem) => NyType::Slice(elem.clone()),
+                    _ => {
+                        self.errors.push(CompileError::type_error(
+                            format!("cannot slice type '{}'", obj_ty),
+                            *span,
+                        ));
+                        NyType::Slice(Box::new(NyType::I32))
+                    }
+                }
+            }
+
             // ── Field access (with auto-deref for pointer-to-struct) ─
             Expr::FieldAccess {
                 object,
@@ -966,6 +1012,35 @@ impl TypeChecker {
                 NyType::Tuple(elem_types)
             }
 
+            // ── Lambda ───────────────────────────────────────────────
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                ..
+            } => {
+                let mut param_types = Vec::new();
+                self.push_scope();
+                for p in params {
+                    if let Some(ty) = self.resolve_type_annotation(&p.ty) {
+                        self.declare(&p.name, ty.clone());
+                        param_types.push(ty);
+                    }
+                }
+                let ret_ty = self
+                    .resolve_type_annotation(return_type)
+                    .unwrap_or(NyType::Unit);
+                let saved_ret = self.current_return_type.clone();
+                self.current_return_type = ret_ty.clone();
+                self.check_expr(body);
+                self.current_return_type = saved_ret;
+                self.pop_scope();
+                NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                }
+            }
+
             // ── Tuple index ──────────────────────────────────────────
             Expr::TupleIndex {
                 object,
@@ -1036,6 +1111,31 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> NyType {
+        // Built-in slice methods
+        if let NyType::Slice(_) = receiver_ty {
+            match method {
+                "len" => {
+                    if !args.is_empty() {
+                        self.errors.push(CompileError::type_error(
+                            format!("'len' takes no arguments, found {}", args.len()),
+                            span,
+                        ));
+                    }
+                    return NyType::I64;
+                }
+                _ => {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    self.errors.push(CompileError::type_error(
+                        format!("no method '{}' found for slice type", method),
+                        span,
+                    ));
+                    return NyType::I32;
+                }
+            }
+        }
+
         // Built-in string methods
         if *receiver_ty == NyType::Str {
             match method {

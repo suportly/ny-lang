@@ -124,6 +124,28 @@ impl Parser {
             });
         }
 
+        // Function pointer type: fn(T1, T2) -> R
+        if *self.peek() == TokenKind::Fn {
+            let fn_start = self.advance().span;
+            self.expect(&TokenKind::LParen)?;
+            let mut param_types = Vec::new();
+            while *self.peek() != TokenKind::RParen {
+                if !param_types.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                param_types.push(Box::new(self.parse_type_annotation()?));
+            }
+            self.expect(&TokenKind::RParen)?;
+            self.expect(&TokenKind::Arrow)?;
+            let ret_type = Box::new(self.parse_type_annotation()?);
+            let span = fn_start.merge(ret_type.span());
+            return Ok(TypeAnnotation::Function {
+                params: param_types,
+                ret: ret_type,
+                span,
+            });
+        }
+
         // Named type
         let (name, span) = self.expect_ident()?;
         Ok(TypeAnnotation::Named { name, span })
@@ -837,6 +859,20 @@ impl Parser {
                     let lhs_span = lhs.span();
                     self.advance();
                     let index = self.parse_expr(0)?;
+                    // Check for range index: arr[start..end]
+                    if *self.peek() == TokenKind::DotDot {
+                        self.advance();
+                        let end_expr = self.parse_expr(0)?;
+                        let end = self.peek_span();
+                        self.expect(&TokenKind::RBracket)?;
+                        lhs = Expr::RangeIndex {
+                            object: Box::new(lhs),
+                            start: Box::new(index),
+                            end: Box::new(end_expr),
+                            span: lhs_span.merge(end),
+                        };
+                        continue;
+                    }
                     let end = self.peek_span();
                     self.expect(&TokenKind::RBracket)?;
                     lhs = Expr::Index {
@@ -1033,6 +1069,52 @@ impl Parser {
             }
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
+            // Lambda: |params| -> RetType { body } or |params| -> RetType = expr;
+            TokenKind::Pipe => {
+                let start = self.advance().span;
+                let mut params = Vec::new();
+                // Parse until closing |
+                while *self.peek() != TokenKind::Pipe {
+                    if !params.is_empty() {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                    let param_start = self.peek_span();
+                    let (param_name, _) = self.expect_ident()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let ty = self.parse_type_annotation()?;
+                    let param_span = param_start.merge(ty.span());
+                    params.push(Param {
+                        name: param_name,
+                        ty,
+                        span: param_span,
+                    });
+                }
+                self.expect(&TokenKind::Pipe)?; // closing |
+                self.expect(&TokenKind::Arrow)?;
+                let return_type = self.parse_type_annotation()?;
+                let body = self.parse_block_expr()?;
+                let span = start.merge(body.span());
+                Ok(Expr::Lambda {
+                    params,
+                    return_type,
+                    body: Box::new(body),
+                    span,
+                })
+            }
+            // Also handle || (Or token) as zero-param lambda
+            TokenKind::Or => {
+                let start = self.advance().span;
+                self.expect(&TokenKind::Arrow)?;
+                let return_type = self.parse_type_annotation()?;
+                let body = self.parse_block_expr()?;
+                let span = start.merge(body.span());
+                Ok(Expr::Lambda {
+                    params: Vec::new(),
+                    return_type,
+                    body: Box::new(body),
+                    span,
+                })
+            }
             TokenKind::Minus | TokenKind::Not | TokenKind::Tilde => {
                 let bp = prefix_bp(self.peek()).unwrap();
                 let op_token = self.advance().clone();

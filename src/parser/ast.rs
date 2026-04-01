@@ -232,6 +232,20 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// |params| -> RetType { body } (non-capturing lambda)
+    Lambda {
+        params: Vec<Param>,
+        return_type: TypeAnnotation,
+        body: Box<Expr>,
+        span: Span,
+    },
+    /// arr[start..end] → creates a slice
+    RangeIndex {
+        object: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -255,7 +269,9 @@ impl Expr {
             | Expr::Match { span, .. }
             | Expr::TupleLit { span, .. }
             | Expr::TupleIndex { span, .. }
-            | Expr::EnumVariant { span, .. } => *span,
+            | Expr::EnumVariant { span, .. }
+            | Expr::RangeIndex { span, .. }
+            | Expr::Lambda { span, .. } => *span,
         }
     }
 }
@@ -338,6 +354,11 @@ pub enum TypeAnnotation {
         elem: Box<TypeAnnotation>,
         span: Span,
     },
+    Function {
+        params: Vec<Box<TypeAnnotation>>,
+        ret: Box<TypeAnnotation>,
+        span: Span,
+    },
 }
 
 impl TypeAnnotation {
@@ -347,7 +368,8 @@ impl TypeAnnotation {
             | TypeAnnotation::Array { span, .. }
             | TypeAnnotation::Pointer { span, .. }
             | TypeAnnotation::Tuple { span, .. }
-            | TypeAnnotation::Slice { span, .. } => *span,
+            | TypeAnnotation::Slice { span, .. }
+            | TypeAnnotation::Function { span, .. } => *span,
         }
     }
 
@@ -358,6 +380,7 @@ impl TypeAnnotation {
             TypeAnnotation::Pointer { .. } => "<pointer>",
             TypeAnnotation::Tuple { .. } => "<tuple>",
             TypeAnnotation::Slice { .. } => "<slice>",
+            TypeAnnotation::Function { .. } => "<function>",
         }
     }
 }

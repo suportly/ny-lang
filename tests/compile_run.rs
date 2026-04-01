@@ -164,6 +164,11 @@ fn test_loop_stmt() {
     assert_eq!(compile_and_run("loop_stmt.ny"), 45);
 }
 
+#[test]
+fn test_tagged_union() {
+    assert_eq!(compile_and_run("tagged_union.ny"), 42);
+}
+
 // Phase 7 tests
 
 #[test]
@@ -176,6 +181,20 @@ fn test_impl_block() {
 #[test]
 fn test_traits() {
     assert_eq!(compile_and_run("traits.ny"), 52);
+}
+
+// Phase 9 tests
+
+#[test]
+fn test_slices() {
+    assert_eq!(compile_and_run("slices.ny"), 47);
+}
+
+// Phase 11 tests
+
+#[test]
+fn test_lambda() {
+    assert_eq!(compile_and_run("lambda.ny"), 42);
 }
 
 // Phase 10 tests

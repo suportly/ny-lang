@@ -149,6 +149,17 @@ impl Resolver {
                 let elem_ty = self.resolve_type_annotation(elem)?;
                 Some(NyType::Slice(Box::new(elem_ty)))
             }
+            TypeAnnotation::Function { params, ret, .. } => {
+                let mut param_types = Vec::new();
+                for p in params {
+                    param_types.push(self.resolve_type_annotation(p)?);
+                }
+                let ret_ty = self.resolve_type_annotation(ret)?;
+                Some(NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                })
+            }
         }
     }
 
@@ -391,7 +402,10 @@ impl Resolver {
                 self.resolve_expr(operand);
             }
             Expr::Call { callee, args, span } => {
-                if !self.functions.contains_key(callee) && !Self::is_builtin(callee) {
+                if !self.functions.contains_key(callee)
+                    && !Self::is_builtin(callee)
+                    && self.resolve_name(callee).is_none()
+                {
                     self.errors.push(CompileError::name_error(
                         format!("undeclared function '{}'", callee),
                         *span,
@@ -434,6 +448,16 @@ impl Resolver {
             Expr::Index { object, index, .. } => {
                 self.resolve_expr(object);
                 self.resolve_expr(index);
+            }
+            Expr::RangeIndex {
+                object,
+                start,
+                end,
+                ..
+            } => {
+                self.resolve_expr(object);
+                self.resolve_expr(start);
+                self.resolve_expr(end);
             }
             // ---- Phase 2: Struct expressions ----
             Expr::StructInit { name, fields, span } => {
@@ -564,6 +588,25 @@ impl Resolver {
             // ---- Phase 4: Tuple index ----
             Expr::TupleIndex { object, .. } => {
                 self.resolve_expr(object);
+            }
+            // ---- Phase 11: Lambda ----
+            Expr::Lambda { params, body, .. } => {
+                self.push_scope();
+                for p in params {
+                    if let Some(ty) = self.resolve_type_annotation(&p.ty) {
+                        self.declare(
+                            &p.name,
+                            Symbol {
+                                name: p.name.clone(),
+                                ty,
+                                mutability: Mutability::Immutable,
+                                span: p.span,
+                            },
+                        );
+                    }
+                }
+                self.resolve_expr(body);
+                self.pop_scope();
             }
         }
     }

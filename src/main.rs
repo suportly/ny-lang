@@ -111,15 +111,16 @@ fn main() {
                 }
             };
 
-            // Find all test_* functions
-            let test_fns: Vec<String> = program
+            // Find all test_* functions and their return types
+            let test_fns: Vec<(String, bool)> = program
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    ny::parser::ast::Item::FunctionDef { name, .. }
-                        if name.starts_with("test_") =>
-                    {
-                        Some(name.clone())
+                    ny::parser::ast::Item::FunctionDef {
+                        name, return_type, ..
+                    } if name.starts_with("test_") => {
+                        let returns_i32 = return_type.name_str() == "i32";
+                        Some((name.clone(), returns_i32))
                     }
                     _ => None,
                 })
@@ -139,12 +140,19 @@ fn main() {
             // Remove existing main function from source using simple text matching
             let source_no_main = remove_main_function(&source);
 
-            for test_name in &test_fns {
-                // Build a wrapper: main() calls test_fn() and returns its result
-                let wrapper_source = format!(
-                    "{}\nfn main() -> i32 {{ return {}(); }}",
-                    source_no_main, test_name,
-                );
+            for (test_name, returns_i32) in &test_fns {
+                // Build a wrapper: main() calls test_fn()
+                let wrapper_source = if *returns_i32 {
+                    format!(
+                        "{}\nfn main() -> i32 {{ return {}(); }}",
+                        source_no_main, test_name,
+                    )
+                } else {
+                    format!(
+                        "{}\nfn main() -> i32 {{ {}(); return 0; }}",
+                        source_no_main, test_name,
+                    )
+                };
 
                 let tmp_dir = std::env::temp_dir();
                 let tmp_src = tmp_dir.join(format!("ny_test_{}.ny", test_name));

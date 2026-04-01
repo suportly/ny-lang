@@ -3,6 +3,13 @@ name = "ny"
 version = "0.1.0"
 edition = "2021"
 description = "Ny Lang compiler - Low-level language for AI/ML with extreme performance"
+license = "MIT"
+repository = "https://github.com/suportly/ny-lang"
+homepage = "https://github.com/suportly/ny-lang"
+readme = "README.md"
+keywords = ["compiler", "language", "llvm", "ai", "performance"]
+categories = ["compilers", "command-line-utilities"]
+rust-version = "1.75"
 
 [dependencies]
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm18-1-force-dynamic"] }

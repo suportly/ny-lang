@@ -1,6 +1,5 @@
 /// Source location span tracking byte offsets within a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -26,4 +25,3 @@ impl Span {
         }
     }
 }
-

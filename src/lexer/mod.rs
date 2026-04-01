@@ -1,0 +1,233 @@
+pub mod token;
+
+use crate::common::{CompileError, Span};
+use token::{Token, TokenKind};
+
+pub struct Lexer {
+    source: Vec<char>,
+    pos: usize,
+    start: usize,
+}
+
+impl Lexer {
+    pub fn new(source: &str) -> Self {
+        Self {
+            source: source.chars().collect(),
+            pos: 0,
+            start: 0,
+        }
+    }
+
+    fn byte_pos(&self, char_pos: usize) -> usize {
+        let clamped = char_pos.min(self.source.len());
+        self.source[..clamped].iter().map(|c| c.len_utf8()).sum()
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.source.get(self.pos).copied()
+    }
+
+    fn peek_next(&self) -> Option<char> {
+        self.source.get(self.pos + 1).copied()
+    }
+
+    fn advance(&mut self) -> Option<char> {
+        let c = self.source.get(self.pos).copied();
+        self.pos += 1;
+        c
+    }
+
+    fn make_span(&self) -> Span {
+        Span::new(self.byte_pos(self.start), self.byte_pos(self.pos))
+    }
+
+    fn skip_whitespace_and_comments(&mut self) {
+        loop {
+            match self.peek() {
+                Some(' ' | '\t' | '\r' | '\n') => {
+                    self.advance();
+                }
+                Some('/') if self.peek_next() == Some('/') => {
+                    while self.peek().is_some_and(|c| c != '\n') {
+                        self.advance();
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn read_number(&mut self) -> TokenKind {
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            self.advance();
+        }
+
+        if self.peek() == Some('.') && self.peek_next().is_some_and(|c| c.is_ascii_digit()) {
+            self.advance(); // consume '.'
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                self.advance();
+            }
+            let text: String = self.source[self.start..self.pos].iter().collect();
+            TokenKind::FloatLit(text.parse().unwrap())
+        } else {
+            let text: String = self.source[self.start..self.pos].iter().collect();
+            TokenKind::IntLit(text.parse().unwrap())
+        }
+    }
+
+    fn read_ident_or_keyword(&mut self) -> TokenKind {
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+            self.advance();
+        }
+        let text: String = self.source[self.start..self.pos].iter().collect();
+        match text.as_str() {
+            "fn" => TokenKind::Fn,
+            "if" => TokenKind::If,
+            "else" => TokenKind::Else,
+            "while" => TokenKind::While,
+            "return" => TokenKind::Return,
+            "true" => TokenKind::BoolLit(true),
+            "false" => TokenKind::BoolLit(false),
+            _ => TokenKind::Ident(text),
+        }
+    }
+
+    fn next_token(&mut self) -> Result<Token, CompileError> {
+        self.skip_whitespace_and_comments();
+        self.start = self.pos;
+
+        let c = match self.advance() {
+            Some(c) => c,
+            None => return Ok(Token::new(TokenKind::Eof, self.make_span())),
+        };
+
+        let kind = match c {
+            '(' => TokenKind::LParen,
+            ')' => TokenKind::RParen,
+            '{' => TokenKind::LBrace,
+            '}' => TokenKind::RBrace,
+            ',' => TokenKind::Comma,
+            ';' => TokenKind::Semi,
+            '+' => TokenKind::Plus,
+            '*' => TokenKind::Star,
+            '/' => TokenKind::Slash,
+            '%' => TokenKind::Percent,
+            ':' => {
+                if self.peek() == Some('~') {
+                    self.advance();
+                    TokenKind::ColonTilde
+                } else if self.peek() == Some(':') {
+                    self.advance();
+                    TokenKind::ColonColon
+                } else {
+                    TokenKind::Colon
+                }
+            }
+            '-' => {
+                if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::Arrow
+                } else {
+                    TokenKind::Minus
+                }
+            }
+            '=' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::Eq
+                } else {
+                    TokenKind::Assign
+                }
+            }
+            '!' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::Ne
+                } else {
+                    TokenKind::Not
+                }
+            }
+            '<' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::Le
+                } else {
+                    TokenKind::Lt
+                }
+            }
+            '>' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::Ge
+                } else {
+                    TokenKind::Gt
+                }
+            }
+            '&' => {
+                if self.peek() == Some('&') {
+                    self.advance();
+                    TokenKind::And
+                } else {
+                    return Err(CompileError::syntax(
+                        "unexpected character '&', did you mean '&&'?".to_string(),
+                        self.make_span(),
+                    ));
+                }
+            }
+            '|' => {
+                if self.peek() == Some('|') {
+                    self.advance();
+                    TokenKind::Or
+                } else {
+                    return Err(CompileError::syntax(
+                        "unexpected character '|', did you mean '||'?".to_string(),
+                        self.make_span(),
+                    ));
+                }
+            }
+            c if c.is_ascii_digit() => {
+                self.pos -= 1; // re-read from start
+                self.read_number()
+            }
+            c if c.is_alphabetic() || c == '_' => {
+                self.pos -= 1; // re-read from start
+                self.read_ident_or_keyword()
+            }
+            c => {
+                return Err(CompileError::syntax(
+                    format!("unexpected character '{}'", c),
+                    self.make_span(),
+                ));
+            }
+        };
+
+        Ok(Token::new(kind, self.make_span()))
+    }
+}
+
+pub fn tokenize(source: &str) -> Result<Vec<Token>, Vec<CompileError>> {
+    let mut lexer = Lexer::new(source);
+    let mut tokens = Vec::new();
+    let mut errors = Vec::new();
+
+    loop {
+        match lexer.next_token() {
+            Ok(token) => {
+                let is_eof = token.kind == TokenKind::Eof;
+                tokens.push(token);
+                if is_eof {
+                    break;
+                }
+            }
+            Err(e) => {
+                errors.push(e);
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(tokens)
+    } else {
+        Err(errors)
+    }
+}

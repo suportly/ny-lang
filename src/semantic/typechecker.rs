@@ -1699,6 +1699,34 @@ impl TypeChecker {
                 self.pop_scope();
             }
 
+            // ── ForIn ─────────────────────────────────────────────────
+            Stmt::ForIn {
+                var,
+                collection,
+                body,
+                ..
+            } => {
+                let coll_ty = self.check_expr(collection);
+                let elem_ty = match &coll_ty {
+                    NyType::Array { elem, .. } => *elem.clone(),
+                    NyType::Slice(elem) => *elem.clone(),
+                    NyType::Vec(elem) => *elem.clone(),
+                    _ => {
+                        self.errors.push(CompileError::type_error(
+                            format!("cannot iterate over type '{}'", coll_ty),
+                            collection.span(),
+                        ));
+                        NyType::I32
+                    }
+                };
+                self.push_scope();
+                self.declare(var, elem_ty);
+                self.loop_depth += 1;
+                self.check_expr(body);
+                self.loop_depth -= 1;
+                self.pop_scope();
+            }
+
             // ── Break ─────────────────────────────────────────────────
             Stmt::Break { span } => {
                 if self.loop_depth == 0 {

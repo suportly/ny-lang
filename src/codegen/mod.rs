@@ -2993,6 +2993,191 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
 
+            // ---- ForIn (desugar: for var in collection → index loop) ----
+            Stmt::ForIn {
+                var,
+                collection,
+                body,
+                ..
+            } => {
+                let coll_ty = self.infer_expr_type(collection);
+                let (elem_ty, coll_len) = match &coll_ty {
+                    NyType::Array { elem, size } => {
+                        (*elem.clone(), self.context.i32_type().const_int(*size as u64, false))
+                    }
+                    NyType::Slice(_) | NyType::Vec(_) => {
+                        // Get len dynamically
+                        let coll_val = self.compile_expr(collection, function)?.unwrap();
+                        let sv = coll_val.into_struct_value();
+                        let len = self
+                            .builder
+                            .build_extract_value(sv, 1, "forin_len")
+                            .unwrap()
+                            .into_int_value();
+                        let len_i32 = self
+                            .builder
+                            .build_int_truncate(len, self.context.i32_type(), "len_i32")
+                            .unwrap();
+                        let elem = match &coll_ty {
+                            NyType::Slice(e) => *e.clone(),
+                            NyType::Vec(e) => *e.clone(),
+                            _ => NyType::I32,
+                        };
+                        (elem, len_i32)
+                    }
+                    _ => {
+                        return Err(vec![CompileError::type_error(
+                            format!("cannot iterate over '{}'", coll_ty),
+                            collection.span(),
+                        )]);
+                    }
+                };
+
+                let elem_llvm = ny_to_llvm(self.context, &elem_ty);
+                let i32_ty = self.context.i32_type();
+
+                // Allocate loop index
+                let idx_alloca = self.builder.build_alloca(i32_ty, "__forin_idx").unwrap();
+                self.builder
+                    .build_store(idx_alloca, i32_ty.const_zero())
+                    .unwrap();
+
+                // Allocate element variable
+                let var_alloca = self.builder.build_alloca(elem_llvm, var).unwrap();
+                self.variables
+                    .insert(var.clone(), (var_alloca, elem_ty.clone()));
+
+                let cond_bb = self.context.append_basic_block(*function, "forin_cond");
+                let body_bb = self.context.append_basic_block(*function, "forin_body");
+                let inc_bb = self.context.append_basic_block(*function, "forin_inc");
+                let exit_bb = self.context.append_basic_block(*function, "forin_exit");
+
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.loop_stack.push(LoopFrame {
+                    break_bb: exit_bb,
+                    continue_bb: inc_bb,
+                });
+
+                // Condition: idx < len
+                self.builder.position_at_end(cond_bb);
+                let idx = self
+                    .builder
+                    .build_load(i32_ty, idx_alloca, "idx")
+                    .unwrap()
+                    .into_int_value();
+                let cmp = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, idx, coll_len, "forin_cmp")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(cmp, body_bb, exit_bb)
+                    .unwrap();
+
+                // Body: load element, execute body
+                self.builder.position_at_end(body_bb);
+                // Get element from collection[idx]
+                match &coll_ty {
+                    NyType::Array { elem, size } => {
+                        let arr_ptr = self.compile_expr_as_ptr(collection, function)?;
+                        let elem_llvm_inner = ny_to_llvm(self.context, elem);
+                        let arr_llvm_ty = elem_llvm_inner.array_type(*size as u32);
+                        let cur_idx = self
+                            .builder
+                            .build_load(i32_ty, idx_alloca, "cur_idx")
+                            .unwrap()
+                            .into_int_value();
+                        let idx_i64 = self
+                            .builder
+                            .build_int_z_extend_or_bit_cast(
+                                cur_idx,
+                                self.context.i64_type(),
+                                "idx64",
+                            )
+                            .unwrap();
+                        let zero = self.context.i64_type().const_zero();
+                        let gep = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(
+                                    arr_llvm_ty,
+                                    arr_ptr,
+                                    &[zero, idx_i64],
+                                    "forin_gep",
+                                )
+                                .unwrap()
+                        };
+                        let elem_val = self
+                            .builder
+                            .build_load(elem_llvm, gep, "elem")
+                            .unwrap();
+                        self.builder.build_store(var_alloca, elem_val).unwrap();
+                    }
+                    NyType::Slice(_) | NyType::Vec(_) => {
+                        // For slices/vecs, get the data pointer
+                        let coll_val = self.compile_expr(collection, function)?.unwrap();
+                        let sv = coll_val.into_struct_value();
+                        let data_ptr = self
+                            .builder
+                            .build_extract_value(sv, 0, "data_ptr")
+                            .unwrap()
+                            .into_pointer_value();
+                        let cur_idx = self
+                            .builder
+                            .build_load(i32_ty, idx_alloca, "cur_idx")
+                            .unwrap()
+                            .into_int_value();
+                        let idx_i64 = self
+                            .builder
+                            .build_int_z_extend_or_bit_cast(
+                                cur_idx,
+                                self.context.i64_type(),
+                                "idx64",
+                            )
+                            .unwrap();
+                        let gep = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(elem_llvm, data_ptr, &[idx_i64], "forin_gep")
+                                .unwrap()
+                        };
+                        let elem_val = self
+                            .builder
+                            .build_load(elem_llvm, gep, "elem")
+                            .unwrap();
+                        self.builder.build_store(var_alloca, elem_val).unwrap();
+                    }
+                    _ => {}
+                }
+
+                self.compile_expr(body, function)?;
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    self.builder.build_unconditional_branch(inc_bb).unwrap();
+                }
+
+                // Increment
+                self.builder.position_at_end(inc_bb);
+                let cur = self
+                    .builder
+                    .build_load(i32_ty, idx_alloca, "cur")
+                    .unwrap()
+                    .into_int_value();
+                let next = self
+                    .builder
+                    .build_int_add(cur, i32_ty.const_int(1, false), "next")
+                    .unwrap();
+                self.builder.build_store(idx_alloca, next).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                Ok(())
+            }
+
             // ---- Break ----
             Stmt::Break { .. } => {
                 if let Some(frame) = self.loop_stack.last() {

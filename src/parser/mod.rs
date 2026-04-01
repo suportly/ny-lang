@@ -854,40 +854,57 @@ impl Parser {
         self.expect(&TokenKind::For)?;
         let (var, _) = self.expect_ident()?;
         self.expect(&TokenKind::In)?;
-        let range_start = self.parse_expr(0)?;
+        let first_expr = self.parse_expr(0)?;
 
-        let inclusive = match self.peek() {
+        // Check if this is a range (first_expr .. end) or for-in (first_expr is collection)
+        match self.peek() {
             TokenKind::DotDot => {
                 self.advance();
-                false
+                let range_end = self.parse_expr(0)?;
+                let body = self.parse_block_expr()?;
+                let end = body.span();
+                Ok(Stmt::ForRange {
+                    var,
+                    start: first_expr,
+                    end: range_end,
+                    inclusive: false,
+                    body,
+                    span: start.merge(end),
+                })
             }
             TokenKind::DotDotEq => {
                 self.advance();
-                true
+                let range_end = self.parse_expr(0)?;
+                let body = self.parse_block_expr()?;
+                let end = body.span();
+                Ok(Stmt::ForRange {
+                    var,
+                    start: first_expr,
+                    end: range_end,
+                    inclusive: true,
+                    body,
+                    span: start.merge(end),
+                })
             }
-            _ => {
-                return Err(CompileError::syntax(
-                    format!(
-                        "expected '..' or '..=' in for range, found {:?}",
-                        self.peek()
-                    ),
-                    self.peek_span(),
-                ));
+            TokenKind::LBrace => {
+                // for item in collection { body }
+                let body = self.parse_block_expr()?;
+                let end = body.span();
+                Ok(Stmt::ForIn {
+                    var,
+                    collection: first_expr,
+                    body,
+                    span: start.merge(end),
+                })
             }
-        };
-
-        let range_end = self.parse_expr(0)?;
-        let body = self.parse_block_expr()?;
-        let end = body.span();
-
-        Ok(Stmt::ForRange {
-            var,
-            start: range_start,
-            end: range_end,
-            inclusive,
-            body,
-            span: start.merge(end),
-        })
+            _ => Err(CompileError::syntax(
+                format!(
+                    "expected '..', '..=', or '{{' in for statement, found {:?}",
+                    self.peek()
+                ),
+                self.peek_span(),
+            )),
+        }
     }
 
     fn parse_loop_stmt(&mut self) -> Result<Stmt, CompileError> {

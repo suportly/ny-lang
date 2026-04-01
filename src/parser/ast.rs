@@ -118,6 +118,13 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// for item in collection { body } — iterates over array/slice elements
+    ForIn {
+        var: String,
+        collection: Expr,
+        body: Expr,
+        span: Span,
+    },
     Break {
         span: Span,
     },

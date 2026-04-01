@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// Phase G tests (for-in)
+
+#[test]
+fn test_for_in() {
+    assert_eq!(compile_and_run("for_in.ny"), 42);
+}
+
 // Phase F tests (Vec)
 
 #[test]

@@ -751,6 +751,29 @@ impl Resolver {
                 self.loop_depth -= 1;
                 self.pop_scope();
             }
+            // ---- ForIn ----
+            Stmt::ForIn {
+                var,
+                collection,
+                body,
+                span,
+            } => {
+                self.resolve_expr(collection);
+                self.push_scope();
+                self.declare(
+                    var,
+                    Symbol {
+                        name: var.clone(),
+                        ty: NyType::I32, // placeholder
+                        mutability: Mutability::Immutable,
+                        span: *span,
+                    },
+                );
+                self.loop_depth += 1;
+                self.resolve_expr(body);
+                self.loop_depth -= 1;
+                self.pop_scope();
+            }
             // ---- Phase 2: Break / Continue ----
             Stmt::Break { span } => {
                 if self.loop_depth == 0 {

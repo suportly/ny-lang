@@ -24,6 +24,10 @@ pub enum Item {
         variants: Vec<EnumVariantDef>,
         span: Span,
     },
+    Use {
+        path: String,
+        span: Span,
+    },
     ImplBlock {
         type_name: String,
         trait_name: Option<String>,

@@ -260,6 +260,9 @@ impl TypeChecker {
                     self.check_item(method);
                 }
             }
+            Item::Use { .. } => {
+                // Already resolved at compile time
+            }
             Item::TraitDef {
                 name, methods, span,
             } => {

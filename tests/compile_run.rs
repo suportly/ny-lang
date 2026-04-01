@@ -219,6 +219,13 @@ fn test_slices() {
     assert_eq!(compile_and_run("slices.ny"), 23);
 }
 
+// Phase D tests (modules)
+
+#[test]
+fn test_use_module() {
+    assert_eq!(compile_and_run("use_module.ny"), 42);
+}
+
 // Phase C tests (? operator)
 
 #[test]

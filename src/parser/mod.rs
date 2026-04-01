@@ -193,6 +193,7 @@ impl Parser {
             TokenKind::Enum => self.parse_enum_def(),
             TokenKind::Impl => self.parse_impl_block(),
             TokenKind::Trait => self.parse_trait_def(),
+            TokenKind::Use => self.parse_use_decl(),
             _ => Err(CompileError::syntax(
                 format!(
                     "expected 'fn', 'struct', 'enum', or 'impl', found {:?}",
@@ -267,6 +268,37 @@ impl Parser {
         Ok(Item::EnumDef {
             name,
             variants,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_use_decl(&mut self) -> Result<Item, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Use)?;
+        // use "path/to/module.ny";
+        let path = match self.peek().clone() {
+            TokenKind::StringLit(s) => {
+                let s = s.clone();
+                self.advance();
+                s
+            }
+            TokenKind::Ident(name) => {
+                // use module_name; → resolves to module_name.ny
+                let name = name.clone();
+                self.advance();
+                format!("{}.ny", name)
+            }
+            _ => {
+                return Err(CompileError::syntax(
+                    format!("expected module path after 'use', found {:?}", self.peek()),
+                    self.peek_span(),
+                ));
+            }
+        };
+        let end = self.peek_span();
+        self.expect(&TokenKind::Semi)?;
+        Ok(Item::Use {
+            path,
             span: start.merge(end),
         })
     }

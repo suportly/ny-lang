@@ -3,37 +3,8 @@ use std::collections::HashMap;
 use crate::common::{CompileError, NyType, Span};
 use crate::parser::ast::*;
 
-/// Built-in function names that should not trigger "undeclared function" errors.
-const BUILTIN_FUNCTIONS: &[&str] = &[
-    "print",
-    "println",
-    "alloc",
-    "free",
-    "sizeof",
-    "fopen",
-    "fclose",
-    "fwrite_str",
-    "fread_byte",
-    "exit",
-    "sleep_ms",
-    "read_line",
-    "str_to_int",
-    "int_to_str",
-    "vec_new",
-    "vec_push",
-    "vec_len",
-    "vec_get",
-    "map_new",
-    "map_insert",
-    "map_get",
-    "map_contains",
-    "map_len",
-    "arena_new",
-    "arena_alloc",
-    "arena_free",
-    "arena_reset",
-    "arena_bytes_used",
-];
+/// Built-in function names — sourced from the central builtin registry.
+const BUILTIN_FUNCTIONS: &[&str] = crate::codegen::builtins::BUILTIN_NAMES;
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -185,7 +156,7 @@ impl Resolver {
 
         // ---- Pass 1: Register all struct definitions ----
         for item in &program.items {
-            if let Item::StructDef { name, fields, span } = item {
+            if let Item::StructDef { name, type_params: _, fields, span } = item {
                 if resolver.structs.contains_key(name) {
                     resolver.errors.push(CompileError::name_error(
                         format!("duplicate struct definition '{}'", name),

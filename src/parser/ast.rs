@@ -17,6 +17,7 @@ pub enum Item {
     },
     StructDef {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },

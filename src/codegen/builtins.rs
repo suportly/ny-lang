@@ -1,0 +1,74 @@
+//! Builtin function registry for Ny Lang.
+//!
+//! Centralizes the return type and metadata of all builtin functions,
+//! eliminating the duplicated if/else chains in typechecker and codegen.
+
+use crate::common::NyType;
+
+/// Return type for a builtin function, given knowledge of argument types.
+pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> {
+    match name {
+        // I/O
+        "print" | "println" => Some(NyType::Unit),
+
+        // Memory
+        "alloc" | "fopen" | "arena_new" | "arena_alloc" | "map_new" => {
+            Some(NyType::Pointer(Box::new(NyType::U8)))
+        }
+        "free" | "arena_free" | "arena_reset" | "map_insert" | "sleep_ms" | "exit" => {
+            Some(NyType::Unit)
+        }
+        "sizeof" | "arena_bytes_used" | "map_len" | "vec_len" => Some(NyType::I64),
+
+        // File I/O
+        "fclose" | "fread_byte" | "fwrite_str" | "map_get" | "str_to_int" => Some(NyType::I32),
+        "map_contains" => Some(NyType::Bool),
+
+        // Strings
+        "read_line" | "int_to_str" => Some(NyType::Str),
+
+        // Vec
+        "vec_new" => Some(NyType::Vec(Box::new(NyType::I32))),
+        "vec_push" => Some(NyType::Unit),
+        "vec_get" => Some(NyType::I32), // refined by method call handler
+
+        _ => None,
+    }
+}
+
+/// Check if a name is a builtin function.
+pub fn is_builtin(name: &str) -> bool {
+    builtin_return_type(name, &[]).is_some()
+}
+
+/// All builtin function names (for resolver).
+pub const BUILTIN_NAMES: &[&str] = &[
+    "print",
+    "println",
+    "alloc",
+    "free",
+    "sizeof",
+    "fopen",
+    "fclose",
+    "fwrite_str",
+    "fread_byte",
+    "exit",
+    "sleep_ms",
+    "read_line",
+    "str_to_int",
+    "int_to_str",
+    "vec_new",
+    "vec_push",
+    "vec_len",
+    "vec_get",
+    "map_new",
+    "map_insert",
+    "map_get",
+    "map_contains",
+    "map_len",
+    "arena_new",
+    "arena_alloc",
+    "arena_free",
+    "arena_reset",
+    "arena_bytes_used",
+];

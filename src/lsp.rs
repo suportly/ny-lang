@@ -1,6 +1,6 @@
 //! Ny Lang LSP Server
 //!
-//! Provides: diagnostics (inline errors), hover (type info), go-to-definition.
+//! Provides: diagnostics, hover, go-to-definition, and completion.
 //! Runs as a separate process, communicates via stdio with LSP protocol.
 //! Uses the compiler's semantic analysis for accurate type information.
 
@@ -8,7 +8,7 @@
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, Notification as _};
-use lsp_types::request::{GotoDefinition, HoverRequest};
+use lsp_types::request::{Completion, GotoDefinition, HoverRequest};
 use lsp_types::*;
 type Url = lsp_types::Uri;
 use std::collections::HashMap;
@@ -32,6 +32,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            ..Default::default()
+        }),
         ..Default::default()
     })?;
 
@@ -78,11 +82,24 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     continue;
                 }
 
-                if let Some((id, params)) = cast_request::<GotoDefinition>(req_clone) {
+                if let Some((id, params)) = cast_request::<GotoDefinition>(req_clone.clone()) {
                     let uri = params.text_document_position_params.text_document.uri;
                     let pos = params.text_document_position_params.position;
                     let def = handle_goto_def(&documents, &uri, pos);
                     let result = serde_json::to_value(def)?;
+                    connection.sender.send(Message::Response(Response {
+                        id,
+                        result: Some(result),
+                        error: None,
+                    }))?;
+                    continue;
+                }
+
+                if let Some((id, params)) = cast_request::<Completion>(req_clone) {
+                    let uri = params.text_document_position.text_document.uri;
+                    let pos = params.text_document_position.position;
+                    let items = handle_completion(&documents, &uri, pos);
+                    let result = serde_json::to_value(CompletionResponse::Array(items))?;
                     connection.sender.send(Message::Response(Response {
                         id,
                         result: Some(result),
@@ -362,6 +379,200 @@ fn handle_goto_def(
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Completion: functions, builtins, structs, enums, keywords, dot-completions
+// ---------------------------------------------------------------------------
+
+fn handle_completion(
+    documents: &HashMap<Url, DocumentState>,
+    uri: &Url,
+    pos: Position,
+) -> Vec<CompletionItem> {
+    let doc = match documents.get(uri) {
+        Some(d) => d,
+        None => return vec![],
+    };
+    let source = &doc.source;
+
+    // Check if the character before cursor is '.' (dot completion)
+    if let Some(offset) = line_col_to_byte_offset(source, pos.line as usize, pos.character as usize)
+    {
+        if offset > 0 && source.as_bytes().get(offset - 1) == Some(&b'.') {
+            return dot_completions(doc, source, offset);
+        }
+    }
+
+    // General completions: functions, structs, enums, builtins, keywords
+    let mut items = Vec::new();
+
+    // From semantic analysis
+    if let Some(resolved) = &doc.resolved {
+        for (name, (param_types, ret_type, _)) in &resolved.functions {
+            let params: Vec<String> = param_types.iter().map(|t| format!("{}", t)).collect();
+            let ret = if *ret_type == NyType::Unit {
+                String::new()
+            } else {
+                format!(" -> {}", ret_type)
+            };
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(format!("fn({}){}", params.join(", "), ret)),
+                ..Default::default()
+            });
+        }
+        for name in resolved.structs.keys() {
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::STRUCT),
+                detail: Some("struct".to_string()),
+                ..Default::default()
+            });
+        }
+        for name in resolved.enums.keys() {
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::ENUM),
+                detail: Some("enum".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+
+    // Builtin functions
+    for &name in ny::codegen::builtins::BUILTIN_NAMES {
+        items.push(CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some("builtin".to_string()),
+            ..Default::default()
+        });
+    }
+
+    // Keywords
+    for kw in &[
+        "fn", "if", "else", "while", "for", "in", "return", "struct", "enum", "match",
+        "break", "continue", "defer", "pub", "use", "trait", "impl", "loop", "unsafe",
+        "extern", "let", "true", "false", "as",
+    ] {
+        items.push(CompletionItem {
+            label: kw.to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            ..Default::default()
+        });
+    }
+
+    items
+}
+
+/// Provide completions after a dot: methods for Vec, str, structs.
+fn dot_completions(doc: &DocumentState, source: &str, dot_offset: usize) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+
+    // Try to figure out the type of the expression before the dot.
+    // Simple heuristic: get the identifier before the dot.
+    let before = &source[..dot_offset - 1];
+    let ident: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    if ident.is_empty() {
+        return items;
+    }
+
+    // Check if this identifier is a known variable by looking at source patterns
+    let var_type = infer_variable_type(source, &ident);
+
+    if var_type.contains("Vec") {
+        for (name, detail) in &[
+            ("push", "push(value) — append element"),
+            ("pop", "pop() -> T — remove and return last"),
+            ("get", "get(index) -> T — read element"),
+            ("set", "set(index, value) — write element"),
+            ("len", "len() -> i64 — element count"),
+            ("sort", "sort() — ascending in-place sort"),
+        ] {
+            items.push(CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(detail.to_string()),
+                ..Default::default()
+            });
+        }
+    } else if var_type == "str" || var_type.contains("str") {
+        for (name, detail) in &[
+            ("len", "len() -> i64 — byte length"),
+            ("substr", "substr(start, end) -> str"),
+            ("char_at", "char_at(index) -> i32"),
+            ("contains", "contains(needle) -> bool"),
+            ("starts_with", "starts_with(prefix) -> bool"),
+            ("ends_with", "ends_with(suffix) -> bool"),
+            ("index_of", "index_of(needle) -> i32 (-1 if not found)"),
+        ] {
+            items.push(CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(detail.to_string()),
+                ..Default::default()
+            });
+        }
+    }
+
+    // If we have resolved info, check struct fields
+    if let Some(resolved) = &doc.resolved {
+        // Find which struct type this variable is
+        for (struct_name, fields) in &resolved.structs {
+            if var_type.contains(struct_name) {
+                for (fname, ftype) in fields {
+                    items.push(CompletionItem {
+                        label: fname.clone(),
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(format!("{}", ftype)),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+
+    items
+}
+
+/// Simple heuristic to infer a variable's type string from source patterns.
+fn infer_variable_type(source: &str, name: &str) -> String {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(name) {
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_prefix(":~") {
+                let ty = rest.trim().split('=').next().unwrap_or("").trim();
+                if !ty.is_empty() {
+                    return ty.to_string();
+                }
+            }
+            if let Some(rest) = rest.strip_prefix(':') {
+                let rest = rest.trim();
+                if !rest.starts_with('=') {
+                    let ty = rest.split('=').next().unwrap_or("").trim();
+                    if !ty.is_empty() {
+                        return ty.to_string();
+                    }
+                }
+            }
+            // := with string literal
+            if rest.starts_with(":= \"") {
+                return "str".to_string();
+            }
+        }
+    }
+    String::new()
 }
 
 fn find_definition(source: &str, name: &str) -> Option<usize> {

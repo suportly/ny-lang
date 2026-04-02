@@ -2121,6 +2121,121 @@ impl<'ctx> CodeGen<'ctx> {
 
                             return Ok(Some(val));
                         }
+                        "clear" => {
+                            // v.clear() — reset length to 0
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "clear_len_gep")
+                                .unwrap();
+                            let zero = self.context.i64_type().const_int(0, false);
+                            self.builder.build_store(len_gep, zero).unwrap();
+                            return Ok(None);
+                        }
+                        "reverse" => {
+                            // v.reverse() — in-place reverse
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "rev_len_gep")
+                                .unwrap();
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 0, "rev_data_gep")
+                                .unwrap();
+                            let len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "rev_len")
+                                .unwrap()
+                                .into_int_value();
+                            let data_ptr = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "rev_data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let two = i64_ty.const_int(2, false);
+
+                            let half = self
+                                .builder
+                                .build_int_unsigned_div(len, two, "half")
+                                .unwrap();
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "rev_loop");
+                            let swap_bb =
+                                self.context.append_basic_block(*function, "rev_swap");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "rev_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "rev_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, half, "rev_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, swap_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(swap_bb);
+                            let j_val = self
+                                .builder
+                                .build_int_sub(
+                                    self.builder.build_int_sub(len, one, "lm1").unwrap(),
+                                    i_val,
+                                    "rev_j",
+                                )
+                                .unwrap();
+                            let ptr_i = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[i_val], "rev_ptr_i",
+                                    )
+                                    .unwrap()
+                            };
+                            let ptr_j = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[j_val], "rev_ptr_j",
+                                    )
+                                    .unwrap()
+                            };
+                            let val_i = self
+                                .builder
+                                .build_load(elem_llvm, ptr_i, "rev_vi")
+                                .unwrap();
+                            let val_j = self
+                                .builder
+                                .build_load(elem_llvm, ptr_j, "rev_vj")
+                                .unwrap();
+                            self.builder.build_store(ptr_i, val_j).unwrap();
+                            self.builder.build_store(ptr_j, val_i).unwrap();
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "rev_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, swap_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            return Ok(None);
+                        }
                         "sort" => {
                             // v.sort() — in-place ascending bubble sort
                             let vec_ptr = self.compile_expr_as_ptr(object, function)?;

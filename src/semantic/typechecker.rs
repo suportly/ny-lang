@@ -1488,7 +1488,7 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
                 "pop" => return *elem.clone(),
-                "sort" => return NyType::Unit,
+                "sort" | "reverse" | "clear" => return NyType::Unit,
                 _ => {
                     for arg in args {
                         self.check_expr(arg);

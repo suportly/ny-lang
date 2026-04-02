@@ -606,9 +606,16 @@ fn format_stmt_inner(out: &mut String, stmt: &Stmt, depth: usize, f: Option<&mut
         }
         Stmt::Assign { target, value, .. } => {
             indent(out, depth);
-            format_assign_target(out, target, depth);
-            out.push_str(" = ");
-            format_expr(out, value, depth);
+            // Detect compound assignment pattern: x = x + expr → x += expr
+            if let Some((op_str, rhs)) = detect_compound_assign(target, value) {
+                format_assign_target(out, target, depth);
+                out.push_str(&format!(" {}= ", op_str));
+                format_expr(out, rhs, depth);
+            } else {
+                format_assign_target(out, target, depth);
+                out.push_str(" = ");
+                format_expr(out, value, depth);
+            }
             out.push_str(";\n");
         }
         Stmt::ExprStmt { expr, .. } => {
@@ -788,6 +795,35 @@ fn format_assign_target(out: &mut String, target: &AssignTarget, depth: usize) {
             format_expr(out, obj, depth);
         }
     }
+}
+
+/// Detect compound assignment: `x = x op expr` → returns (op_str, expr)
+fn detect_compound_assign<'a>(target: &AssignTarget, value: &'a Expr) -> Option<(&'static str, &'a Expr)> {
+    let target_name = match target {
+        AssignTarget::Var(name) => name.as_str(),
+        _ => return None,
+    };
+    if let Expr::BinOp { op, lhs, rhs, .. } = value {
+        if let Expr::Ident { name, .. } = lhs.as_ref() {
+            if name == target_name {
+                let op_str = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::Div => "/",
+                    BinOp::Mod => "%",
+                    BinOp::BitAnd => "&",
+                    BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<",
+                    BinOp::Shr => ">>",
+                    _ => return None,
+                };
+                return Some((op_str, rhs.as_ref()));
+            }
+        }
+    }
+    None
 }
 
 fn format_expr_list(out: &mut String, exprs: &[Expr], depth: usize) {

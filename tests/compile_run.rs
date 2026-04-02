@@ -575,3 +575,8 @@ fn test_vec_sort() {
 fn test_string_index_of() {
     assert_eq!(compile_and_run("string_index_of.ny"), 42);
 }
+
+#[test]
+fn test_vec_reverse() {
+    assert_eq!(compile_and_run("vec_reverse.ny"), 42);
+}

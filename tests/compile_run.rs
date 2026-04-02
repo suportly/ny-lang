@@ -234,6 +234,25 @@ fn test_vec() {
 }
 
 #[test]
+fn test_fstring() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny").unwrap()
+        .args(["build", "tests/fixtures/valid/fstring.ny", "-o"])
+        .arg(&output).assert().success();
+    let out = process::Command::new(&output).output().expect("failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello Ny"), "stdout: {}", stdout);
+    assert!(stdout.contains("x=10"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
+}
+
+#[test]
+fn test_generic_enum_ergonomic() {
+    assert_eq!(compile_and_run("generic_enum_ergonomic.ny"), 42);
+}
+
+#[test]
 fn test_generic_enum() {
     assert_eq!(compile_and_run("generic_enum.ny"), 42);
 }

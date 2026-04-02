@@ -354,6 +354,29 @@ impl Lexer {
                 self.pos -= 1;
                 self.read_number()
             }
+            // f"..." string interpolation
+            'f' if self.peek() == Some('"') => {
+                self.advance(); // consume "
+                let mut value = String::new();
+                loop {
+                    match self.advance() {
+                        None => break,
+                        Some('"') => break,
+                        Some('\\') => {
+                            match self.advance() {
+                                Some('n') => value.push('\n'),
+                                Some('t') => value.push('\t'),
+                                Some('\\') => value.push('\\'),
+                                Some('"') => value.push('"'),
+                                Some(c) => { value.push('\\'); value.push(c); }
+                                None => break,
+                            }
+                        }
+                        Some(c) => value.push(c),
+                    }
+                }
+                TokenKind::FStringLit(value)
+            }
             c if c.is_alphabetic() || c == '_' => {
                 self.pos -= 1;
                 self.read_ident_or_keyword()

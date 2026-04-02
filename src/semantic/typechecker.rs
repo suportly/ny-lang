@@ -1488,6 +1488,7 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
                 "pop" => return *elem.clone(),
+                "sort" => return NyType::Unit,
                 _ => {
                     for arg in args {
                         self.check_expr(arg);
@@ -1585,6 +1586,21 @@ impl TypeChecker {
                         }
                     }
                     return NyType::Bool;
+                }
+                "index_of" => {
+                    if args.len() == 1 {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if arg_ty != NyType::Str {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "'index_of' expects str argument, found '{}'",
+                                    arg_ty
+                                ),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::I32;
                 }
                 _ => {
                     for arg in args {

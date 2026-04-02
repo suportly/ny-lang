@@ -1,26 +1,180 @@
 //! Ny Lang source formatter.
 //!
 //! Opinionated, zero-config formatter: 4-space indentation, K&R braces.
-//! Note: comments are not preserved (they are stripped during lexing).
+//! Preserves comments by extracting them from the original source and
+//! reinserting them based on source line positions.
 
+use crate::common::Span;
 use crate::parser::ast::*;
 
 const INDENT: &str = "    ";
 
+/// A comment extracted from source, with its line number and content.
+struct Comment {
+    line: usize,
+    text: String,
+    standalone: bool,
+}
+
+fn extract_comments(source: &str) -> Vec<Comment> {
+    let mut comments = Vec::new();
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") {
+            comments.push(Comment {
+                line: line_num,
+                text: trimmed.to_string(),
+                standalone: true,
+            });
+            continue;
+        }
+        if let Some(pos) = find_line_comment(line) {
+            let comment_text = line[pos..].trim().to_string();
+            if !comment_text.is_empty() {
+                comments.push(Comment {
+                    line: line_num,
+                    text: comment_text,
+                    standalone: false,
+                });
+            }
+        }
+    }
+    comments
+}
+
+fn find_line_comment(line: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut prev = '\0';
+    let bytes = line.as_bytes();
+    for i in 0..bytes.len() {
+        let ch = bytes[i] as char;
+        if ch == '"' && prev != '\\' {
+            in_string = !in_string;
+        }
+        if !in_string && ch == '/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            let before = line[..i].trim();
+            if !before.is_empty() {
+                return Some(i);
+            }
+        }
+        prev = ch;
+    }
+    None
+}
+
+fn byte_offset_to_line(source: &str, offset: usize) -> usize {
+    source[..offset.min(source.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+}
+
+struct Fmt<'a> {
+    source: &'a str,
+    comments: Vec<Comment>,
+    next_comment: usize,
+}
+
+impl<'a> Fmt<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            comments: extract_comments(source),
+            next_comment: 0,
+        }
+    }
+
+    fn emit_comments_before(&mut self, out: &mut String, target_line: usize, depth: usize) {
+        while self.next_comment < self.comments.len() {
+            let c = &self.comments[self.next_comment];
+            if c.line < target_line {
+                if c.standalone {
+                    indent(out, depth);
+                    out.push_str(&c.text);
+                    out.push('\n');
+                }
+                self.next_comment += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn line_of(&self, span: Span) -> usize {
+        byte_offset_to_line(self.source, span.start)
+    }
+
+    fn has_source(&self) -> bool {
+        !self.source.is_empty()
+    }
+}
+
 pub fn format_program(program: &Program) -> String {
+    format_program_with_source(program, "")
+}
+
+pub fn format_program_with_source(program: &Program, source: &str) -> String {
+    let mut f = Fmt::new(source);
     let mut out = String::new();
     let mut first = true;
+
     for item in &program.items {
+        if f.has_source() {
+            f.emit_comments_before(&mut out, f.line_of(item_span(item)), 0);
+        }
         if !first {
             out.push('\n');
         }
-        format_item(&mut out, item, 0);
+        format_item(&mut out, item, 0, &mut f);
         first = false;
     }
+
+    // Trailing comments
+    while f.next_comment < f.comments.len() {
+        let c = &f.comments[f.next_comment];
+        if c.standalone {
+            out.push_str(&c.text);
+            out.push('\n');
+        }
+        f.next_comment += 1;
+    }
+
     out
 }
 
-fn format_item(out: &mut String, item: &Item, depth: usize) {
+fn item_span(item: &Item) -> Span {
+    match item {
+        Item::FunctionDef { span, .. }
+        | Item::StructDef { span, .. }
+        | Item::EnumDef { span, .. }
+        | Item::Use { span, .. }
+        | Item::ExternBlock { span, .. }
+        | Item::ImplBlock { span, .. }
+        | Item::TraitDef { span, .. } => *span,
+    }
+}
+
+fn stmt_span(stmt: &Stmt) -> Span {
+    match stmt {
+        Stmt::VarDecl { span, .. }
+        | Stmt::ConstDecl { span, .. }
+        | Stmt::Assign { span, .. }
+        | Stmt::ExprStmt { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::While { span, .. }
+        | Stmt::ForRange { span, .. }
+        | Stmt::ForIn { span, .. }
+        | Stmt::Break { span, .. }
+        | Stmt::Continue { span, .. }
+        | Stmt::TupleDestructure { span, .. }
+        | Stmt::Defer { span, .. }
+        | Stmt::WhileLet { span, .. }
+        | Stmt::IfLet { span, .. }
+        | Stmt::Loop { span, .. } => *span,
+    }
+}
+
+fn format_item(out: &mut String, item: &Item, depth: usize, f: &mut Fmt) {
     match item {
         Item::Use { path, .. } => {
             indent(out, depth);
@@ -112,7 +266,7 @@ fn format_item(out: &mut String, item: &Item, depth: usize) {
                 if i > 0 {
                     out.push('\n');
                 }
-                format_item(out, method, depth + 1);
+                format_item(out, method, depth + 1, f);
             }
             indent(out, depth);
             out.push_str("}\n");
@@ -133,7 +287,7 @@ fn format_item(out: &mut String, item: &Item, depth: usize) {
             out.push(')');
             format_return_type(out, return_type);
             out.push(' ');
-            format_expr(out, body, depth);
+            format_expr_with_comments(out, body, depth, f);
             out.push('\n');
         }
     }
@@ -192,6 +346,31 @@ fn format_type_annotation(ty: &TypeAnnotation) -> String {
     }
 }
 
+/// Format a block expression with comment interleaving for statements.
+fn format_expr_with_comments(out: &mut String, expr: &Expr, depth: usize, f: &mut Fmt) {
+    if let Expr::Block {
+        stmts, tail_expr, ..
+    } = expr
+    {
+        out.push_str("{\n");
+        for stmt in stmts {
+            if f.has_source() {
+                f.emit_comments_before(out, f.line_of(stmt_span(stmt)), depth + 1);
+            }
+            format_stmt(out, stmt, depth + 1, f);
+        }
+        if let Some(te) = tail_expr {
+            indent(out, depth + 1);
+            format_expr(out, te, depth);
+            out.push('\n');
+        }
+        indent(out, depth);
+        out.push('}');
+    } else {
+        format_expr(out, expr, depth);
+    }
+}
+
 fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
     match expr {
         Expr::Literal { value, .. } => match value {
@@ -242,7 +421,7 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
         } => {
             out.push_str("{\n");
             for stmt in stmts {
-                format_stmt(out, stmt, depth + 1);
+                format_stmt_no_comments(out, stmt, depth + 1);
             }
             if let Some(te) = tail_expr {
                 indent(out, depth + 1);
@@ -377,7 +556,15 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
     }
 }
 
-fn format_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
+fn format_stmt(out: &mut String, stmt: &Stmt, depth: usize, f: &mut Fmt) {
+    format_stmt_inner(out, stmt, depth, Some(f));
+}
+
+fn format_stmt_no_comments(out: &mut String, stmt: &Stmt, depth: usize) {
+    format_stmt_inner(out, stmt, depth, None);
+}
+
+fn format_stmt_inner(out: &mut String, stmt: &Stmt, depth: usize, f: Option<&mut Fmt>) {
     match stmt {
         Stmt::VarDecl {
             name,
@@ -410,11 +597,7 @@ fn format_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
         } => {
             indent(out, depth);
             if let Some(ty) = ty {
-                out.push_str(&format!(
-                    "{} : {} = ",
-                    name,
-                    format_type_annotation(ty)
-                ));
+                out.push_str(&format!("{} : {} = ", name, format_type_annotation(ty)));
             } else {
                 out.push_str(&format!("{} := ", name));
             }
@@ -431,7 +614,6 @@ fn format_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
         Stmt::ExprStmt { expr, .. } => {
             indent(out, depth);
             format_expr(out, expr, depth);
-            // Block-like expressions don't need trailing semicolons
             match expr {
                 Expr::If { .. } | Expr::Match { .. } | Expr::Block { .. } => out.push('\n'),
                 _ => out.push_str(";\n"),
@@ -454,7 +636,11 @@ fn format_stmt(out: &mut String, stmt: &Stmt, depth: usize) {
             out.push_str("while ");
             format_expr(out, condition, depth);
             out.push(' ');
-            format_expr(out, body, depth);
+            if let Some(f) = f {
+                format_expr_with_comments(out, body, depth, f);
+            } else {
+                format_expr(out, body, depth);
+            }
             out.push('\n');
         }
         Stmt::ForRange {

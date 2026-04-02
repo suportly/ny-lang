@@ -565,3 +565,13 @@ fn test_vec_for_in() {
 fn test_string_methods() {
     assert_eq!(compile_and_run("string_methods.ny"), 42);
 }
+
+#[test]
+fn test_vec_sort() {
+    assert_eq!(compile_and_run("vec_sort.ny"), 42);
+}
+
+#[test]
+fn test_string_index_of() {
+    assert_eq!(compile_and_run("string_index_of.ny"), 42);
+}

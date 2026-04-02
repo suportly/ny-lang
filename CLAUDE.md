@@ -36,6 +36,9 @@ cargo build --release    # Release binary
 ny build file.ny         # Compile .ny to executable
 ny build file.ny -O 2    # Compile with optimization
 ny test file.ny          # Run test_* functions
+ny fmt file.ny           # Print formatted source
+ny fmt file.ny --write   # Format in-place
+ny fmt file.ny --check   # Check if formatted (exit 1 if not)
 ```
 
 ## Code Style
@@ -66,7 +69,7 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 - Generic functions with monomorphization: `fn max<T>(a: T, b: T) -> T`
 - Module system: `use "module.ny";`
 - Extern C FFI: `extern { fn abs(x: i32) -> i32; }`
-- Vec<T> dynamic arrays: push/pop/get/set/len with auto-grow
+- Vec<T> dynamic arrays: push/pop/get/set/len/sort with auto-grow
 - HashMap (str->i32): C runtime backed
 - Capturing closures: `|x: i32| -> i32 { x * n }`
 - for-in iteration: `for item in collection { ... }`
@@ -74,7 +77,7 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 - if let: `if let Option::Some(v) = expr { ... }`
 - Void functions: `fn greet() { ... }` without -> ()
 - Pointer arithmetic: `ptr + offset`, `*(ptr + n)`
-- String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`
+- String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`, `.index_of()`
 
 ## Builtin Functions
 

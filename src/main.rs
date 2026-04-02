@@ -238,7 +238,7 @@ fn main() {
                 }
             };
 
-            let formatted = ny::formatter::format_program(&program);
+            let formatted = ny::formatter::format_program_with_source(&program, &source);
 
             if check {
                 if formatted != source {

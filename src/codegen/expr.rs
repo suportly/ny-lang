@@ -2121,6 +2121,176 @@ impl<'ctx> CodeGen<'ctx> {
 
                             return Ok(Some(val));
                         }
+                        "sort" => {
+                            // v.sort() — in-place ascending bubble sort
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "sort_len_gep")
+                                .unwrap();
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 0, "sort_data_gep")
+                                .unwrap();
+                            let len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "sort_len")
+                                .unwrap()
+                                .into_int_value();
+                            let data_ptr = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "sort_data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+
+                            // Outer loop: for i in 0..len-1
+                            let outer_bb =
+                                self.context.append_basic_block(*function, "sort_outer");
+                            let inner_bb =
+                                self.context.append_basic_block(*function, "sort_inner");
+                            let cmp_bb =
+                                self.context.append_basic_block(*function, "sort_cmp");
+                            let swap_bb =
+                                self.context.append_basic_block(*function, "sort_swap");
+                            let inner_inc_bb =
+                                self.context.append_basic_block(*function, "sort_inner_inc");
+                            let outer_inc_bb =
+                                self.context.append_basic_block(*function, "sort_outer_inc");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "sort_done");
+
+                            let len_m1 =
+                                self.builder.build_int_sub(len, one, "len_m1").unwrap();
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            self.builder.build_unconditional_branch(outer_bb).unwrap();
+
+                            // Outer loop header
+                            self.builder.position_at_end(outer_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "sort_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let outer_cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len_m1, "i_lt")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(outer_cond, inner_bb, done_bb)
+                                .unwrap();
+
+                            // Inner loop header: for j in 0..len-1-i
+                            self.builder.position_at_end(inner_bb);
+                            let j_phi =
+                                self.builder.build_phi(i64_ty, "sort_j").unwrap();
+                            j_phi.add_incoming(&[(&zero, outer_bb)]);
+                            let j_val = j_phi.as_basic_value().into_int_value();
+                            let inner_limit = self
+                                .builder
+                                .build_int_sub(len_m1, i_val, "inner_lim")
+                                .unwrap();
+                            let inner_cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, j_val, inner_limit, "j_lt")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(inner_cond, cmp_bb, outer_inc_bb)
+                                .unwrap();
+
+                            // Compare: if data[j] > data[j+1], swap
+                            self.builder.position_at_end(cmp_bb);
+                            let j_plus1 = self
+                                .builder
+                                .build_int_add(j_val, one, "j_p1")
+                                .unwrap();
+                            let ptr_j = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[j_val], "ptr_j",
+                                    )
+                                    .unwrap()
+                            };
+                            let ptr_j1 = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[j_plus1], "ptr_j1",
+                                    )
+                                    .unwrap()
+                            };
+                            let val_j = self
+                                .builder
+                                .build_load(elem_llvm, ptr_j, "val_j")
+                                .unwrap();
+                            let val_j1 = self
+                                .builder
+                                .build_load(elem_llvm, ptr_j1, "val_j1")
+                                .unwrap();
+
+                            // Compare based on element type
+                            let should_swap = if elem_ty.is_float() {
+                                self.builder
+                                    .build_float_compare(
+                                        inkwell::FloatPredicate::OGT,
+                                        val_j.into_float_value(),
+                                        val_j1.into_float_value(),
+                                        "fgt",
+                                    )
+                                    .unwrap()
+                            } else {
+                                self.builder
+                                    .build_int_compare(
+                                        IntPredicate::SGT,
+                                        val_j.into_int_value(),
+                                        val_j1.into_int_value(),
+                                        "igt",
+                                    )
+                                    .unwrap()
+                            };
+                            self.builder
+                                .build_conditional_branch(should_swap, swap_bb, inner_inc_bb)
+                                .unwrap();
+
+                            // Swap: data[j] = data[j+1], data[j+1] = tmp
+                            self.builder.position_at_end(swap_bb);
+                            self.builder.build_store(ptr_j, val_j1).unwrap();
+                            self.builder.build_store(ptr_j1, val_j).unwrap();
+                            self.builder
+                                .build_unconditional_branch(inner_inc_bb)
+                                .unwrap();
+
+                            // Inner increment
+                            self.builder.position_at_end(inner_inc_bb);
+                            let next_j = self
+                                .builder
+                                .build_int_add(j_val, one, "next_j")
+                                .unwrap();
+                            j_phi.add_incoming(&[(&next_j, inner_inc_bb)]);
+                            self.builder
+                                .build_unconditional_branch(inner_bb)
+                                .unwrap();
+
+                            // Outer increment
+                            self.builder.position_at_end(outer_inc_bb);
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "next_i")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, outer_inc_bb)]);
+                            self.builder
+                                .build_unconditional_branch(outer_bb)
+                                .unwrap();
+
+                            // Done
+                            self.builder.position_at_end(done_bb);
+                            return Ok(None);
+                        }
                         _ => {}
                     }
                 }
@@ -2255,6 +2425,156 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_int_z_extend(byte, self.context.i32_type(), "char_i32")
                                 .unwrap();
                             return Ok(Some(as_i32.into()));
+                        }
+                        "index_of" => {
+                            // s.index_of(needle) -> i32 (-1 if not found)
+                            let needle_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+
+                            let hay_ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "io_hay_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let hay_len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "io_hay_len")
+                                .unwrap()
+                                .into_int_value();
+                            let ndl_ptr = self
+                                .builder
+                                .build_extract_value(needle_val, 0, "io_ndl_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let ndl_len = self
+                                .builder
+                                .build_extract_value(needle_val, 1, "io_ndl_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let memcmp_fn = self.get_or_declare_memcmp();
+                            let i8_ty = self.context.i8_type();
+                            let i32_ty = self.context.i32_type();
+                            let i64_ty = self.context.i64_type();
+                            let zero_i64 = i64_ty.const_int(0, false);
+                            let one_i64 = i64_ty.const_int(1, false);
+                            let zero_i32 = i32_ty.const_int(0, false);
+                            let neg1_i32 = i32_ty.const_all_ones(); // -1
+
+                            let io_pre_bb = self.builder.get_insert_block().unwrap();
+                            let io_loop_bb =
+                                self.context.append_basic_block(*function, "io_loop");
+                            let io_check_bb =
+                                self.context.append_basic_block(*function, "io_check");
+                            let io_inc_bb =
+                                self.context.append_basic_block(*function, "io_inc");
+                            let io_found_bb =
+                                self.context.append_basic_block(*function, "io_found");
+                            let io_not_bb =
+                                self.context.append_basic_block(*function, "io_not");
+                            let io_merge_bb =
+                                self.context.append_basic_block(*function, "io_merge");
+
+                            let len_ok = self
+                                .builder
+                                .build_int_compare(
+                                    IntPredicate::ULE, ndl_len, hay_len, "io_len_ok",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(len_ok, io_loop_bb, io_not_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(io_loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "io_i").unwrap();
+                            i_phi.add_incoming(&[(&zero_i64, io_pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+
+                            let limit = self
+                                .builder
+                                .build_int_sub(hay_len, ndl_len, "io_limit")
+                                .unwrap();
+                            let limit_p1 = self
+                                .builder
+                                .build_int_add(limit, one_i64, "io_limit_p1")
+                                .unwrap();
+                            let in_range = self
+                                .builder
+                                .build_int_compare(
+                                    IntPredicate::ULT, i_val, limit_p1, "io_in_range",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(in_range, io_check_bb, io_not_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(io_check_bb);
+                            let sub_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, hay_ptr, &[i_val], "io_sub")
+                                    .unwrap()
+                            };
+                            let cmp = self
+                                .builder
+                                .build_call(
+                                    memcmp_fn,
+                                    &[sub_ptr.into(), ndl_ptr.into(), ndl_len.into()],
+                                    "io_cmp",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_int_value();
+                            let found = self
+                                .builder
+                                .build_int_compare(
+                                    IntPredicate::EQ, cmp, zero_i32, "io_found",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(found, io_found_bb, io_inc_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(io_inc_bb);
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one_i64, "io_next_i")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, io_inc_bb)]);
+                            self.builder
+                                .build_unconditional_branch(io_loop_bb)
+                                .unwrap();
+
+                            // Found: return i as i32
+                            self.builder.position_at_end(io_found_bb);
+                            let found_idx = self
+                                .builder
+                                .build_int_truncate(i_val, i32_ty, "io_idx_i32")
+                                .unwrap();
+                            self.builder
+                                .build_unconditional_branch(io_merge_bb)
+                                .unwrap();
+
+                            // Not found: return -1
+                            self.builder.position_at_end(io_not_bb);
+                            self.builder
+                                .build_unconditional_branch(io_merge_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(io_merge_bb);
+                            let phi = self
+                                .builder
+                                .build_phi(i32_ty, "io_result")
+                                .unwrap();
+                            phi.add_incoming(&[
+                                (&found_idx, io_found_bb),
+                                (&neg1_i32, io_not_bb),
+                            ]);
+                            return Ok(Some(phi.as_basic_value()));
                         }
                         "contains" | "starts_with" | "ends_with" => {
                             // String comparison methods via memcmp-based loop

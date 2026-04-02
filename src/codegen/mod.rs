@@ -991,10 +991,11 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
-                // Handle vec_new() — creates empty Vec<i32>
+                // Handle vec_new() — creates empty Vec (element size determined by context)
                 if callee == "vec_new" {
                     let initial_cap: u64 = 8;
-                    let elem_size = self.context.i64_type().const_int(4, false); // i32 = 4 bytes
+                    // Default to 8 bytes per elem (covers i64, f64, pointers, str)
+                    let elem_size = self.context.i64_type().const_int(8, false);
                     let alloc_size = self
                         .builder
                         .build_int_mul(
@@ -1012,7 +1013,6 @@ impl<'ctx> CodeGen<'ctx> {
                         .basic()
                         .unwrap()
                         .into_pointer_value();
-                    // Build { ptr, len=0, cap=8 }
                     let vec_ty = self.context.struct_type(
                         &[
                             self.context.ptr_type(AddressSpace::default()).into(),
@@ -4025,6 +4025,144 @@ impl<'ctx> CodeGen<'ctx> {
                         )
                         .unwrap();
                 }
+                NyType::Vec(ref elem_ty) => {
+                    // Print Vec as [elem1, elem2, ...]
+                    let printf_fn = self.get_or_declare_printf();
+                    let vec_val = val.unwrap().into_struct_value();
+                    let data_ptr = self
+                        .builder
+                        .build_extract_value(vec_val, 0, "vec_data")
+                        .unwrap()
+                        .into_pointer_value();
+                    let len = self
+                        .builder
+                        .build_extract_value(vec_val, 1, "vec_len")
+                        .unwrap()
+                        .into_int_value();
+
+                    let open = self
+                        .builder
+                        .build_global_string_ptr("[", "vec_open")
+                        .unwrap();
+                    let fmt_s = self
+                        .builder
+                        .build_global_string_ptr("%s", "fmt_s_vec")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[fmt_s.as_pointer_value().into(), open.as_pointer_value().into()],
+                            "",
+                        )
+                        .unwrap();
+
+                    // Loop to print each element
+                    let i_alloca = self
+                        .builder
+                        .build_alloca(self.context.i64_type(), "vec_print_i")
+                        .unwrap();
+                    self.builder
+                        .build_store(i_alloca, self.context.i64_type().const_zero())
+                        .unwrap();
+
+                    let cond_bb = self
+                        .context
+                        .append_basic_block(*function, "vec_print_cond");
+                    let body_bb = self
+                        .context
+                        .append_basic_block(*function, "vec_print_body");
+                    let done_bb = self
+                        .context
+                        .append_basic_block(*function, "vec_print_done");
+
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                    self.builder.position_at_end(cond_bb);
+                    let i = self
+                        .builder
+                        .build_load(self.context.i64_type(), i_alloca, "i")
+                        .unwrap()
+                        .into_int_value();
+                    let cmp = self
+                        .builder
+                        .build_int_compare(IntPredicate::ULT, i, len, "vec_cmp")
+                        .unwrap();
+                    self.builder
+                        .build_conditional_branch(cmp, body_bb, done_bb)
+                        .unwrap();
+
+                    self.builder.position_at_end(body_bb);
+                    // Print separator
+                    let zero = self.context.i64_type().const_zero();
+                    let not_first = self
+                        .builder
+                        .build_int_compare(IntPredicate::UGT, i, zero, "not_first")
+                        .unwrap();
+                    let sep = self
+                        .builder
+                        .build_global_string_ptr(", ", "vec_sep")
+                        .unwrap();
+                    let empty = self
+                        .builder
+                        .build_global_string_ptr("", "vec_empty")
+                        .unwrap();
+                    let sep_str = self
+                        .builder
+                        .build_select(
+                            not_first,
+                            sep.as_pointer_value(),
+                            empty.as_pointer_value(),
+                            "sep_sel",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(printf_fn, &[fmt_s.as_pointer_value().into(), sep_str.into()], "")
+                        .unwrap();
+
+                    // Print element
+                    let elem_llvm = ny_to_llvm(self.context, elem_ty);
+                    let elem_ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(elem_llvm, data_ptr, &[i], "vec_ep")
+                            .unwrap()
+                    };
+                    let elem_val = self
+                        .builder
+                        .build_load(elem_llvm, elem_ptr, "vec_e")
+                        .unwrap();
+                    let fmt_d = self
+                        .builder
+                        .build_global_string_ptr("%d", "fmt_d_vec")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[fmt_d.as_pointer_value().into(), elem_val.into()],
+                            "",
+                        )
+                        .unwrap();
+
+                    // i++
+                    let next_i = self
+                        .builder
+                        .build_int_add(i, self.context.i64_type().const_int(1, false), "next_i")
+                        .unwrap();
+                    self.builder.build_store(i_alloca, next_i).unwrap();
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                    self.builder.position_at_end(done_bb);
+                    let close = self
+                        .builder
+                        .build_global_string_ptr("]", "vec_close")
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            printf_fn,
+                            &[fmt_s.as_pointer_value().into(), close.as_pointer_value().into()],
+                            "",
+                        )
+                        .unwrap();
+                }
                 _ => {
                     // Fallback: try to print as i32
                     if let Some(v) = val {
@@ -4064,7 +4202,24 @@ impl<'ctx> CodeGen<'ctx> {
                 .unwrap();
         }
 
+        // Flush stdout after every print/println to avoid buffering issues
+        let fflush_fn = self.get_or_declare_fflush();
+        let null_ptr = self.context.ptr_type(AddressSpace::default()).const_null();
+        self.builder
+            .build_call(fflush_fn, &[null_ptr.into()], "")
+            .unwrap();
+
         Ok(())
+    }
+
+    fn get_or_declare_fflush(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fflush") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fflush_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("fflush", fflush_ty, None)
     }
 
     // ------------------------------------------------------------------

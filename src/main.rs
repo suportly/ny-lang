@@ -33,6 +33,19 @@ enum Commands {
         /// Path to .ny source file
         file: PathBuf,
     },
+    /// Format a Ny source file (opinionated, zero-config)
+    Fmt {
+        /// Path to .ny source file
+        file: PathBuf,
+
+        /// Write formatted output back to the file
+        #[arg(short, long)]
+        write: bool,
+
+        /// Check if file is already formatted (exit 1 if not)
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -191,6 +204,54 @@ fn main() {
             println!("\ntest result: {} passed, {} failed", passed, failed);
             if failed > 0 {
                 process::exit(1);
+            }
+        }
+        Commands::Fmt { file, write, check } => {
+            if !file.exists() {
+                eprintln!(
+                    "error: could not read file `{}`: No such file or directory",
+                    file.display()
+                );
+                process::exit(2);
+            }
+
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: could not read file `{}`: {}", file.display(), e);
+                    process::exit(2);
+                }
+            };
+
+            let tokens = match ny::lexer::tokenize(&source) {
+                Ok(t) => t,
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
+                    process::exit(1);
+                }
+            };
+            let program = match ny::parser::parse(tokens) {
+                Ok(p) => p,
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
+                    process::exit(1);
+                }
+            };
+
+            let formatted = ny::formatter::format_program(&program);
+
+            if check {
+                if formatted != source {
+                    eprintln!("{} needs formatting", file.display());
+                    process::exit(1);
+                }
+            } else if write {
+                if formatted != source {
+                    std::fs::write(&file, &formatted).unwrap();
+                    eprintln!("formatted {}", file.display());
+                }
+            } else {
+                print!("{}", formatted);
             }
         }
     }

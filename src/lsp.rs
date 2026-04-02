@@ -2,6 +2,7 @@
 //!
 //! Provides: diagnostics (inline errors), hover (type info), go-to-definition.
 //! Runs as a separate process, communicates via stdio with LSP protocol.
+//! Uses the compiler's semantic analysis for accurate type information.
 
 #![allow(clippy::mutable_key_type)]
 
@@ -12,6 +13,15 @@ use lsp_types::*;
 type Url = lsp_types::Uri;
 use std::collections::HashMap;
 use std::error::Error;
+
+use ny::common::NyType;
+use ny::semantic::ResolvedInfo;
+
+/// Cached analysis result for a document
+struct DocumentState {
+    source: String,
+    resolved: Option<ResolvedInfo>,
+}
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     eprintln!("ny-lsp: starting Ny Lang Language Server");
@@ -45,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
 }
 
 fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
-    let mut documents: HashMap<Url, String> = HashMap::new();
+    let mut documents: HashMap<Url, DocumentState> = HashMap::new();
 
     for msg in &connection.receiver {
         match msg {
@@ -86,15 +96,29 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     let params: DidOpenTextDocumentParams = serde_json::from_value(notif.params)?;
                     let uri = params.text_document.uri.clone();
                     let text = params.text_document.text.clone();
-                    documents.insert(uri.clone(), text.clone());
+                    let resolved = analyze_document(&text);
                     publish_diagnostics(&connection, &uri, &text)?;
+                    documents.insert(
+                        uri,
+                        DocumentState {
+                            source: text,
+                            resolved,
+                        },
+                    );
                 } else if notif.method == DidChangeTextDocument::METHOD {
                     let params: DidChangeTextDocumentParams = serde_json::from_value(notif.params)?;
                     let uri = params.text_document.uri.clone();
                     if let Some(change) = params.content_changes.into_iter().last() {
                         let text = change.text;
-                        documents.insert(uri.clone(), text.clone());
+                        let resolved = analyze_document(&text);
                         publish_diagnostics(&connection, &uri, &text)?;
+                        documents.insert(
+                            uri,
+                            DocumentState {
+                                source: text,
+                                resolved,
+                            },
+                        );
                     }
                 }
             }
@@ -104,6 +128,13 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
     Ok(())
 }
 
+/// Run lexer + parser + semantic analysis, returning ResolvedInfo if successful.
+fn analyze_document(source: &str) -> Option<ResolvedInfo> {
+    let tokens = ny::lexer::tokenize(source).ok()?;
+    let program = ny::parser::parse(tokens).ok()?;
+    ny::semantic::analyze(&program).ok()
+}
+
 fn publish_diagnostics(
     connection: &Connection,
     uri: &Url,
@@ -111,7 +142,6 @@ fn publish_diagnostics(
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut diagnostics = Vec::new();
 
-    // Run lexer + parser + semantic analysis to find errors
     match ny::lexer::tokenize(source) {
         Err(errors) => {
             for err in errors {
@@ -170,44 +200,38 @@ fn error_to_diagnostic(source: &str, error: &ny::common::CompileError) -> Diagno
     }
 }
 
-fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
-    let mut line = 0;
-    let mut col = 0;
-    for (i, ch) in source.char_indices() {
-        if i >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
+// ---------------------------------------------------------------------------
+// Hover: semantic type info from ResolvedInfo
+// ---------------------------------------------------------------------------
 
-fn handle_hover(documents: &HashMap<Url, String>, uri: &Url, pos: Position) -> Option<Hover> {
-    let source = documents.get(uri)?;
+fn handle_hover(documents: &HashMap<Url, DocumentState>, uri: &Url, pos: Position) -> Option<Hover> {
+    let doc = documents.get(uri)?;
+    let source = &doc.source;
     let offset = line_col_to_byte_offset(source, pos.line as usize, pos.character as usize)?;
 
-    // Find the token at the cursor position
     let tokens = ny::lexer::tokenize(source).ok()?;
     for token in &tokens {
         if token.span.start <= offset && offset <= token.span.end {
             if let ny::lexer::token::TokenKind::Ident(name) = &token.kind {
-                // Try to find type info
-                let type_info = infer_type_at_position(source, name);
+                let info = if let Some(resolved) = &doc.resolved {
+                    semantic_type_info(source, resolved, name)
+                } else {
+                    format!("{} (analysis unavailable)", name)
+                };
                 return Some(Hover {
-                    contents: HoverContents::Scalar(MarkedString::String(type_info)),
-                    range: None,
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: info,
+                    }),
+                    range: Some(span_to_range(source, token.span)),
                 });
             }
             if let ny::lexer::token::TokenKind::Fn = &token.kind {
                 return Some(Hover {
-                    contents: HoverContents::Scalar(MarkedString::String(
-                        "keyword: fn — function definition".to_string(),
-                    )),
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: "`fn` — function definition keyword".to_string(),
+                    }),
                     range: None,
                 });
             }
@@ -216,19 +240,108 @@ fn handle_hover(documents: &HashMap<Url, String>, uri: &Url, pos: Position) -> O
     None
 }
 
+/// Build hover info from semantic analysis results.
+fn semantic_type_info(source: &str, resolved: &ResolvedInfo, name: &str) -> String {
+    // Check functions
+    if let Some((param_types, ret_type, _)) = resolved.functions.get(name) {
+        let params: Vec<String> = param_types.iter().map(|t| format!("{}", t)).collect();
+        let ret = if *ret_type == NyType::Unit {
+            String::new()
+        } else {
+            format!(" -> {}", ret_type)
+        };
+        return format!("```ny\nfn {}({}){}\n```", name, params.join(", "), ret);
+    }
+
+    // Check structs
+    if let Some(fields) = resolved.structs.get(name) {
+        let field_lines: Vec<String> = fields
+            .iter()
+            .map(|(fname, ftype)| format!("    {}: {}", fname, ftype))
+            .collect();
+        return format!("```ny\nstruct {} {{\n{}\n}}\n```", name, field_lines.join(",\n"));
+    }
+
+    // Check enums
+    if let Some(variants) = resolved.enums.get(name) {
+        let var_lines: Vec<String> = variants
+            .iter()
+            .map(|(vname, payload)| {
+                if payload.is_empty() {
+                    format!("    {}", vname)
+                } else {
+                    let types: Vec<String> = payload.iter().map(|t| format!("{}", t)).collect();
+                    format!("    {}({})", vname, types.join(", "))
+                }
+            })
+            .collect();
+        return format!("```ny\nenum {} {{\n{}\n}}\n```", name, var_lines.join(",\n"));
+    }
+
+    // Fall back to source-level heuristic for local variables
+    infer_type_from_source(source, name)
+}
+
+/// Fallback: infer variable types from source text patterns.
+fn infer_type_from_source(source: &str, name: &str) -> String {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(name) {
+            let rest = rest.trim();
+            // name :~ Type = ...  (mutable with type)
+            if let Some(rest) = rest.strip_prefix(":~") {
+                let ty = rest.trim().split('=').next().unwrap_or("").trim();
+                if !ty.is_empty() {
+                    return format!("`{}: {}` (mutable)", name, ty);
+                }
+            }
+            // name : Type = ...  (immutable with type)
+            if let Some(rest) = rest.strip_prefix(':') {
+                let rest = rest.trim();
+                if !rest.starts_with('=') {
+                    let ty = rest.split('=').next().unwrap_or("").trim();
+                    if !ty.is_empty() {
+                        return format!("`{}: {}`", name, ty);
+                    }
+                }
+            }
+            // name := expr  (inferred)
+            if rest.starts_with(":=") {
+                return format!("`{}` (type inferred)", name);
+            }
+        }
+    }
+    format!("`{}`", name)
+}
+
+// ---------------------------------------------------------------------------
+// Go-to-definition: use ResolvedInfo spans when available
+// ---------------------------------------------------------------------------
+
 fn handle_goto_def(
-    documents: &HashMap<Url, String>,
+    documents: &HashMap<Url, DocumentState>,
     uri: &Url,
     pos: Position,
 ) -> Option<GotoDefinitionResponse> {
-    let source = documents.get(uri)?;
+    let doc = documents.get(uri)?;
+    let source = &doc.source;
     let offset = line_col_to_byte_offset(source, pos.line as usize, pos.character as usize)?;
 
     let tokens = ny::lexer::tokenize(source).ok()?;
     for token in &tokens {
         if token.span.start <= offset && offset <= token.span.end {
             if let ny::lexer::token::TokenKind::Ident(name) = &token.kind {
-                // Search for function or struct definition with this name
+                // Try semantic resolution first (functions have accurate spans)
+                if let Some(resolved) = &doc.resolved {
+                    if let Some((_, _, def_span)) = resolved.functions.get(name.as_str()) {
+                        return Some(GotoDefinitionResponse::Scalar(Location {
+                            uri: uri.clone(),
+                            range: span_to_range(source, *def_span),
+                        }));
+                    }
+                }
+
+                // Fallback: text search for struct/enum definitions
                 if let Some(def_offset) = find_definition(source, name) {
                     let (line, col) = byte_offset_to_line_col(source, def_offset);
                     return Some(GotoDefinitionResponse::Scalar(Location {
@@ -251,6 +364,59 @@ fn handle_goto_def(
     None
 }
 
+fn find_definition(source: &str, name: &str) -> Option<usize> {
+    let patterns = [
+        format!("struct {} ", name),
+        format!("struct {}{{", name.trim()),
+        format!("enum {} ", name),
+        format!("enum {}{{", name.trim()),
+        format!("trait {} ", name),
+        format!("trait {}{{", name.trim()),
+    ];
+    for pattern in &patterns {
+        if let Some(pos) = source.find(pattern.as_str()) {
+            return Some(pos + pattern.find(name).unwrap_or(0));
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+fn span_to_range(source: &str, span: ny::common::Span) -> Range {
+    let (start_line, start_col) = byte_offset_to_line_col(source, span.start);
+    let (end_line, end_col) = byte_offset_to_line_col(source, span.end);
+    Range {
+        start: Position {
+            line: start_line as u32,
+            character: start_col as u32,
+        },
+        end: Position {
+            line: end_line as u32,
+            character: end_col as u32,
+        },
+    }
+}
+
+fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
+    let mut line = 0;
+    let mut col = 0;
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
 fn line_col_to_byte_offset(source: &str, target_line: usize, target_col: usize) -> Option<usize> {
     let mut line = 0;
     let mut col = 0;
@@ -267,63 +433,6 @@ fn line_col_to_byte_offset(source: &str, target_line: usize, target_col: usize) 
     }
     if line == target_line && col == target_col {
         return Some(source.len());
-    }
-    None
-}
-
-fn infer_type_at_position(source: &str, name: &str) -> String {
-    // Simple heuristic: find "name : Type" or "name := expr" patterns
-    for line in source.lines() {
-        let trimmed = line.trim();
-        // Check "name : Type = ..."
-        if let Some(rest) = trimmed.strip_prefix(name) {
-            let rest = rest.trim();
-            if let Some(rest) = rest.strip_prefix(':') {
-                let rest = rest.trim();
-                if let Some(rest) = rest.strip_prefix('~') {
-                    // mutable
-                    let ty = rest.trim().split('=').next().unwrap_or("").trim();
-                    if !ty.is_empty() {
-                        return format!("{}: {} (mutable)", name, ty);
-                    }
-                } else if let Some(_rest) = rest.strip_prefix('=') {
-                    // type inference
-                    return format!("{} (type inferred)", name);
-                } else {
-                    let ty = rest.split('=').next().unwrap_or("").trim();
-                    if !ty.is_empty() {
-                        return format!("{}: {}", name, ty);
-                    }
-                }
-            }
-        }
-        // Check "fn name("
-        if trimmed.starts_with("fn ") && trimmed.contains(name) {
-            return format!("function {}", name);
-        }
-        // Check "struct name"
-        if trimmed.starts_with("struct ") && trimmed.contains(name) {
-            return format!("struct {}", name);
-        }
-    }
-    format!("{} (unknown type)", name)
-}
-
-fn find_definition(source: &str, name: &str) -> Option<usize> {
-    // Search for "fn name(" or "struct name" or "enum name"
-    let patterns = [
-        format!("fn {}(", name),
-        format!("fn {}<", name),
-        format!("struct {} ", name),
-        format!("struct {}{{", name.trim()),
-        format!("enum {} ", name),
-        format!("enum {}{{", name.trim()),
-    ];
-    for pattern in &patterns {
-        if let Some(pos) = source.find(pattern.as_str()) {
-            // Return position of the name within the match
-            return Some(pos + pattern.find(name).unwrap_or(0));
-        }
     }
     None
 }

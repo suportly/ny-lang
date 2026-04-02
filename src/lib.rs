@@ -9,6 +9,7 @@
 pub mod codegen;
 pub mod common;
 pub mod diagnostics;
+pub mod formatter;
 pub mod lexer;
 pub mod monomorphize;
 pub mod parser;
@@ -39,7 +40,7 @@ pub fn compile(
     // Monomorphize generic functions before semantic analysis
     monomorphize::monomorphize(&mut program);
 
-    semantic::analyze(&program)?;
+    let _resolved = semantic::analyze(&program)?;
     codegen::generate(&program, source_path, output_path, opt_level, emit)
 }
 

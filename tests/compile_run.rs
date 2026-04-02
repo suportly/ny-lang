@@ -234,6 +234,16 @@ fn test_vec() {
 }
 
 #[test]
+fn test_ptr_arith() {
+    assert_eq!(compile_and_run("ptr_arith.ny"), 42);
+}
+
+#[test]
+fn test_hashmap() {
+    assert_eq!(compile_and_run("hashmap.ny"), 11);
+}
+
+#[test]
 fn test_void_fn() {
     assert_eq!(compile_and_run("void_fn.ny"), 42);
 }

@@ -132,20 +132,28 @@ fn emit_object_file(module: &Module, path: &Path, opt_level: u8) -> Result<(), V
 }
 
 fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<CompileError>> {
-    let status = Command::new("cc")
-        .arg(obj_path)
+    // Find the runtime directory (relative to the ny binary or cargo manifest)
+    let runtime_c = find_runtime_file("hashmap.c");
+
+    let mut cmd = Command::new("cc");
+    cmd.arg(obj_path)
         .arg("-o")
         .arg(output_path)
         .arg("-no-pie")
         .arg("-lm")
-        .arg("-lc")
-        .status()
-        .map_err(|e| {
-            vec![CompileError::syntax(
-                format!("failed to invoke linker 'cc': {}", e),
-                Span::empty(0),
-            )]
-        })?;
+        .arg("-lc");
+
+    // If runtime C file exists, compile and link it too
+    if let Some(rt_path) = &runtime_c {
+        cmd.arg(rt_path);
+    }
+
+    let status = cmd.status().map_err(|e| {
+        vec![CompileError::syntax(
+            format!("failed to invoke linker 'cc': {}", e),
+            Span::empty(0),
+        )]
+    })?;
 
     if !status.success() {
         return Err(vec![CompileError::syntax(
@@ -155,6 +163,29 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
     }
 
     Ok(())
+}
+
+fn find_runtime_file(name: &str) -> Option<std::path::PathBuf> {
+    // Try relative to current executable
+    if let Ok(exe) = std::env::current_exe() {
+        let dir = exe.parent()?;
+        // Try: exe_dir/../runtime/name (development layout)
+        let dev_path = dir.join("..").join("..").join("runtime").join(name);
+        if dev_path.exists() {
+            return Some(dev_path);
+        }
+        // Try: exe_dir/runtime/name
+        let install_path = dir.join("runtime").join(name);
+        if install_path.exists() {
+            return Some(install_path);
+        }
+    }
+    // Try current working directory
+    let cwd_path = Path::new("runtime").join(name);
+    if cwd_path.exists() {
+        return Some(cwd_path);
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +400,10 @@ impl<'ctx> CodeGen<'ctx> {
                         "fclose" | "fread_byte" | "fwrite_str" | "str_to_int" => NyType::I32,
                         "read_line" | "int_to_str" => NyType::Str,
                         "vec_new" => NyType::Vec(Box::new(NyType::I32)),
-                        "vec_len" => NyType::I64,
+                        "vec_len" | "map_len" => NyType::I64,
+                        "map_new" => NyType::Pointer(Box::new(NyType::U8)),
+                        "map_get" => NyType::I32,
+                        "map_contains" => NyType::Bool,
                         _ => NyType::Unit,
                     }
                 }
@@ -989,6 +1023,141 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     self.builder.build_unreachable().unwrap();
                     return Ok(None);
+                }
+
+                // Handle map_new() → calls ny_map_new() from runtime
+                if callee == "map_new" {
+                    let map_new_fn = self.get_or_declare_ny_map_new();
+                    let ptr = self
+                        .builder
+                        .build_call(map_new_fn, &[], "map_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(ptr));
+                }
+
+                // Handle map_insert(m, key_str, value_i32)
+                if callee == "map_insert" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let key_ptr = self
+                        .builder
+                        .build_extract_value(key_val, 0, "key_ptr")
+                        .unwrap();
+                    let key_len = self
+                        .builder
+                        .build_extract_value(key_val, 1, "key_len")
+                        .unwrap();
+                    let value = self.compile_expr(&args[2], function)?.unwrap();
+                    let value_i64 = self
+                        .builder
+                        .build_int_s_extend(
+                            value.into_int_value(),
+                            self.context.i64_type(),
+                            "val_i64",
+                        )
+                        .unwrap();
+                    let insert_fn = self.get_or_declare_ny_map_insert();
+                    self.builder
+                        .build_call(
+                            insert_fn,
+                            &[map_ptr.into(), key_ptr.into(), key_len.into(), value_i64.into()],
+                            "",
+                        )
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // Handle map_get(m, key_str) -> i32
+                if callee == "map_get" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let key_ptr = self
+                        .builder
+                        .build_extract_value(key_val, 0, "key_ptr")
+                        .unwrap();
+                    let key_len = self
+                        .builder
+                        .build_extract_value(key_val, 1, "key_len")
+                        .unwrap();
+                    let get_fn = self.get_or_declare_ny_map_get();
+                    let result = self
+                        .builder
+                        .build_call(get_fn, &[map_ptr.into(), key_ptr.into(), key_len.into()], "map_val")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let result_i32 = self
+                        .builder
+                        .build_int_truncate(
+                            result.into_int_value(),
+                            self.context.i32_type(),
+                            "map_i32",
+                        )
+                        .unwrap();
+                    return Ok(Some(result_i32.into()));
+                }
+
+                // Handle map_contains(m, key_str) -> bool
+                if callee == "map_contains" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let key_ptr = self
+                        .builder
+                        .build_extract_value(key_val, 0, "key_ptr")
+                        .unwrap();
+                    let key_len = self
+                        .builder
+                        .build_extract_value(key_val, 1, "key_len")
+                        .unwrap();
+                    let contains_fn = self.get_or_declare_ny_map_contains();
+                    let result = self
+                        .builder
+                        .build_call(
+                            contains_fn,
+                            &[map_ptr.into(), key_ptr.into(), key_len.into()],
+                            "map_has",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let bool_val = self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            result.into_int_value(),
+                            self.context.i32_type().const_zero(),
+                            "has_bool",
+                        )
+                        .unwrap();
+                    return Ok(Some(bool_val.into()));
+                }
+
+                // Handle map_len(m) -> i64
+                if callee == "map_len" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let len_fn = self.get_or_declare_ny_map_len();
+                    let result = self
+                        .builder
+                        .build_call(len_fn, &[map_ptr.into()], "map_len")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
                 }
 
                 // Handle vec_new() — creates empty Vec (element size determined by context)
@@ -4212,6 +4381,60 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn get_or_declare_ny_map_new(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_new") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = ptr_ty.fn_type(&[], false);
+        self.module.add_function("ny_map_new", fn_ty, None)
+    }
+
+    fn get_or_declare_ny_map_insert(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_insert") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let void_ty = self.context.void_type();
+        let fn_ty = void_ty.fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), i64_ty.into()],
+            false,
+        );
+        self.module.add_function("ny_map_insert", fn_ty, None)
+    }
+
+    fn get_or_declare_ny_map_get(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_get") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_map_get", fn_ty, None)
+    }
+
+    fn get_or_declare_ny_map_contains(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_contains") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let i32_ty = self.context.i32_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_map_contains", fn_ty, None)
+    }
+
+    fn get_or_declare_ny_map_len(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_len") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_map_len", fn_ty, None)
+    }
+
     fn get_or_declare_fflush(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("fflush") {
             return f;
@@ -4558,6 +4781,57 @@ impl<'ctx> CodeGen<'ctx> {
                 _ => {
                     return Err(vec![CompileError::type_error(
                         format!("unsupported binary operation on struct/string types"),
+                        Span::empty(0),
+                    )]);
+                }
+            }
+        }
+
+        // Pointer arithmetic: ptr + int or ptr - int
+        if lhs.is_pointer_value() && rhs.is_int_value() {
+            let ptr = lhs.into_pointer_value();
+            let offset = rhs.into_int_value();
+            let i8_ty = self.context.i8_type();
+            match op {
+                BinOp::Add => {
+                    let offset_i64 = self
+                        .builder
+                        .build_int_s_extend_or_bit_cast(
+                            offset,
+                            self.context.i64_type(),
+                            "ptr_off",
+                        )
+                        .unwrap();
+                    let result = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(i8_ty, ptr, &[offset_i64], "ptr_add")
+                            .unwrap()
+                    };
+                    return Ok(result.into());
+                }
+                BinOp::Sub => {
+                    let neg_offset = self
+                        .builder
+                        .build_int_neg(offset, "neg_off")
+                        .unwrap();
+                    let neg_i64 = self
+                        .builder
+                        .build_int_s_extend_or_bit_cast(
+                            neg_offset,
+                            self.context.i64_type(),
+                            "ptr_neg",
+                        )
+                        .unwrap();
+                    let result = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(i8_ty, ptr, &[neg_i64], "ptr_sub")
+                            .unwrap()
+                    };
+                    return Ok(result.into());
+                }
+                _ => {
+                    return Err(vec![CompileError::type_error(
+                        "only + and - are supported for pointer arithmetic".to_string(),
                         Span::empty(0),
                     )]);
                 }

@@ -23,6 +23,11 @@ const BUILTIN_FUNCTIONS: &[&str] = &[
     "vec_push",
     "vec_len",
     "vec_get",
+    "map_new",
+    "map_insert",
+    "map_get",
+    "map_contains",
+    "map_len",
 ];
 
 #[derive(Debug, Clone)]

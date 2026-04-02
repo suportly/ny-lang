@@ -317,6 +317,8 @@ impl TypeChecker {
                         // String concatenation: str + str → str
                         if lhs_ty == NyType::Str && rhs_ty == NyType::Str {
                             NyType::Str
+                        } else if lhs_ty.is_pointer() && rhs_ty.is_integer() {
+                            lhs_ty // pointer arithmetic: ptr + int → ptr
                         } else {
                             if !lhs_ty.is_numeric() {
                                 self.errors.push(CompileError::type_error(
@@ -340,6 +342,10 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        // pointer - int → pointer
+                        if *op == BinOp::Sub && lhs_ty.is_pointer() && rhs_ty.is_integer() {
+                            return lhs_ty;
+                        }
                         if !lhs_ty.is_numeric() {
                             self.errors.push(CompileError::type_error(
                                 format!(
@@ -546,6 +552,27 @@ impl TypeChecker {
                         self.check_expr(arg);
                     }
                     return NyType::Unit;
+                }
+
+                // Built-in map_new() -> *u8 (opaque HashMap pointer)
+                if callee == "map_new" {
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "map_insert" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                if callee == "map_get" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I32;
+                }
+                if callee == "map_contains" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Bool;
+                }
+                if callee == "map_len" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I64;
                 }
 
                 // Built-in vec_new() -> Vec<T>

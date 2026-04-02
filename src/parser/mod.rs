@@ -532,8 +532,16 @@ impl Parser {
         }
         self.expect(&TokenKind::RParen)?;
 
-        self.expect(&TokenKind::Arrow)?;
-        let return_type = self.parse_type_annotation()?;
+        // Return type: -> T or implicit () if no arrow
+        let return_type = if *self.peek() == TokenKind::Arrow {
+            self.advance();
+            self.parse_type_annotation()?
+        } else {
+            TypeAnnotation::Named {
+                name: "()".to_string(),
+                span: self.peek_span(),
+            }
+        };
 
         let body = if *self.peek() == TokenKind::Assign {
             self.advance();

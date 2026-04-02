@@ -233,6 +233,16 @@ fn test_vec() {
     assert_eq!(compile_and_run("vec_test.ny"), 57);
 }
 
+#[test]
+fn test_void_fn() {
+    assert_eq!(compile_and_run("void_fn.ny"), 42);
+}
+
+#[test]
+fn test_vec_f64() {
+    assert_eq!(compile_and_run("vec_f64.ny"), 10);
+}
+
 // Phase E tests (generics)
 
 #[test]

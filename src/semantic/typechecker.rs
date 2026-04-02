@@ -548,7 +548,9 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
 
-                // Built-in vec_new() -> Vec<i32> (creates empty vector)
+                // Built-in vec_new() -> Vec<T>
+                // Type is determined by the variable's type annotation at the call site
+                // Default to Vec<i32> when no context is available
                 if callee == "vec_new" {
                     return NyType::Vec(Box::new(NyType::I32));
                 }
@@ -1469,7 +1471,10 @@ impl TypeChecker {
                 let init_ty = self.check_expr(init);
                 if let Some(annotation) = ty {
                     if let Some(declared_ty) = self.resolve_type_annotation(annotation) {
-                        if init_ty != declared_ty {
+                        // Allow Vec coercion: vec_new() returns Vec<i32> but declared type wins
+                        let compatible = init_ty == declared_ty
+                            || (init_ty.is_vec() && declared_ty.is_vec());
+                        if !compatible {
                             self.errors.push(CompileError::type_error(
                                 format!("expected '{}', found '{}'", declared_ty, init_ty),
                                 init.span(),

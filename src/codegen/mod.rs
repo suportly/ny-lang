@@ -994,8 +994,8 @@ impl<'ctx> CodeGen<'ctx> {
                 // Handle vec_new() — creates empty Vec (element size determined by context)
                 if callee == "vec_new" {
                     let initial_cap: u64 = 8;
-                    // Default to 8 bytes per elem (covers i64, f64, pointers, str)
-                    let elem_size = self.context.i64_type().const_int(8, false);
+                    // Use 16 bytes per elem to cover all types (str is 16 bytes)
+                    let elem_size = self.context.i64_type().const_int(16, false);
                     let alloc_size = self
                         .builder
                         .build_int_mul(

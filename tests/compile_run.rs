@@ -233,6 +233,11 @@ fn test_vec() {
     assert_eq!(compile_and_run("vec_test.ny"), 57);
 }
 
+#[test]
+fn test_numeric_coerce() {
+    assert_eq!(compile_and_run("numeric_coerce.ny"), 42);
+}
+
 // Stdlib tests
 
 #[test]

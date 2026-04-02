@@ -430,7 +430,7 @@ impl<'ctx> CodeGen<'ctx> {
                     NyType::I32
                 }
             }
-            Expr::BinOp { op, lhs, .. } => match op {
+            Expr::BinOp { op, lhs, rhs, .. } => match op {
                 BinOp::Eq
                 | BinOp::Ne
                 | BinOp::Lt
@@ -448,7 +448,24 @@ impl<'ctx> CodeGen<'ctx> {
                 | BinOp::BitOr
                 | BinOp::BitXor
                 | BinOp::Shl
-                | BinOp::Shr => self.infer_expr_type(lhs),
+                | BinOp::Shr => {
+                    let lhs_ty = self.infer_expr_type(lhs);
+                    let rhs_ty = self.infer_expr_type(rhs);
+                    // Return the wider numeric type
+                    if lhs_ty.is_numeric() && rhs_ty.is_numeric() && lhs_ty != rhs_ty {
+                        let l_bits = self.int_bit_width(&lhs_ty);
+                        let r_bits = self.int_bit_width(&rhs_ty);
+                        if lhs_ty.is_float() || rhs_ty.is_float() {
+                            NyType::F64 // promote to f64 for mixed
+                        } else if r_bits > l_bits {
+                            rhs_ty
+                        } else {
+                            lhs_ty
+                        }
+                    } else {
+                        lhs_ty
+                    }
+                }
             },
             Expr::UnaryOp { op, operand, .. } => match op {
                 UnaryOp::Not => NyType::Bool,
@@ -5529,8 +5546,17 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         if lhs.is_int_value() && rhs.is_int_value() {
-            let l = lhs.into_int_value();
-            let r = rhs.into_int_value();
+            let mut l = lhs.into_int_value();
+            let mut r = rhs.into_int_value();
+
+            // Auto-widen: if operands have different bit widths, extend the narrower one
+            let l_bits = l.get_type().get_bit_width();
+            let r_bits = r.get_type().get_bit_width();
+            if l_bits < r_bits {
+                l = self.builder.build_int_s_extend(l, r.get_type(), "widen_l").unwrap();
+            } else if r_bits < l_bits {
+                r = self.builder.build_int_s_extend(r, l.get_type(), "widen_r").unwrap();
+            }
             let result: BasicValueEnum = match op {
                 BinOp::Add => self.builder.build_int_add(l, r, "add").unwrap().into(),
                 BinOp::Sub => self.builder.build_int_sub(l, r, "sub").unwrap().into(),
@@ -5589,8 +5615,17 @@ impl<'ctx> CodeGen<'ctx> {
             };
             Ok(result)
         } else if lhs.is_float_value() && rhs.is_float_value() {
-            let l = lhs.into_float_value();
-            let r = rhs.into_float_value();
+            let mut l = lhs.into_float_value();
+            let mut r = rhs.into_float_value();
+
+            // Auto-widen: f32 → f64 if mixed
+            if l.get_type() != r.get_type() {
+                if l.get_type() == self.context.f32_type() {
+                    l = self.builder.build_float_ext(l, self.context.f64_type(), "widen_fl").unwrap();
+                } else {
+                    r = self.builder.build_float_ext(r, self.context.f64_type(), "widen_fr").unwrap();
+                }
+            }
             let result: BasicValueEnum = match op {
                 BinOp::Add => self.builder.build_float_add(l, r, "fadd").unwrap().into(),
                 BinOp::Sub => self.builder.build_float_sub(l, r, "fsub").unwrap().into(),
@@ -5635,6 +5670,38 @@ impl<'ctx> CodeGen<'ctx> {
                 | BinOp::Shl
                 | BinOp::Shr => {
                     unreachable!("logical/bitwise ops on floats")
+                }
+            };
+            Ok(result)
+        } else if (lhs.is_int_value() && rhs.is_float_value())
+            || (lhs.is_float_value() && rhs.is_int_value())
+        {
+            // Mixed int + float: promote int to float
+            let (fl, fr) = if lhs.is_float_value() {
+                let f = lhs.into_float_value();
+                let i = rhs.into_int_value();
+                let promoted = self.builder
+                    .build_signed_int_to_float(i, f.get_type(), "i2f")
+                    .unwrap();
+                (f, promoted)
+            } else {
+                let i = lhs.into_int_value();
+                let f = rhs.into_float_value();
+                let promoted = self.builder
+                    .build_signed_int_to_float(i, f.get_type(), "i2f")
+                    .unwrap();
+                (promoted, f)
+            };
+            let result: BasicValueEnum = match op {
+                BinOp::Add => self.builder.build_float_add(fl, fr, "fadd").unwrap().into(),
+                BinOp::Sub => self.builder.build_float_sub(fl, fr, "fsub").unwrap().into(),
+                BinOp::Mul => self.builder.build_float_mul(fl, fr, "fmul").unwrap().into(),
+                BinOp::Div => self.builder.build_float_div(fl, fr, "fdiv").unwrap().into(),
+                _ => {
+                    return Err(vec![CompileError::type_error(
+                        "unsupported operation on mixed int/float".to_string(),
+                        Span::empty(0),
+                    )]);
                 }
             };
             Ok(result)

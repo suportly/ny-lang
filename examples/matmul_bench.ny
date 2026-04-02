@@ -1,11 +1,23 @@
 // Matrix Multiply Benchmark
-// Demonstrates: Vec<i32>, nested loops, structs, impl, defer, f-strings, casting
+// Demonstrates: Vec<i32> with set/get, nested loops, structs, f-strings, casting
 //
-// Multiplies two NxN matrices (stored as flat Vec<i32>) using naive triple-loop.
+// Multiplies two NxN matrices using naive triple-loop with in-place mutation.
 // Verifies correctness via checksum and spot checks.
 
 extern {
     fn putchar(c: i32) -> i32;
+}
+
+// Build an N*N zero-filled Vec
+fn make_zeros(n: i32) -> Vec<i32> {
+    v :~ Vec<i32> = vec_new();
+    total := n * n;
+    i :~ i32 = 0;
+    while i < total {
+        v.push(0);
+        i += 1;
+    }
+    return v;
 }
 
 // Build an N*N matrix filled with pattern: mat[i][j] = (i + j) % mod_val
@@ -23,9 +35,8 @@ fn make_matrix(n: i32, mod_val: i32) -> Vec<i32> {
     return v;
 }
 
-// Naive O(n^3) matrix multiply: returns C = A * B as a new Vec
-fn matmul(a: Vec<i32>, b: Vec<i32>, n: i32) -> Vec<i32> {
-    c :~ Vec<i32> = vec_new();
+// Naive O(n^3) matrix multiply: C = A * B (in-place via set)
+fn matmul(a: Vec<i32>, b: Vec<i32>, c: Vec<i32>, n: i32) {
     i :~ i32 = 0;
     while i < n {
         j :~ i32 = 0;
@@ -36,12 +47,11 @@ fn matmul(a: Vec<i32>, b: Vec<i32>, n: i32) -> Vec<i32> {
                 sum += a.get(i * n + k) * b.get(k * n + j);
                 k += 1;
             }
-            c.push(sum);
+            c.set(i * n + j, sum);
             j += 1;
         }
         i += 1;
     }
-    return c;
 }
 
 // Compute checksum: sum of all elements
@@ -90,14 +100,15 @@ fn main() -> i32 {
     // Build matrices
     a := make_matrix(n, 7);
     b := make_matrix(n, 5);
+    c := make_zeros(n);
 
     println(f"  A: {n}x{n}, pattern (i+j) % 7");
     println(f"  B: {n}x{n}, pattern (i+j) % 5");
     println("");
 
-    // Multiply
-    println("[1] Naive triple-loop multiply...");
-    c := matmul(a, b, n);
+    // Multiply: C = A * B (using in-place set)
+    println("[1] Naive triple-loop multiply (using Vec.set)...");
+    matmul(a, b, c, n);
 
     cs := checksum(c, n * n);
     println(f"  Checksum: {cs}");
@@ -121,7 +132,8 @@ fn main() -> i32 {
 
     a2 := make_matrix(n2, 7);
     b2 := make_matrix(n2, 5);
-    c2 := matmul(a2, b2, n2);
+    c2 := make_zeros(n2);
+    matmul(a2, b2, c2, n2);
 
     cs2 := checksum(c2, n2 * n2);
     println(f"  Checksum: {cs2}");

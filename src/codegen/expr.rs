@@ -1875,6 +1875,64 @@ impl<'ctx> CodeGen<'ctx> {
                             let val = self.builder.build_load(elem_llvm, gep, "vec_elem").unwrap();
                             return Ok(Some(val));
                         }
+                        "set" => {
+                            // v.set(index, value) — write to existing element
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+                            let idx = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_int_value();
+                            let val = self.compile_expr(&args[1], function)?.unwrap();
+                            let idx_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    idx,
+                                    self.context.i64_type(),
+                                    "set_idx64",
+                                )
+                                .unwrap();
+
+                            // Load data ptr and len for bounds check
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 0, "set_data_gep")
+                                .unwrap();
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "set_len_gep")
+                                .unwrap();
+                            let data_ptr = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "set_data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "set_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            // Bounds check
+                            self.build_bounds_check(idx_i64, len, function);
+
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm,
+                                        data_ptr,
+                                        &[idx_i64],
+                                        "set_elem_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            self.builder.build_store(elem_ptr, val).unwrap();
+
+                            return Ok(None);
+                        }
                         "push" => {
                             // Need the alloca pointer to mutate the vec
                             let vec_ptr = self.compile_expr_as_ptr(object, function)?;

@@ -540,3 +540,13 @@ fn test_example_matmul() {
     assert!(stdout.contains("C[0][0] = 366"), "stdout: {}", stdout);
     assert!(stdout.contains("Benchmark Complete"), "stdout: {}", stdout);
 }
+
+#[test]
+fn test_vec_set() {
+    assert_eq!(compile_and_run("vec_set.ny"), 42);
+}
+
+#[test]
+fn test_closure_complex() {
+    assert_eq!(compile_and_run("closure_complex.ny"), 42);
+}

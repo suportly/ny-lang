@@ -1474,6 +1474,19 @@ impl TypeChecker {
                     }
                     return *elem.clone();
                 }
+                "set" => {
+                    if args.len() == 2 {
+                        self.check_expr(&args[0]); // index
+                        let arg_ty = self.check_expr(&args[1]);
+                        if arg_ty != **elem {
+                            self.errors.push(CompileError::type_error(
+                                format!("Vec set: expected '{}', found '{}'", elem, arg_ty),
+                                args[1].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Unit;
+                }
                 "pop" => return *elem.clone(),
                 _ => {
                     for arg in args {

@@ -56,6 +56,14 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 context.i32_type().into()
             }
         }
+        NyType::Simd { elem, lanes } => {
+            let elem_ty = ny_to_llvm(context, elem);
+            match elem_ty {
+                BasicTypeEnum::FloatType(ft) => ft.vec_type(*lanes).into(),
+                BasicTypeEnum::IntType(it) => it.vec_type(*lanes).into(),
+                _ => panic!("SIMD element must be scalar type"),
+            }
+        }
         NyType::Vec(_) => {
             // Vec is { ptr, len: i64, cap: i64, elem_size: i64 }
             context

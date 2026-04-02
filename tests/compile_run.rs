@@ -234,6 +234,11 @@ fn test_vec() {
 }
 
 #[test]
+fn test_simd() {
+    assert_eq!(compile_and_run("simd.ny"), 42);
+}
+
+#[test]
 fn test_generic_struct() {
     assert_eq!(compile_and_run("generic_struct.ny"), 42);
 }

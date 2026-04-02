@@ -36,6 +36,11 @@ pub enum NyType {
     },
     Tuple(Vec<NyType>),
     Slice(Box<NyType>),
+    /// SIMD vector type: elem type + lane count
+    Simd {
+        elem: Box<NyType>,
+        lanes: u32,
+    },
     Vec(Box<NyType>),
 }
 
@@ -97,6 +102,10 @@ impl NyType {
 
     pub fn is_vec(&self) -> bool {
         matches!(self, NyType::Vec(_))
+    }
+
+    pub fn is_simd(&self) -> bool {
+        matches!(self, NyType::Simd { .. })
     }
 
     pub fn variant_index(&self, variant: &str) -> Option<usize> {
@@ -172,6 +181,13 @@ impl NyType {
             "f64" => Some(NyType::F64),
             "bool" => Some(NyType::Bool),
             "str" => Some(NyType::Str),
+            // SIMD types
+            "f32x4" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 }),
+            "f32x8" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 }),
+            "f64x2" => Some(NyType::Simd { elem: Box::new(NyType::F64), lanes: 2 }),
+            "f64x4" => Some(NyType::Simd { elem: Box::new(NyType::F64), lanes: 4 }),
+            "i32x4" => Some(NyType::Simd { elem: Box::new(NyType::I32), lanes: 4 }),
+            "i32x8" => Some(NyType::Simd { elem: Box::new(NyType::I32), lanes: 8 }),
             _ => {
                 // Check for Vec<T> pattern
                 if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
@@ -219,6 +235,7 @@ impl fmt::Display for NyType {
             NyType::Struct { name, .. } => write!(f, "{}", name),
             NyType::Pointer(inner) => write!(f, "*{}", inner),
             NyType::Enum { name, .. } => write!(f, "{name}"),
+            NyType::Simd { elem, lanes } => write!(f, "{}x{}", elem, lanes),
             NyType::Slice(elem) => write!(f, "[]{}", elem),
             NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
             NyType::Tuple(elems) => {

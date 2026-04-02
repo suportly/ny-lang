@@ -275,7 +275,9 @@ struct CodeGen<'ctx> {
     loop_stack: Vec<LoopFrame<'ctx>>,
     /// Stack of deferred expressions per function scope
     defer_stack: Vec<(Expr, FunctionValue<'ctx>)>,
-    /// Closure captures: var_name → (lambda_fn_name, captured_var_names)
+    /// Closure captures: closure_var_name → (lambda_fn_name, capture_alloca_names)
+    /// Each capture has a dedicated alloca "closure_{id}_cap_{name}" that holds
+    /// the value at lambda creation time (capture-by-value semantics).
     closure_captures: HashMap<String, (String, Vec<(String, NyType)>)>,
 }
 
@@ -1235,16 +1237,16 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(result));
                 }
 
-                // Handle vec_new() — creates empty Vec (element size determined by context)
+                // Handle vec_new() — creates empty Vec with correct elem_size
                 if callee == "vec_new" {
                     let initial_cap: u64 = 8;
-                    // Use 16 bytes per elem to cover all types (str is 16 bytes)
-                    let elem_size = self.context.i64_type().const_int(16, false);
+                    // Default elem_size 8 (overridden in VarDecl when type annotation present)
+                    let elem_size_val = self.context.i64_type().const_int(8, false);
                     let alloc_size = self
                         .builder
                         .build_int_mul(
                             self.context.i64_type().const_int(initial_cap, false),
-                            elem_size,
+                            elem_size_val,
                             "vec_alloc_size",
                         )
                         .unwrap();
@@ -1257,15 +1259,8 @@ impl<'ctx> CodeGen<'ctx> {
                         .basic()
                         .unwrap()
                         .into_pointer_value();
-                    let vec_ty = self.context.struct_type(
-                        &[
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                            self.context.i64_type().into(),
-                            self.context.i64_type().into(),
-                        ],
-                        false,
-                    );
-                    let vec_val = vec_ty.const_zero();
+                    let vec_ty = ny_to_llvm(self.context, &NyType::Vec(Box::new(NyType::I32)));
+                    let vec_val = vec_ty.into_struct_type().const_zero();
                     let vec_val = self
                         .builder
                         .build_insert_value(vec_val, data_ptr, 0, "vec_p")
@@ -1287,6 +1282,10 @@ impl<'ctx> CodeGen<'ctx> {
                             2,
                             "vec_c",
                         )
+                        .unwrap();
+                    let vec_val = self
+                        .builder
+                        .build_insert_value(vec_val, elem_size_val, 3, "vec_es")
                         .unwrap();
                     return Ok(Some(vec_val.into_struct_value().into()));
                 }
@@ -1939,14 +1938,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // Handle built-in Vec methods
                 if let NyType::Vec(elem_ty) = &obj_ty {
                     let elem_llvm = ny_to_llvm(self.context, elem_ty);
-                    let vec_struct_ty = self.context.struct_type(
-                        &[
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                            self.context.i64_type().into(),
-                            self.context.i64_type().into(),
-                        ],
-                        false,
-                    );
+                    let vec_struct_ty = ny_to_llvm(self.context, &obj_ty).into_struct_type();
 
                     match method.as_str() {
                         "len" => {
@@ -1966,6 +1958,11 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_extract_value(sv, 0, "vec_data")
                                 .unwrap()
                                 .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "vec_len_check")
+                                .unwrap()
+                                .into_int_value();
                             let idx = self
                                 .compile_expr(&args[0], function)?
                                 .unwrap()
@@ -1978,6 +1975,8 @@ impl<'ctx> CodeGen<'ctx> {
                                     "idx64",
                                 )
                                 .unwrap();
+                            // Bounds check
+                            self.build_bounds_check(idx_i64, len, function);
                             let gep = unsafe {
                                 self.builder
                                     .build_in_bounds_gep(
@@ -2484,41 +2483,35 @@ impl<'ctx> CodeGen<'ctx> {
                 self.variables = outer_vars;
                 self.builder.position_at_end(current_bb);
 
-                if captures.is_empty() {
-                    // Non-capturing: simple function pointer
-                    let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
-                    Ok(Some(fn_ptr.into()))
-                } else {
-                    // Capturing: store captured values in globals so the lambda can read them
-                    // Then return the lambda as a fn ptr (captures are baked in via globals)
-                    // Note: this is a simplified approach — each lambda instance overwrites
-                    // the globals, so only one instance at a time works correctly.
-                    for (i, val) in capture_values.iter().enumerate() {
-                        let global_name = format!("__cap_{}_{}", id, i);
-                        let global = self
-                            .module
-                            .add_global(val.get_type(), None, &global_name);
-                        global.set_initializer(&val.get_type().const_zero());
-                        self.builder
-                            .build_store(global.as_pointer_value(), *val)
+                let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
+
+                if !captures.is_empty() {
+                    // Create dedicated allocas to store captured values by-value
+                    // These persist after the lambda is created, even if the original
+                    // variable is reassigned.
+                    let mut capture_alloca_names: Vec<(String, NyType)> = Vec::new();
+                    for (i, ((cap_name, cap_ty), cap_val)) in
+                        captures.iter().zip(capture_values.iter()).enumerate()
+                    {
+                        let alloca_name = format!("__cl{}_{}", id, cap_name);
+                        let llvm_ty = ny_to_llvm(self.context, cap_ty);
+                        let alloca = self
+                            .builder
+                            .build_alloca(llvm_ty, &alloca_name)
                             .unwrap();
+                        self.builder.build_store(alloca, *cap_val).unwrap();
+                        self.variables
+                            .insert(alloca_name.clone(), (alloca, cap_ty.clone()));
+                        capture_alloca_names.push((alloca_name, cap_ty.clone()));
                     }
 
-                    // Now rebuild the lambda body with globals instead of params for captures
-                    // Actually, the lambda body already compiled above with captures as params.
-                    // We need to recompile with globals instead. This is getting complex.
-                    // Simpler: just return the fn pointer and at the call site pass captures.
-                    // For now, captures work via the lambda's extra params.
-                    // The fn is registered with captures+params, so direct call works.
-                    // Store the lambda name so we know the captures at call time.
-                    let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
-                    // Record captures — keyed by lambda_name (not var name, set in VarDecl)
                     self.closure_captures.insert(
                         lambda_name.clone(),
-                        (lambda_name, captures.clone()),
+                        (lambda_name, capture_alloca_names),
                     );
-                    Ok(Some(fn_ptr.into()))
                 }
+
+                Ok(Some(fn_ptr.into()))
             }
 
             // ---- Range index (arr[start..end] → slice {ptr, len}) ----
@@ -3803,14 +3796,72 @@ impl<'ctx> CodeGen<'ctx> {
             .build_conditional_branch(in_bounds, ok_bb, fail_bb)
             .unwrap();
 
-        // Fail block: call abort
+        // Fail block: print error message with index and length, then exit(1)
         self.builder.position_at_end(fail_bb);
-        let abort_fn = self.get_or_declare_abort();
-        self.builder.build_call(abort_fn, &[], "").unwrap();
+        let fprintf_fn = self.get_or_declare_fprintf();
+        let stderr_global = self.get_or_declare_stderr();
+        let stderr_val = self
+            .builder
+            .build_load(
+                self.context.ptr_type(AddressSpace::default()),
+                stderr_global.as_pointer_value(),
+                "stderr",
+            )
+            .unwrap();
+        let fmt = self
+            .builder
+            .build_global_string_ptr(
+                "panic: index out of bounds: index %ld, length %ld\n",
+                "bounds_fmt",
+            )
+            .unwrap();
+        // Extend index and length to i64 for printing
+        let idx_i64 = self
+            .builder
+            .build_int_z_extend_or_bit_cast(index, self.context.i64_type(), "idx_print")
+            .unwrap();
+        let len_i64 = self
+            .builder
+            .build_int_z_extend_or_bit_cast(length, self.context.i64_type(), "len_print")
+            .unwrap();
+        self.builder
+            .build_call(
+                fprintf_fn,
+                &[
+                    stderr_val.into(),
+                    fmt.as_pointer_value().into(),
+                    idx_i64.into(),
+                    len_i64.into(),
+                ],
+                "",
+            )
+            .unwrap();
+        let exit_fn = self.get_or_declare_exit();
+        self.builder
+            .build_call(exit_fn, &[self.context.i32_type().const_int(1, false).into()], "")
+            .unwrap();
         self.builder.build_unreachable().unwrap();
 
         // Continue from ok block
         self.builder.position_at_end(ok_bb);
+    }
+
+    fn get_or_declare_fprintf(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("fprintf") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fprintf_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], true);
+        self.module.add_function("fprintf", fprintf_ty, None)
+    }
+
+    fn get_or_declare_stderr(&self) -> inkwell::values::GlobalValue<'ctx> {
+        if let Some(g) = self.module.get_global("stderr") {
+            return g;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_global(ptr_ty, None, "stderr")
     }
 
     // ------------------------------------------------------------------

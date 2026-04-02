@@ -239,6 +239,11 @@ fn test_closure() {
 }
 
 #[test]
+fn test_multi_closure() {
+    assert_eq!(compile_and_run("multi_closure.ny"), 50);
+}
+
+#[test]
 fn test_ptr_arith() {
     assert_eq!(compile_and_run("ptr_arith.ny"), 42);
 }

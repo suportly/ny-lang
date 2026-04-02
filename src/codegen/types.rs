@@ -57,11 +57,12 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
             }
         }
         NyType::Vec(_) => {
-            // Vec is { ptr, len: i64, cap: i64 }
+            // Vec is { ptr, len: i64, cap: i64, elem_size: i64 }
             context
                 .struct_type(
                     &[
                         context.ptr_type(AddressSpace::default()).into(),
+                        context.i64_type().into(),
                         context.i64_type().into(),
                         context.i64_type().into(),
                     ],

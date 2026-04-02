@@ -233,6 +233,13 @@ fn test_vec() {
     assert_eq!(compile_and_run("vec_test.ny"), 57);
 }
 
+// Stdlib tests
+
+#[test]
+fn test_stdlib() {
+    assert_eq!(compile_and_run("stdlib_test.ny"), 42);
+}
+
 // Phase 15: Concurrency tests
 
 #[test]

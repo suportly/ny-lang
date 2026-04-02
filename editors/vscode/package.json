@@ -1,0 +1,23 @@
+{
+  "name": "ny-lang",
+  "displayName": "Ny Lang",
+  "description": "Language support for Ny Lang (.ny files)",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:ny"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "ny",
+      "aliases": ["Ny", "ny"],
+      "extensions": [".ny"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "ny",
+      "scopeName": "source.ny",
+      "path": "./syntaxes/ny.tmLanguage.json"
+    }]
+  }
+}

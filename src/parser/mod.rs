@@ -289,7 +289,11 @@ impl Parser {
                 }
                 let (tp_name, tp_span) = self.expect_ident()?;
                 let bounds = self.parse_type_param_bounds()?;
-                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
+                type_params.push(TypeParam {
+                    name: tp_name,
+                    bounds,
+                    span: tp_span,
+                });
             }
             self.expect(&TokenKind::Gt)?;
         }
@@ -332,7 +336,11 @@ impl Parser {
                 }
                 let (tp_name, tp_span) = self.expect_ident()?;
                 let bounds = self.parse_type_param_bounds()?;
-                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
+                type_params.push(TypeParam {
+                    name: tp_name,
+                    bounds,
+                    span: tp_span,
+                });
             }
             self.expect(&TokenKind::Gt)?;
         }
@@ -577,7 +585,11 @@ impl Parser {
                 }
                 let (tp_name, tp_span) = self.expect_ident()?;
                 let bounds = self.parse_type_param_bounds()?;
-                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
+                type_params.push(TypeParam {
+                    name: tp_name,
+                    bounds,
+                    span: tp_span,
+                });
             }
             self.expect(&TokenKind::Gt)?;
         }

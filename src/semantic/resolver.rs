@@ -427,10 +427,8 @@ impl Resolver {
                     && !self.structs.contains_key(name)
                     && !self.enums.contains_key(name)
                 {
-                    let mut err = CompileError::name_error(
-                        format!("undeclared variable '{}'", name),
-                        *span,
-                    );
+                    let mut err =
+                        CompileError::name_error(format!("undeclared variable '{}'", name), *span);
                     if let Some(suggestion) = self.find_similar_name(name) {
                         err = err.with_note(format!("did you mean '{}'?", suggestion));
                     }
@@ -906,10 +904,8 @@ impl Resolver {
         match target {
             AssignTarget::Var(name) => match self.resolve_name(name) {
                 None => {
-                    let mut err = CompileError::name_error(
-                        format!("undeclared variable '{}'", name),
-                        span,
-                    );
+                    let mut err =
+                        CompileError::name_error(format!("undeclared variable '{}'", name), span);
                     if let Some(suggestion) = self.find_similar_name(name) {
                         err = err.with_note(format!("did you mean '{}'?", suggestion));
                     }
@@ -923,7 +919,9 @@ impl Resolver {
                             span,
                         )
                         .with_secondary(decl_span, "declared as immutable here".to_string())
-                        .with_note("use ':~' to declare a mutable variable: x :~ type = value".to_string()),
+                        .with_note(
+                            "use ':~' to declare a mutable variable: x :~ type = value".to_string(),
+                        ),
                     );
                 }
                 Some(_) => {}

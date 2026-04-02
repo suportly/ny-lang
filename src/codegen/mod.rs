@@ -334,7 +334,10 @@ impl<'ctx> CodeGen<'ctx> {
     /// where fields are the UNION of all payload positions across variants (largest at each position).
     pub(super) fn enum_struct_type(&self, enum_name: &str) -> inkwell::types::StructType<'ctx> {
         let variants = self.enum_variants.get(enum_name).unwrap_or_else(|| {
-            panic!("internal compiler error: enum '{}' not registered", enum_name)
+            panic!(
+                "internal compiler error: enum '{}' not registered",
+                enum_name
+            )
         });
         // Find max payload count across all variants
         let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);

@@ -185,7 +185,7 @@ impl Parser {
         // Check for generic type args: Name<T1, T2>
         // In type annotation context, < is always a generic delimiter (not comparison)
         // so we can safely parse it for any capitalized type name
-        let starts_upper = name.chars().next().map_or(false, |c| c.is_uppercase());
+        let starts_upper = name.chars().next().is_some_and(|c| c.is_uppercase());
         if starts_upper && *self.peek() == TokenKind::Lt {
             self.advance(); // consume <
             let mut type_args = Vec::new();

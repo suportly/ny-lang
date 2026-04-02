@@ -3,9 +3,11 @@
 //! Provides: diagnostics (inline errors), hover (type info), go-to-definition.
 //! Runs as a separate process, communicates via stdio with LSP protocol.
 
+#![allow(clippy::mutable_key_type)]
+
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, Notification as _};
-use lsp_types::request::{GotoDefinition, HoverRequest, Request as _};
+use lsp_types::request::{GotoDefinition, HoverRequest};
 use lsp_types::*;
 type Url = lsp_types::Uri;
 use std::collections::HashMap;
@@ -284,7 +286,7 @@ fn infer_type_at_position(source: &str, name: &str) -> String {
                     if !ty.is_empty() {
                         return format!("{}: {} (mutable)", name, ty);
                     }
-                } else if let Some(rest) = rest.strip_prefix('=') {
+                } else if let Some(_rest) = rest.strip_prefix('=') {
                     // type inference
                     return format!("{} (type inferred)", name);
                 } else {

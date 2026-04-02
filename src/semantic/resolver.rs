@@ -85,19 +85,16 @@ impl Resolver {
         for scope in &self.scopes {
             for key in scope.keys() {
                 let dist = crate::common::edit_distance(name, key);
-                if dist <= 2 && dist < name.len() {
-                    if best.as_ref().is_none_or(|(_, d)| dist < *d) {
-                        best = Some((key.clone(), dist));
-                    }
+                if dist <= 2 && dist < name.len() && best.as_ref().map_or(true, |(_, d)| dist < *d)
+                {
+                    best = Some((key.clone(), dist));
                 }
             }
         }
         for key in self.functions.keys() {
             let dist = crate::common::edit_distance(name, key);
-            if dist <= 2 && dist < name.len() {
-                if best.as_ref().is_none_or(|(_, d)| dist < *d) {
-                    best = Some((key.clone(), dist));
-                }
+            if dist <= 2 && dist < name.len() && best.as_ref().map_or(true, |(_, d)| dist < *d) {
+                best = Some((key.clone(), dist));
             }
         }
         best.map(|(name, _)| name)

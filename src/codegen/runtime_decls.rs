@@ -199,14 +199,6 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("write", write_ty, None)
     }
 
-    pub(super) fn get_or_declare_abort(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("abort") {
-            return f;
-        }
-        let abort_ty = self.context.void_type().fn_type(&[], false);
-        self.module.add_function("abort", abort_ty, None)
-    }
-
     pub(super) fn get_or_declare_malloc(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("malloc") {
             return f;

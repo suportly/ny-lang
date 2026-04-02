@@ -1,3 +1,11 @@
+#![allow(
+    clippy::collapsible_match,
+    clippy::collapsible_if,
+    clippy::type_complexity,
+    clippy::manual_filter_map,
+    clippy::unnecessary_filter_map
+)]
+
 pub mod codegen;
 pub mod common;
 pub mod diagnostics;

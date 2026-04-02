@@ -2214,8 +2214,7 @@ impl<'ctx> CodeGen<'ctx> {
                     // These persist after the lambda is created, even if the original
                     // variable is reassigned.
                     let mut capture_alloca_names: Vec<(String, NyType)> = Vec::new();
-                    for (_i, ((cap_name, cap_ty), cap_val)) in
-                        captures.iter().zip(capture_values.iter()).enumerate()
+                    for ((cap_name, cap_ty), cap_val) in captures.iter().zip(capture_values.iter())
                     {
                         let alloca_name = format!("__cl{}_{}", id, cap_name);
                         let llvm_ty = ny_to_llvm(self.context, cap_ty);

@@ -1568,6 +1568,24 @@ impl TypeChecker {
                     }
                     return NyType::Str;
                 }
+                "char_at" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::I32;
+                }
+                "contains" | "starts_with" | "ends_with" => {
+                    if args.len() == 1 {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if arg_ty != NyType::Str {
+                            self.errors.push(CompileError::type_error(
+                                format!("'{}' expects str argument, found '{}'", method, arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Bool;
+                }
                 _ => {
                     for arg in args {
                         self.check_expr(arg);

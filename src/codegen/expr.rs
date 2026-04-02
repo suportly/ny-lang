@@ -2060,6 +2060,67 @@ impl<'ctx> CodeGen<'ctx> {
 
                             return Ok(None);
                         }
+                        "pop" => {
+                            // v.pop() — remove and return last element
+                            let vec_ptr = self.compile_expr_as_ptr(object, function)?;
+
+                            let len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 1, "pop_len_gep")
+                                .unwrap();
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, vec_ptr, 0, "pop_data_gep")
+                                .unwrap();
+
+                            let len = self
+                                .builder
+                                .build_load(self.context.i64_type(), len_gep, "pop_len")
+                                .unwrap()
+                                .into_int_value();
+                            let data_ptr = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    data_gep,
+                                    "pop_data",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+
+                            // Bounds check: len > 0 (use len-1 as index, check < len)
+                            let one = self.context.i64_type().const_int(1, false);
+                            let last_idx = self
+                                .builder
+                                .build_int_sub(len, one, "last_idx")
+                                .unwrap();
+                            self.build_bounds_check(last_idx, len, function);
+
+                            // Load data[len-1]
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm,
+                                        data_ptr,
+                                        &[last_idx],
+                                        "pop_elem_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            let val = self
+                                .builder
+                                .build_load(elem_llvm, elem_ptr, "pop_val")
+                                .unwrap();
+
+                            // Decrement len
+                            let new_len = self
+                                .builder
+                                .build_int_sub(len, one, "pop_new_len")
+                                .unwrap();
+                            self.builder.build_store(len_gep, new_len).unwrap();
+
+                            return Ok(Some(val));
+                        }
                         _ => {}
                     }
                 }
@@ -2152,6 +2213,351 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_insert_value(result, new_len, 1, "sub_len")
                                 .unwrap();
                             return Ok(Some(result.into_struct_value().into()));
+                        }
+                        "char_at" => {
+                            // s.char_at(index) -> i32 (byte value as int)
+                            let idx_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_int_value();
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "ca_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "ca_len")
+                                .unwrap()
+                                .into_int_value();
+                            let idx_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    idx_val,
+                                    self.context.i64_type(),
+                                    "ca_idx64",
+                                )
+                                .unwrap();
+                            self.build_bounds_check(idx_i64, len, function);
+                            let i8_ty = self.context.i8_type();
+                            let char_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, ptr, &[idx_i64], "char_ptr")
+                                    .unwrap()
+                            };
+                            let byte = self
+                                .builder
+                                .build_load(i8_ty, char_ptr, "char_byte")
+                                .unwrap()
+                                .into_int_value();
+                            let as_i32 = self
+                                .builder
+                                .build_int_z_extend(byte, self.context.i32_type(), "char_i32")
+                                .unwrap();
+                            return Ok(Some(as_i32.into()));
+                        }
+                        "contains" | "starts_with" | "ends_with" => {
+                            // String comparison methods via memcmp-based loop
+                            let needle_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+
+                            let hay_ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "hay_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let hay_len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "hay_len")
+                                .unwrap()
+                                .into_int_value();
+                            let ndl_ptr = self
+                                .builder
+                                .build_extract_value(needle_val, 0, "ndl_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let ndl_len = self
+                                .builder
+                                .build_extract_value(needle_val, 1, "ndl_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let memcmp_fn = self.get_or_declare_memcmp();
+                            let i8_ty = self.context.i8_type();
+                            let i64_ty = self.context.i64_type();
+                            let zero_i64 = i64_ty.const_int(0, false);
+                            let one_i64 = i64_ty.const_int(1, false);
+                            let zero_i32 = self.context.i32_type().const_int(0, false);
+
+                            match method.as_str() {
+                                "starts_with" => {
+                                    // ndl_len <= hay_len && memcmp(hay_ptr, ndl_ptr, ndl_len) == 0
+                                    let len_ok = self
+                                        .builder
+                                        .build_int_compare(
+                                            IntPredicate::ULE,
+                                            ndl_len,
+                                            hay_len,
+                                            "sw_len_ok",
+                                        )
+                                        .unwrap();
+
+                                    let sw_check_bb =
+                                        self.context.append_basic_block(*function, "sw_check");
+                                    let sw_false_bb =
+                                        self.context.append_basic_block(*function, "sw_false");
+                                    let sw_merge_bb =
+                                        self.context.append_basic_block(*function, "sw_merge");
+
+                                    self.builder
+                                        .build_conditional_branch(len_ok, sw_check_bb, sw_false_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(sw_check_bb);
+                                    let cmp = self
+                                        .builder
+                                        .build_call(
+                                            memcmp_fn,
+                                            &[hay_ptr.into(), ndl_ptr.into(), ndl_len.into()],
+                                            "sw_cmp",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
+                                        .into_int_value();
+                                    let is_eq = self
+                                        .builder
+                                        .build_int_compare(IntPredicate::EQ, cmp, zero_i32, "sw_eq")
+                                        .unwrap();
+                                    self.builder
+                                        .build_unconditional_branch(sw_merge_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(sw_false_bb);
+                                    let false_val =
+                                        self.context.bool_type().const_int(0, false);
+                                    self.builder
+                                        .build_unconditional_branch(sw_merge_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(sw_merge_bb);
+                                    let phi = self
+                                        .builder
+                                        .build_phi(self.context.bool_type(), "sw_result")
+                                        .unwrap();
+                                    phi.add_incoming(&[
+                                        (&is_eq, sw_check_bb),
+                                        (&false_val, sw_false_bb),
+                                    ]);
+                                    return Ok(Some(phi.as_basic_value()));
+                                }
+                                "ends_with" => {
+                                    // ndl_len <= hay_len && memcmp(hay_ptr + (hay_len - ndl_len), ndl_ptr, ndl_len) == 0
+                                    let len_ok = self
+                                        .builder
+                                        .build_int_compare(
+                                            IntPredicate::ULE,
+                                            ndl_len,
+                                            hay_len,
+                                            "ew_len_ok",
+                                        )
+                                        .unwrap();
+
+                                    let ew_check_bb =
+                                        self.context.append_basic_block(*function, "ew_check");
+                                    let ew_false_bb =
+                                        self.context.append_basic_block(*function, "ew_false");
+                                    let ew_merge_bb =
+                                        self.context.append_basic_block(*function, "ew_merge");
+
+                                    self.builder
+                                        .build_conditional_branch(len_ok, ew_check_bb, ew_false_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(ew_check_bb);
+                                    let offset = self
+                                        .builder
+                                        .build_int_sub(hay_len, ndl_len, "ew_offset")
+                                        .unwrap();
+                                    let tail_ptr = unsafe {
+                                        self.builder
+                                            .build_in_bounds_gep(
+                                                i8_ty, hay_ptr, &[offset], "ew_tail",
+                                            )
+                                            .unwrap()
+                                    };
+                                    let cmp = self
+                                        .builder
+                                        .build_call(
+                                            memcmp_fn,
+                                            &[tail_ptr.into(), ndl_ptr.into(), ndl_len.into()],
+                                            "ew_cmp",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
+                                        .into_int_value();
+                                    let is_eq = self
+                                        .builder
+                                        .build_int_compare(IntPredicate::EQ, cmp, zero_i32, "ew_eq")
+                                        .unwrap();
+                                    self.builder
+                                        .build_unconditional_branch(ew_merge_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(ew_false_bb);
+                                    let false_val =
+                                        self.context.bool_type().const_int(0, false);
+                                    self.builder
+                                        .build_unconditional_branch(ew_merge_bb)
+                                        .unwrap();
+
+                                    self.builder.position_at_end(ew_merge_bb);
+                                    let phi = self
+                                        .builder
+                                        .build_phi(self.context.bool_type(), "ew_result")
+                                        .unwrap();
+                                    phi.add_incoming(&[
+                                        (&is_eq, ew_check_bb),
+                                        (&false_val, ew_false_bb),
+                                    ]);
+                                    return Ok(Some(phi.as_basic_value()));
+                                }
+                                "contains" => {
+                                    // Naive O(n*m) substring search
+                                    let ct_pre_bb = self.builder.get_insert_block().unwrap();
+                                    let ct_loop_bb =
+                                        self.context.append_basic_block(*function, "ct_loop");
+                                    let ct_check_bb =
+                                        self.context.append_basic_block(*function, "ct_check");
+                                    let ct_inc_bb =
+                                        self.context.append_basic_block(*function, "ct_inc");
+                                    let ct_found_bb =
+                                        self.context.append_basic_block(*function, "ct_found");
+                                    let ct_not_bb =
+                                        self.context.append_basic_block(*function, "ct_not");
+                                    let ct_merge_bb =
+                                        self.context.append_basic_block(*function, "ct_merge");
+
+                                    // If ndl_len > hay_len, jump to not found
+                                    let len_ok = self
+                                        .builder
+                                        .build_int_compare(
+                                            IntPredicate::ULE,
+                                            ndl_len,
+                                            hay_len,
+                                            "ct_len_ok",
+                                        )
+                                        .unwrap();
+                                    self.builder
+                                        .build_conditional_branch(len_ok, ct_loop_bb, ct_not_bb)
+                                        .unwrap();
+
+                                    // Loop header: i = 0 .. hay_len - ndl_len
+                                    self.builder.position_at_end(ct_loop_bb);
+                                    let i_phi = self
+                                        .builder
+                                        .build_phi(i64_ty, "ct_i")
+                                        .unwrap();
+                                    i_phi.add_incoming(&[(&zero_i64, ct_pre_bb)]);
+                                    let i_val = i_phi.as_basic_value().into_int_value();
+
+                                    let limit = self
+                                        .builder
+                                        .build_int_sub(hay_len, ndl_len, "ct_limit")
+                                        .unwrap();
+                                    let limit_plus = self
+                                        .builder
+                                        .build_int_add(limit, one_i64, "ct_limit_p1")
+                                        .unwrap();
+                                    let in_range = self
+                                        .builder
+                                        .build_int_compare(
+                                            IntPredicate::ULT,
+                                            i_val,
+                                            limit_plus,
+                                            "ct_in_range",
+                                        )
+                                        .unwrap();
+                                    self.builder
+                                        .build_conditional_branch(in_range, ct_check_bb, ct_not_bb)
+                                        .unwrap();
+
+                                    // Check: memcmp(hay_ptr + i, ndl_ptr, ndl_len) == 0
+                                    self.builder.position_at_end(ct_check_bb);
+                                    let sub_ptr = unsafe {
+                                        self.builder
+                                            .build_in_bounds_gep(
+                                                i8_ty, hay_ptr, &[i_val], "ct_sub",
+                                            )
+                                            .unwrap()
+                                    };
+                                    let cmp = self
+                                        .builder
+                                        .build_call(
+                                            memcmp_fn,
+                                            &[sub_ptr.into(), ndl_ptr.into(), ndl_len.into()],
+                                            "ct_cmp",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
+                                        .into_int_value();
+                                    let found = self
+                                        .builder
+                                        .build_int_compare(
+                                            IntPredicate::EQ, cmp, zero_i32, "ct_found",
+                                        )
+                                        .unwrap();
+                                    self.builder
+                                        .build_conditional_branch(found, ct_found_bb, ct_inc_bb)
+                                        .unwrap();
+
+                                    // Increment block: i += 1, then back to loop
+                                    self.builder.position_at_end(ct_inc_bb);
+                                    let next_i = self
+                                        .builder
+                                        .build_int_add(i_val, one_i64, "ct_next_i")
+                                        .unwrap();
+                                    i_phi.add_incoming(&[(&next_i, ct_inc_bb)]);
+                                    self.builder
+                                        .build_unconditional_branch(ct_loop_bb)
+                                        .unwrap();
+
+                                    // Found
+                                    self.builder.position_at_end(ct_found_bb);
+                                    let true_val = self.context.bool_type().const_int(1, false);
+                                    self.builder
+                                        .build_unconditional_branch(ct_merge_bb)
+                                        .unwrap();
+
+                                    // Not found
+                                    self.builder.position_at_end(ct_not_bb);
+                                    let false_val =
+                                        self.context.bool_type().const_int(0, false);
+                                    self.builder
+                                        .build_unconditional_branch(ct_merge_bb)
+                                        .unwrap();
+
+                                    // Merge
+                                    self.builder.position_at_end(ct_merge_bb);
+                                    let phi = self
+                                        .builder
+                                        .build_phi(self.context.bool_type(), "ct_result")
+                                        .unwrap();
+                                    phi.add_incoming(&[
+                                        (&true_val, ct_found_bb),
+                                        (&false_val, ct_not_bb),
+                                    ]);
+                                    return Ok(Some(phi.as_basic_value()));
+                                }
+                                _ => unreachable!(),
+                            }
                         }
                         _ => {}
                     }

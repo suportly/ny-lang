@@ -550,3 +550,18 @@ fn test_vec_set() {
 fn test_closure_complex() {
     assert_eq!(compile_and_run("closure_complex.ny"), 42);
 }
+
+#[test]
+fn test_vec_pop() {
+    assert_eq!(compile_and_run("vec_pop.ny"), 42);
+}
+
+#[test]
+fn test_vec_for_in() {
+    assert_eq!(compile_and_run("vec_for_in.ny"), 42);
+}
+
+#[test]
+fn test_string_methods() {
+    assert_eq!(compile_and_run("string_methods.ny"), 42);
+}

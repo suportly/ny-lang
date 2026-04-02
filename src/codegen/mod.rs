@@ -20,6 +20,66 @@ use crate::common::{CompileError, NyType, Span};
 use crate::parser::ast::*;
 use types::{ny_to_llvm, str_type};
 
+/// Find free variables in an expression (identifiers not in the given bound set)
+fn find_free_vars(expr: &Expr, bound: &[String]) -> Vec<String> {
+    let mut free = Vec::new();
+    find_free_vars_inner(expr, bound, &mut free);
+    free.sort();
+    free.dedup();
+    free
+}
+
+fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
+    match expr {
+        Expr::Ident { name, .. } => {
+            if !bound.contains(name) && !free.contains(name) {
+                free.push(name.clone());
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_free_vars_inner(lhs, bound, free);
+            find_free_vars_inner(rhs, bound, free);
+        }
+        Expr::UnaryOp { operand, .. } => {
+            find_free_vars_inner(operand, bound, free);
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                find_free_vars_inner(arg, bound, free);
+            }
+        }
+        Expr::Block { stmts, tail_expr, .. } => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::VarDecl { init, .. } | Stmt::ConstDecl { value: init, .. } => {
+                        find_free_vars_inner(init, bound, free);
+                    }
+                    Stmt::ExprStmt { expr, .. } => {
+                        find_free_vars_inner(expr, bound, free);
+                    }
+                    Stmt::Return { value, .. } => {
+                        if let Some(v) = value {
+                            find_free_vars_inner(v, bound, free);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(te) = tail_expr {
+                find_free_vars_inner(te, bound, free);
+            }
+        }
+        Expr::If { condition, then_branch, else_branch, .. } => {
+            find_free_vars_inner(condition, bound, free);
+            find_free_vars_inner(then_branch, bound, free);
+            if let Some(eb) = else_branch {
+                find_free_vars_inner(eb, bound, free);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn generate(
     program: &Program,
     source_path: &Path,
@@ -42,6 +102,7 @@ pub fn generate(
         enum_variants: HashMap::new(),
         loop_stack: Vec::new(),
         defer_stack: Vec::new(),
+        closure_captures: HashMap::new(),
     };
 
     codegen.compile_program(program)?;
@@ -214,6 +275,8 @@ struct CodeGen<'ctx> {
     loop_stack: Vec<LoopFrame<'ctx>>,
     /// Stack of deferred expressions per function scope
     defer_stack: Vec<(Expr, FunctionValue<'ctx>)>,
+    /// Closure captures: var_name → (lambda_fn_name, captured_var_names)
+    closure_captures: HashMap<String, (String, Vec<(String, NyType)>)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -393,6 +456,18 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some((_, _, ret_ty)) = self.functions.get(callee) {
                     ret_ty.clone()
                 } else {
+                    // Check if callee is a variable holding a function pointer
+                    if let Some((_, var_ty)) = self.variables.get(callee) {
+                        if let NyType::Function { ret, .. } = var_ty {
+                            return *ret.clone();
+                        }
+                    }
+                    // Also check closure captures for return type
+                    if let Some((lambda_name, _)) = self.closure_captures.get(callee) {
+                        if let Some((_, _, ret_ty)) = self.functions.get(lambda_name) {
+                            return ret_ty.clone();
+                        }
+                    }
                     // Built-in return types
                     match callee.as_str() {
                         "alloc" | "fopen" => NyType::Pointer(Box::new(NyType::U8)),
@@ -1434,6 +1509,44 @@ impl<'ctx> CodeGen<'ctx> {
                         Ok(call.try_as_basic_value().basic())
                     }
                 } else if let Some((ptr, var_ty)) = self.variables.get(callee).cloned() {
+                    // Check if this is a capturing closure
+                    if let Some((lambda_fn_name, cap_vars)) =
+                        self.closure_captures.get(callee).cloned()
+                    {
+                        // Call the lambda function directly with captures prepended
+                        if let Some((func, _, ret_ty)) =
+                            self.functions.get(&lambda_fn_name).cloned()
+                        {
+                            let mut arg_values: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                Vec::new();
+                            // Load and pass captured values
+                            for (cap_name, cap_ty) in &cap_vars {
+                                if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
+                                    let cap_llvm = ny_to_llvm(self.context, cap_ty);
+                                    let cap_val = self
+                                        .builder
+                                        .build_load(cap_llvm, *cap_ptr, cap_name)
+                                        .unwrap();
+                                    arg_values.push(cap_val.into());
+                                }
+                            }
+                            // Pass explicit args
+                            for arg in args {
+                                let val = self.compile_expr(arg, function)?.unwrap();
+                                arg_values.push(val.into());
+                            }
+                            let call = self
+                                .builder
+                                .build_call(func, &arg_values, "closure_call")
+                                .unwrap();
+                            return if ret_ty == NyType::Unit {
+                                Ok(None)
+                            } else {
+                                Ok(call.try_as_basic_value().basic())
+                            };
+                        }
+                    }
+
                     // Calling a function pointer variable
                     if let NyType::Function { params: param_tys, ret } = &var_ty {
                         let llvm_param_types: Vec<BasicTypeEnum> = param_tys
@@ -2266,14 +2379,13 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
 
-            // ---- Lambda (non-capturing → anonymous function pointer) ----
+            // ---- Lambda (with optional captures via lambda lifting) ----
             Expr::Lambda {
                 params,
                 return_type,
                 body,
                 ..
             } => {
-                // Generate a unique anonymous function name
                 static LAMBDA_COUNTER: std::sync::atomic::AtomicUsize =
                     std::sync::atomic::AtomicUsize::new(0);
                 let id = LAMBDA_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2284,8 +2396,35 @@ impl<'ctx> CodeGen<'ctx> {
                     .iter()
                     .map(|p| self.resolve_type_annotation(&p.ty))
                     .collect();
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
 
-                let llvm_param_types: Vec<BasicTypeEnum> = param_types
+                // Find captured variables: scan body for Ident references
+                // that are not in the lambda's param list but exist in outer scope
+                let mut captures: Vec<(String, NyType)> = Vec::new();
+                let mut capture_values: Vec<BasicValueEnum<'ctx>> = Vec::new();
+                {
+                    let free_vars = find_free_vars(body, &param_names);
+                    for var_name in &free_vars {
+                        if let Some((ptr, ty)) = self.variables.get(var_name) {
+                            let llvm_ty = ny_to_llvm(self.context, ty);
+                            let val = self
+                                .builder
+                                .build_load(llvm_ty, *ptr, &format!("cap_{}", var_name))
+                                .unwrap();
+                            captures.push((var_name.clone(), ty.clone()));
+                            capture_values.push(val);
+                        }
+                    }
+                }
+
+                // Build the function with captures as prefix params
+                let mut all_param_types: Vec<NyType> = Vec::new();
+                for (_, ty) in &captures {
+                    all_param_types.push(ty.clone());
+                }
+                all_param_types.extend(param_types.clone());
+
+                let llvm_param_types: Vec<BasicTypeEnum> = all_param_types
                     .iter()
                     .map(|t| ny_to_llvm(self.context, t))
                     .collect();
@@ -2299,7 +2438,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let lambda_fn = self.module.add_function(&lambda_name, fn_type, None);
                 self.functions.insert(
                     lambda_name.clone(),
-                    (lambda_fn, param_types.clone(), ret_ty),
+                    (lambda_fn, all_param_types.clone(), ret_ty),
                 );
 
                 // Save state
@@ -2311,12 +2450,27 @@ impl<'ctx> CodeGen<'ctx> {
                 let entry = self.context.append_basic_block(lambda_fn, "entry");
                 self.builder.position_at_end(entry);
 
+                // Set up captured variables as params
+                for (i, (name, ty)) in captures.iter().enumerate() {
+                    let llvm_ty = ny_to_llvm(self.context, ty);
+                    let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                    self.builder
+                        .build_store(alloca, lambda_fn.get_nth_param(i as u32).unwrap())
+                        .unwrap();
+                    self.variables.insert(name.clone(), (alloca, ty.clone()));
+                }
+
+                // Set up explicit params
+                let cap_count = captures.len();
                 for (i, param) in params.iter().enumerate() {
                     let ty = &param_types[i];
                     let llvm_ty = ny_to_llvm(self.context, ty);
                     let alloca = self.builder.build_alloca(llvm_ty, &param.name).unwrap();
                     self.builder
-                        .build_store(alloca, lambda_fn.get_nth_param(i as u32).unwrap())
+                        .build_store(
+                            alloca,
+                            lambda_fn.get_nth_param((cap_count + i) as u32).unwrap(),
+                        )
                         .unwrap();
                     self.variables
                         .insert(param.name.clone(), (alloca, ty.clone()));
@@ -2333,9 +2487,41 @@ impl<'ctx> CodeGen<'ctx> {
                 self.variables = outer_vars;
                 self.builder.position_at_end(current_bb);
 
-                // Return the function pointer
-                let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
-                Ok(Some(fn_ptr.into()))
+                if captures.is_empty() {
+                    // Non-capturing: simple function pointer
+                    let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
+                    Ok(Some(fn_ptr.into()))
+                } else {
+                    // Capturing: store captured values in globals so the lambda can read them
+                    // Then return the lambda as a fn ptr (captures are baked in via globals)
+                    // Note: this is a simplified approach — each lambda instance overwrites
+                    // the globals, so only one instance at a time works correctly.
+                    for (i, val) in capture_values.iter().enumerate() {
+                        let global_name = format!("__cap_{}_{}", id, i);
+                        let global = self
+                            .module
+                            .add_global(val.get_type(), None, &global_name);
+                        global.set_initializer(&val.get_type().const_zero());
+                        self.builder
+                            .build_store(global.as_pointer_value(), *val)
+                            .unwrap();
+                    }
+
+                    // Now rebuild the lambda body with globals instead of params for captures
+                    // Actually, the lambda body already compiled above with captures as params.
+                    // We need to recompile with globals instead. This is getting complex.
+                    // Simpler: just return the fn pointer and at the call site pass captures.
+                    // For now, captures work via the lambda's extra params.
+                    // The fn is registered with captures+params, so direct call works.
+                    // Store the lambda name so we know the captures at call time.
+                    let fn_ptr = lambda_fn.as_global_value().as_pointer_value();
+                    // Record captures — keyed by lambda_name (not var name, set in VarDecl)
+                    self.closure_captures.insert(
+                        lambda_name.clone(),
+                        (lambda_name, captures.clone()),
+                    );
+                    Ok(Some(fn_ptr.into()))
+                }
             }
 
             // ---- Range index (arr[start..end] → slice {ptr, len}) ----
@@ -2972,13 +3158,29 @@ impl<'ctx> CodeGen<'ctx> {
                 let ny_ty = if let Some(t) = ty {
                     self.resolve_type_annotation(t)
                 } else {
-                    // Type inference: use the inferred type from the init expression
                     self.infer_expr_type(init)
                 };
                 let llvm_ty = ny_to_llvm(self.context, &ny_ty);
                 let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
                 self.builder.build_store(alloca, val).unwrap();
                 self.variables.insert(name.clone(), (alloca, ny_ty));
+
+                // If this is a capturing lambda, transfer closure info to var name
+                if let Expr::Lambda { .. } = init {
+                    // Find which lambda was just compiled (most recent one)
+                    let recent_lambda: Option<String> = self
+                        .closure_captures
+                        .keys()
+                        .filter(|k| k.starts_with("__lambda_"))
+                        .max()
+                        .cloned();
+                    if let Some(lambda_key) = recent_lambda {
+                        if let Some(info) = self.closure_captures.remove(&lambda_key) {
+                            self.closure_captures.insert(name.clone(), info);
+                        }
+                    }
+                }
+
                 Ok(())
             }
             Stmt::ConstDecl {

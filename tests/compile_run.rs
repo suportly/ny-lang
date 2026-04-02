@@ -234,6 +234,11 @@ fn test_vec() {
 }
 
 #[test]
+fn test_closure() {
+    assert_eq!(compile_and_run("closure.ny"), 42);
+}
+
+#[test]
 fn test_ptr_arith() {
     assert_eq!(compile_and_run("ptr_arith.ny"), 42);
 }

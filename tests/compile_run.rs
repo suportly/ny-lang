@@ -234,6 +234,11 @@ fn test_vec() {
 }
 
 #[test]
+fn test_generic_enum() {
+    assert_eq!(compile_and_run("generic_enum.ny"), 42);
+}
+
+#[test]
 fn test_numeric_coerce() {
     assert_eq!(compile_and_run("numeric_coerce.ny"), 42);
 }

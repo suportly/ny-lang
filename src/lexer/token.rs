@@ -101,6 +101,8 @@ pub enum TokenKind {
     Underscore,
     // Phase C: Try operator
     Question,
+    // String interpolation: f"text {expr} text"
+    FStringLit(String),  // the raw f-string content (to be parsed later)
 
     // Special
     Eof,

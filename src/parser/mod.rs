@@ -1221,6 +1221,12 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::FStringLit(raw) => {
+                let raw = raw.clone();
+                let span = self.advance().span;
+                // Desugar f"text {expr} text" → "text" + to_str(expr) + "text"
+                self.desugar_fstring(&raw, span)
+            }
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 let start = self.advance().span;
@@ -1408,6 +1414,71 @@ impl Parser {
                 self.peek_span(),
             )),
         }
+    }
+
+    fn desugar_fstring(&self, raw: &str, span: Span) -> Result<Expr, CompileError> {
+        // Parse f-string: split on { and }
+        // "hello {name}, age {age}" → ["hello ", name, ", age ", age]
+        let mut parts: Vec<Expr> = Vec::new();
+        let mut text = String::new();
+        let mut in_expr = false;
+        let mut expr_str = String::new();
+
+        for ch in raw.chars() {
+            if ch == '{' && !in_expr {
+                if !text.is_empty() {
+                    parts.push(Expr::Literal {
+                        value: LitValue::Str(text.clone()),
+                        span,
+                    });
+                    text.clear();
+                }
+                in_expr = true;
+                expr_str.clear();
+            } else if ch == '}' && in_expr {
+                in_expr = false;
+                // The expression inside {} is just an identifier name for simplicity
+                let expr_name = expr_str.trim().to_string();
+                // Wrap in to_str(ident)
+                parts.push(Expr::Call {
+                    callee: "to_str".to_string(),
+                    args: vec![Expr::Ident {
+                        name: expr_name,
+                        span,
+                    }],
+                    span,
+                });
+                expr_str.clear();
+            } else if in_expr {
+                expr_str.push(ch);
+            } else {
+                text.push(ch);
+            }
+        }
+        if !text.is_empty() {
+            parts.push(Expr::Literal {
+                value: LitValue::Str(text),
+                span,
+            });
+        }
+
+        // Concatenate all parts with +
+        if parts.is_empty() {
+            return Ok(Expr::Literal {
+                value: LitValue::Str(String::new()),
+                span,
+            });
+        }
+        let mut result = parts.remove(0);
+        for part in parts {
+            result = Expr::BinOp {
+                op: BinOp::Add,
+                lhs: Box::new(result),
+                rhs: Box::new(part),
+                span,
+            };
+        }
+        Ok(result)
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, CompileError> {

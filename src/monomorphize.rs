@@ -15,8 +15,12 @@ use crate::parser::ast::*;
 /// - Generates specialized copies
 /// - Rewrites calls to point to specialized versions
 pub fn monomorphize(program: &mut Program) {
-    // Step 0: Monomorphize generic structs
+    // Step 0: Monomorphize generic structs and enums
     monomorphize_structs(program);
+
+    // Step 0b: Rewrite generic enum variant references
+    // e.g., Option::Some(42) → Option_i32::Some(42)
+    rewrite_generic_enum_variants(program);
 
     // Step 1: Collect generic function templates
     let mut generic_fns: HashMap<String, Item> = HashMap::new();
@@ -701,5 +705,166 @@ fn rewrite_annotation(ann: &mut TypeAnnotation, map: &HashMap<String, String>) {
         if let Some(replacement) = map.get(name.as_str()) {
             *name = replacement.clone();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rewrite generic enum variant references: Option::Some(42) → Option_i32::Some(42)
+// ---------------------------------------------------------------------------
+
+fn rewrite_generic_enum_variants(program: &mut Program) {
+    // Collect concrete enum names: "Option_i32", "Result_i32_i32", etc.
+    // Build map: base_name → [(mangled_name, variant_names)]
+    let mut enum_map: HashMap<String, Vec<String>> = HashMap::new();
+    for item in &program.items {
+        if let Item::EnumDef {
+            name, type_params, ..
+        } = item
+        {
+            if type_params.is_empty() {
+                // This is a concrete (possibly monomorphized) enum
+                // Extract base name: "Option_i32" → "Option"
+                if let Some(underscore_pos) = name.find('_') {
+                    let base = &name[..underscore_pos];
+                    enum_map
+                        .entry(base.to_string())
+                        .or_default()
+                        .push(name.clone());
+                }
+            }
+        }
+    }
+
+    if enum_map.is_empty() {
+        return;
+    }
+
+    // Rewrite EnumVariant expressions and patterns in all items
+    for item in &mut program.items {
+        rewrite_enum_refs_in_item(item, &enum_map);
+    }
+}
+
+fn rewrite_enum_refs_in_item(item: &mut Item, map: &HashMap<String, Vec<String>>) {
+    match item {
+        Item::FunctionDef { body, .. } => {
+            rewrite_enum_refs_in_expr(body, map);
+        }
+        Item::ImplBlock { methods, .. } => {
+            for m in methods {
+                rewrite_enum_refs_in_item(m, map);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_enum_refs_in_expr(expr: &mut Expr, map: &HashMap<String, Vec<String>>) {
+    match expr {
+        Expr::EnumVariant { enum_name, .. } => {
+            // If enum_name is a generic base like "Option", replace with first concrete version
+            if let Some(concretes) = map.get(enum_name.as_str()) {
+                if let Some(first) = concretes.first() {
+                    *enum_name = first.clone();
+                }
+            }
+        }
+        Expr::Match { subject, arms, .. } => {
+            rewrite_enum_refs_in_expr(subject, map);
+            for arm in arms {
+                // Rewrite pattern enum names
+                if let Pattern::EnumVariant { enum_name, .. } = &mut arm.pattern {
+                    if let Some(concretes) = map.get(enum_name.as_str()) {
+                        if let Some(first) = concretes.first() {
+                            *enum_name = first.clone();
+                        }
+                    }
+                }
+                rewrite_enum_refs_in_expr(&mut arm.body, map);
+            }
+        }
+        Expr::Block { stmts, tail_expr, .. } => {
+            for stmt in stmts {
+                rewrite_enum_refs_in_stmt(stmt, map);
+            }
+            if let Some(te) = tail_expr {
+                rewrite_enum_refs_in_expr(te, map);
+            }
+        }
+        Expr::If { condition, then_branch, else_branch, .. } => {
+            rewrite_enum_refs_in_expr(condition, map);
+            rewrite_enum_refs_in_expr(then_branch, map);
+            if let Some(eb) = else_branch {
+                rewrite_enum_refs_in_expr(eb, map);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            rewrite_enum_refs_in_expr(lhs, map);
+            rewrite_enum_refs_in_expr(rhs, map);
+        }
+        Expr::UnaryOp { operand, .. } => {
+            rewrite_enum_refs_in_expr(operand, map);
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                rewrite_enum_refs_in_expr(arg, map);
+            }
+        }
+        Expr::Try { operand, .. } => {
+            rewrite_enum_refs_in_expr(operand, map);
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_enum_refs_in_stmt(stmt: &mut Stmt, map: &HashMap<String, Vec<String>>) {
+    match stmt {
+        Stmt::VarDecl { init, .. } => rewrite_enum_refs_in_expr(init, map),
+        Stmt::ConstDecl { value, .. } => rewrite_enum_refs_in_expr(value, map),
+        Stmt::ExprStmt { expr, .. } => rewrite_enum_refs_in_expr(expr, map),
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                rewrite_enum_refs_in_expr(v, map);
+            }
+        }
+        Stmt::Assign { value, .. } => rewrite_enum_refs_in_expr(value, map),
+        Stmt::While { condition, body, .. } => {
+            rewrite_enum_refs_in_expr(condition, map);
+            rewrite_enum_refs_in_expr(body, map);
+        }
+        Stmt::ForRange { start, end, body, .. } => {
+            rewrite_enum_refs_in_expr(start, map);
+            rewrite_enum_refs_in_expr(end, map);
+            rewrite_enum_refs_in_expr(body, map);
+        }
+        Stmt::Loop { body, .. } | Stmt::Defer { body, .. } => {
+            rewrite_enum_refs_in_expr(body, map);
+        }
+        Stmt::IfLet { expr, then_body, else_body, pattern, .. } => {
+            rewrite_enum_refs_in_expr(expr, map);
+            if let Pattern::EnumVariant { enum_name, .. } = pattern {
+                if let Some(concretes) = map.get(enum_name.as_str()) {
+                    if let Some(first) = concretes.first() {
+                        *enum_name = first.clone();
+                    }
+                }
+            }
+            rewrite_enum_refs_in_expr(then_body, map);
+            if let Some(eb) = else_body {
+                rewrite_enum_refs_in_expr(eb, map);
+            }
+        }
+        Stmt::WhileLet { expr, body, pattern, .. } => {
+            rewrite_enum_refs_in_expr(expr, map);
+            if let Pattern::EnumVariant { enum_name, .. } = pattern {
+                if let Some(concretes) = map.get(enum_name.as_str()) {
+                    if let Some(first) = concretes.first() {
+                        *enum_name = first.clone();
+                    }
+                }
+            }
+            rewrite_enum_refs_in_expr(body, map);
+        }
+        _ => {}
     }
 }

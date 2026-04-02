@@ -45,13 +45,29 @@ fn resolve_uses(
 
     for item in program.items.drain(..) {
         if let Item::Use { path, span } = &item {
+            // Search order: relative to source file → CWD → stdlib/
             let module_path = base_dir.join(path);
-            if !module_path.exists() {
-                return Err(vec![CompileError::syntax(
-                    format!("module file not found: '{}'", module_path.display()),
-                    *span,
-                )]);
-            }
+            let module_path = if module_path.exists() {
+                module_path
+            } else {
+                let cwd_path = std::path::Path::new(path);
+                if cwd_path.exists() {
+                    cwd_path.to_path_buf()
+                } else {
+                    // Try stdlib/ prefix
+                    let stdlib_path = std::path::Path::new("stdlib").join(
+                        path.strip_prefix("stdlib/").unwrap_or(path),
+                    );
+                    if stdlib_path.exists() {
+                        stdlib_path
+                    } else {
+                        return Err(vec![CompileError::syntax(
+                            format!("module file not found: '{}'", path),
+                            *span,
+                        )]);
+                    }
+                }
+            };
             if visited.contains(&module_path) {
                 // Already included, skip (prevent circular imports)
                 continue;

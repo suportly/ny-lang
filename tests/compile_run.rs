@@ -234,8 +234,18 @@ fn test_vec() {
 }
 
 #[test]
+fn test_arena() {
+    assert_eq!(compile_and_run("arena.ny"), 42);
+}
+
+#[test]
 fn test_closure() {
     assert_eq!(compile_and_run("closure.ny"), 42);
+}
+
+#[test]
+fn test_multi_closure() {
+    assert_eq!(compile_and_run("multi_closure.ny"), 50);
 }
 
 #[test]

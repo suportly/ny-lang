@@ -28,6 +28,11 @@ const BUILTIN_FUNCTIONS: &[&str] = &[
     "map_get",
     "map_contains",
     "map_len",
+    "arena_new",
+    "arena_alloc",
+    "arena_free",
+    "arena_reset",
+    "arena_bytes_used",
 ];
 
 #[derive(Debug, Clone)]

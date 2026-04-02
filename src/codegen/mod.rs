@@ -204,7 +204,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg("-lpthread");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
-    for rt_name in &["hashmap.c", "arena.c"] {
+    for rt_name in &["hashmap.c", "arena.c", "channel.c", "threadpool.c"] {
         if let Some(rt_path) = find_runtime_file(rt_name) {
             cmd.arg(rt_path);
         }
@@ -1440,19 +1440,123 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(str_val.into_struct_value().into()));
                 }
 
+                // Channel builtins
+                if callee == "channel_new" {
+                    let cap = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_channel_new",
+                        self.context.ptr_type(AddressSpace::default()).fn_type(&[self.context.i32_type().into()], false));
+                    let ptr = self.builder.build_call(fn_decl, &[cap.into()], "ch").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+                if callee == "channel_send" {
+                    let ch = self.compile_expr(&args[0], function)?.unwrap();
+                    let val = self.compile_expr(&args[1], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_channel_send",
+                        self.context.void_type().fn_type(&[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.context.i32_type().into(),
+                        ], false));
+                    self.builder.build_call(fn_decl, &[ch.into(), val.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "channel_recv" {
+                    let ch = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_channel_recv",
+                        self.context.i32_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
+                    let val = self.builder.build_call(fn_decl, &[ch.into()], "recv").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(val));
+                }
+                if callee == "channel_close" {
+                    let ch = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_channel_close",
+                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
+                    self.builder.build_call(fn_decl, &[ch.into()], "").unwrap();
+                    return Ok(None);
+                }
+
+                // Pool builtins
+                if callee == "pool_new" {
+                    let n = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_pool_new",
+                        self.context.ptr_type(AddressSpace::default()).fn_type(&[self.context.i32_type().into()], false));
+                    let ptr = self.builder.build_call(fn_decl, &[n.into()], "pool").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+                if callee == "pool_submit" {
+                    let pool = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_ptr = self.compile_expr(&args[1], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_pool_submit",
+                        self.context.void_type().fn_type(&[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                        ], false));
+                    self.builder.build_call(fn_decl, &[pool.into(), fn_ptr.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "pool_wait" {
+                    let pool = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_pool_wait",
+                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
+                    self.builder.build_call(fn_decl, &[pool.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "pool_free" {
+                    let pool = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_decl = self.get_or_declare_c_fn("ny_pool_free",
+                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
+                    self.builder.build_call(fn_decl, &[pool.into()], "").unwrap();
+                    return Ok(None);
+                }
+
+                // Parallel iterator builtins
+                if callee == "par_map" {
+                    let data = self.compile_expr(&args[0], function)?.unwrap();
+                    let n = self.compile_expr(&args[1], function)?.unwrap();
+                    let result = self.compile_expr(&args[2], function)?.unwrap();
+                    let map_fn = self.compile_expr(&args[3], function)?.unwrap();
+                    let pool = self.compile_expr(&args[4], function)?.unwrap();
+                    let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                    let i32_ty = self.context.i32_type();
+                    let fn_decl = self.get_or_declare_c_fn("ny_par_map",
+                        self.context.void_type().fn_type(&[ptr_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
+                    self.builder.build_call(fn_decl, &[data.into(), n.into(), result.into(), map_fn.into(), pool.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "par_reduce" {
+                    let data = self.compile_expr(&args[0], function)?.unwrap();
+                    let n = self.compile_expr(&args[1], function)?.unwrap();
+                    let init = self.compile_expr(&args[2], function)?.unwrap();
+                    let reduce_fn = self.compile_expr(&args[3], function)?.unwrap();
+                    let pool = self.compile_expr(&args[4], function)?.unwrap();
+                    let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                    let i32_ty = self.context.i32_type();
+                    let fn_decl = self.get_or_declare_c_fn("ny_par_reduce",
+                        i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
+                    let val = self.builder.build_call(fn_decl, &[data.into(), n.into(), init.into(), reduce_fn.into(), pool.into()], "par_red").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(val));
+                }
+
                 // Thread builtins
                 if callee == "thread_spawn" {
-                    // thread_spawn(fn_ptr) → spawns a pthread, returns thread handle
+                    // thread_spawn(fn_ptr) or thread_spawn(fn_ptr, arg)
                     let fn_ptr = self.compile_expr(&args[0], function)?.unwrap();
                     let pthread_create = self.get_or_declare_pthread_create();
-                    // Allocate space for pthread_t (i64)
                     let handle_alloca = self.builder
                         .build_alloca(self.context.i64_type(), "thread_handle")
                         .unwrap();
                     let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                    let thread_arg = if args.len() > 1 {
+                        self.compile_expr(&args[1], function)?.unwrap()
+                    } else {
+                        null.into()
+                    };
                     self.builder.build_call(
                         pthread_create,
-                        &[handle_alloca.into(), null.into(), fn_ptr.into(), null.into()],
+                        &[handle_alloca.into(), null.into(), fn_ptr.into(), thread_arg.into()],
                         "spawn",
                     ).unwrap();
                     let handle = self.builder
@@ -4905,6 +5009,17 @@ impl<'ctx> CodeGen<'ctx> {
             .unwrap();
 
         Ok(())
+    }
+
+    fn get_or_declare_c_fn(
+        &self,
+        name: &str,
+        fn_type: inkwell::types::FunctionType<'ctx>,
+    ) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        self.module.add_function(name, fn_type, None)
     }
 
     fn get_or_declare_pthread_create(&self) -> FunctionValue<'ctx> {

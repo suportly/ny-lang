@@ -692,6 +692,38 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
 
+                // Channel builtins
+                if callee == "channel_new" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "channel_send" || callee == "channel_close" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                if callee == "channel_recv" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I32;
+                }
+                // Pool builtins
+                if callee == "pool_new" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "pool_submit" || callee == "pool_wait" || callee == "pool_free" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                // Parallel iterator builtins
+                if callee == "par_map" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                if callee == "par_reduce" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I32;
+                }
+
                 // Built-in to_str(any) -> str
                 if callee == "to_str" {
                     for arg in args { self.check_expr(arg); }

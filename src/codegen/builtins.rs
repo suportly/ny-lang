@@ -41,9 +41,25 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         }
         "simd_store_f32x4" | "simd_store_f32x8" => Some(NyType::Unit),
         "simd_reduce_add_f32" => Some(NyType::F32),
-        "thread_spawn" => Some(NyType::I64), // pthread_t handle
+        "thread_spawn" => Some(NyType::I64),
         "thread_join" => Some(NyType::Unit),
         "to_str" => Some(NyType::Str),
+
+        // Channels
+        "channel_new" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "channel_send" => Some(NyType::Unit),
+        "channel_recv" => Some(NyType::I32),
+        "channel_close" => Some(NyType::Unit),
+
+        // Thread Pool
+        "pool_new" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "pool_submit" => Some(NyType::Unit),
+        "pool_wait" => Some(NyType::Unit),
+        "pool_free" => Some(NyType::Unit),
+
+        // Parallel Iterators
+        "par_map" => Some(NyType::Unit),
+        "par_reduce" => Some(NyType::I32),
 
         _ => None,
     }
@@ -94,4 +110,14 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "thread_spawn",
     "thread_join",
     "to_str",
+    "channel_new",
+    "channel_send",
+    "channel_recv",
+    "channel_close",
+    "pool_new",
+    "pool_submit",
+    "pool_wait",
+    "pool_free",
+    "par_map",
+    "par_reduce",
 ];

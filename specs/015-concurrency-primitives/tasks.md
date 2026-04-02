@@ -15,9 +15,9 @@
 
 **Purpose**: Register all new builtin functions in the compiler so they are recognized by resolver, typechecker, and codegen.
 
-- [ ] T001 Add channel/pool/par builtin names to BUILTIN_NAMES in src/codegen/builtins.rs
-- [ ] T002 Add channel/pool/par return types to builtin_return_type() in src/codegen/builtins.rs
-- [ ] T003 [P] Add channel/pool/par type checking in src/semantic/typechecker.rs (channel_new -> *u8, channel_recv -> i32, etc.)
+- [x] T001 Add channel/pool/par builtin names to BUILTIN_NAMES in src/codegen/builtins.rs
+- [x] T002 Add channel/pool/par return types to builtin_return_type() in src/codegen/builtins.rs
+- [x] T003 [P] Add channel/pool/par type checking in src/semantic/typechecker.rs (channel_new -> *u8, channel_recv -> i32, etc.)
 
 ---
 
@@ -27,9 +27,9 @@
 
 **CRITICAL**: These files must exist before any user story codegen can link.
 
-- [ ] T004 Create runtime/channel.c with struct definitions and function stubs (ny_channel_new, ny_channel_send, ny_channel_recv, ny_channel_close)
-- [ ] T005 [P] Create runtime/threadpool.c with struct definitions and function stubs (ny_pool_new, ny_pool_submit, ny_pool_wait, ny_pool_free, ny_par_map, ny_par_reduce)
-- [ ] T006 Verify linker includes runtime/channel.c and runtime/threadpool.c — update link list in src/codegen/mod.rs link_executable()
+- [x] T004 Create runtime/channel.c with struct definitions and function stubs (ny_channel_new, ny_channel_send, ny_channel_recv, ny_channel_close)
+- [x] T005 [P] Create runtime/threadpool.c with struct definitions and function stubs (ny_pool_new, ny_pool_submit, ny_pool_wait, ny_pool_free, ny_par_map, ny_par_reduce)
+- [x] T006 Verify linker includes runtime/channel.c and runtime/threadpool.c — update link list in src/codegen/mod.rs link_executable()
 
 **Checkpoint**: Compiler compiles .ny files that call channel/pool builtins without link errors (stubs return 0/NULL).
 
@@ -43,14 +43,14 @@
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Implement NyChannel struct in runtime/channel.c: ring buffer (int32_t*), head, tail, count, capacity, closed flag, pthread_mutex_t, two pthread_cond_t (not_empty, not_full)
-- [ ] T008 [US1] Implement ny_channel_new(capacity) in runtime/channel.c: malloc struct + buffer, init mutex + condvars, return pointer
-- [ ] T009 [US1] Implement ny_channel_send(ch, value) in runtime/channel.c: lock, while(count==capacity && !closed) wait(not_full), enqueue at tail, signal(not_empty), unlock
-- [ ] T010 [US1] Implement ny_channel_recv(ch) in runtime/channel.c: lock, while(count==0 && !closed) wait(not_empty), if(closed && count==0) return 0, dequeue at head, signal(not_full), unlock
-- [ ] T011 [US1] Implement ny_channel_close(ch) in runtime/channel.c: lock, set closed=1, broadcast both condvars, unlock
-- [ ] T012 [US1] Add codegen for channel_new/send/recv/close in src/codegen/mod.rs: declare C functions, compile builtin calls to LLVM call instructions
-- [ ] T013 [US1] Create test fixture tests/fixtures/valid/channel.ny: spawn producer thread sending values 1-5 to channel, main thread receives and sums, verify sum=15 (exit code 15+27=42)
-- [ ] T014 [US1] Add test_channel to tests/compile_run.rs and verify it passes
+- [x] T007 [US1] Implement NyChannel struct in runtime/channel.c: ring buffer (int32_t*), head, tail, count, capacity, closed flag, pthread_mutex_t, two pthread_cond_t (not_empty, not_full)
+- [x] T008 [US1] Implement ny_channel_new(capacity) in runtime/channel.c: malloc struct + buffer, init mutex + condvars, return pointer
+- [x] T009 [US1] Implement ny_channel_send(ch, value) in runtime/channel.c: lock, while(count==capacity && !closed) wait(not_full), enqueue at tail, signal(not_empty), unlock
+- [x] T010 [US1] Implement ny_channel_recv(ch) in runtime/channel.c: lock, while(count==0 && !closed) wait(not_empty), if(closed && count==0) return 0, dequeue at head, signal(not_full), unlock
+- [x] T011 [US1] Implement ny_channel_close(ch) in runtime/channel.c: lock, set closed=1, broadcast both condvars, unlock
+- [x] T012 [US1] Add codegen for channel_new/send/recv/close in src/codegen/mod.rs: declare C functions, compile builtin calls to LLVM call instructions
+- [x] T013 [US1] Create test fixture tests/fixtures/valid/channel.ny: spawn producer thread sending values 1-5 to channel, main thread receives and sums, verify sum=15 (exit code 15+27=42)
+- [x] T014 [US1] Add test_channel to tests/compile_run.rs and verify it passes
 
 **Checkpoint**: Channels work end-to-end — producer/consumer across threads with correct synchronization.
 
@@ -64,15 +64,15 @@
 
 ### Implementation for User Story 2
 
-- [ ] T015 [US2] Implement WorkItem struct and work queue in runtime/threadpool.c: function pointer, queue array, head/tail/count/capacity
-- [ ] T016 [US2] Implement worker_thread() loop in runtime/threadpool.c: lock, while(!shutdown && queue_empty) wait, dequeue, unlock, execute, decrement active_count, signal all_done
-- [ ] T017 [US2] Implement ny_pool_new(n) in runtime/threadpool.c: malloc struct, init queue, create n pthreads running worker_thread
-- [ ] T018 [US2] Implement ny_pool_submit(pool, fn) in runtime/threadpool.c: lock, enqueue work item, signal work_available, unlock
-- [ ] T019 [US2] Implement ny_pool_wait(pool) in runtime/threadpool.c: lock, while(queue_count > 0 || active_count > 0) wait(all_done), unlock
-- [ ] T020 [US2] Implement ny_pool_free(pool) in runtime/threadpool.c: set shutdown=1, broadcast, join all threads, free resources
-- [ ] T021 [US2] Add codegen for pool_new/submit/wait/free in src/codegen/mod.rs
-- [ ] T022 [US2] Create test fixture tests/fixtures/valid/threadpool.ny: create pool(4), submit 8 tasks via channel to verify completion, exit code 42
-- [ ] T023 [US2] Add test_threadpool to tests/compile_run.rs and verify it passes
+- [x] T015 [US2] Implement WorkItem struct and work queue in runtime/threadpool.c: function pointer, queue array, head/tail/count/capacity
+- [x] T016 [US2] Implement worker_thread() loop in runtime/threadpool.c: lock, while(!shutdown && queue_empty) wait, dequeue, unlock, execute, decrement active_count, signal all_done
+- [x] T017 [US2] Implement ny_pool_new(n) in runtime/threadpool.c: malloc struct, init queue, create n pthreads running worker_thread
+- [x] T018 [US2] Implement ny_pool_submit(pool, fn) in runtime/threadpool.c: lock, enqueue work item, signal work_available, unlock
+- [x] T019 [US2] Implement ny_pool_wait(pool) in runtime/threadpool.c: lock, while(queue_count > 0 || active_count > 0) wait(all_done), unlock
+- [x] T020 [US2] Implement ny_pool_free(pool) in runtime/threadpool.c: set shutdown=1, broadcast, join all threads, free resources
+- [x] T021 [US2] Add codegen for pool_new/submit/wait/free in src/codegen/mod.rs
+- [x] T022 [US2] Create test fixture tests/fixtures/valid/threadpool.ny: create pool(4), submit 8 tasks via channel to verify completion, exit code 42
+- [x] T023 [US2] Add test_threadpool to tests/compile_run.rs and verify it passes
 
 **Checkpoint**: Thread pool executes submitted work items across multiple threads correctly.
 
@@ -86,11 +86,11 @@
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] Implement ny_par_map(data, n, result, fn, pool) in runtime/threadpool.c: divide n into chunks (n/num_threads), submit chunk processing as work items, wait for completion
-- [ ] T025 [US3] Implement ny_par_reduce(data, n, init, fn, pool) in runtime/threadpool.c: divide into chunks, reduce each chunk, then reduce partial results sequentially
-- [ ] T026 [US3] Add codegen for par_map/par_reduce in src/codegen/mod.rs
-- [ ] T027 [US3] Create test fixture tests/fixtures/valid/par_map.ny: allocate array of 100 i32, fill with 1..100, par_map with squaring fn, verify sum matches sequential
-- [ ] T028 [US3] Add test_par_map to tests/compile_run.rs and verify it passes
+- [x] T024 [US3] Implement ny_par_map(data, n, result, fn, pool) in runtime/threadpool.c: divide n into chunks (n/num_threads), submit chunk processing as work items, wait for completion
+- [x] T025 [US3] Implement ny_par_reduce(data, n, init, fn, pool) in runtime/threadpool.c: divide into chunks, reduce each chunk, then reduce partial results sequentially
+- [x] T026 [US3] Add codegen for par_map/par_reduce in src/codegen/mod.rs
+- [x] T027 [US3] Create test fixture tests/fixtures/valid/par_map.ny: allocate array of 100 i32, fill with 1..100, par_map with squaring fn, verify sum matches sequential
+- [x] T028 [US3] Add test_par_map to tests/compile_run.rs and verify it passes
 
 **Checkpoint**: Parallel iterators produce correct results and distribute work across threads.
 
@@ -100,11 +100,11 @@
 
 **Purpose**: Documentation, cleanup, regression testing.
 
-- [ ] T029 [P] Run full test suite (cargo test) — verify all 66+ existing tests still pass
-- [ ] T030 [P] Run cargo clippy — fix any new warnings
-- [ ] T031 Update CLAUDE.md with new builtins (channel_*, pool_*, par_*)
-- [ ] T032 Update specs/ROADMAP.md to mark concurrency phase as implemented
-- [ ] T033 Update examples/benchmark/main.ny to include a channel + pool demonstration
+- [x] T029 [P] Run full test suite (cargo test) — verify all 66+ existing tests still pass
+- [x] T030 [P] Run cargo clippy — fix any new warnings
+- [x] T031 Update CLAUDE.md with new builtins (channel_*, pool_*, par_*)
+- [x] T032 Update specs/ROADMAP.md to mark concurrency phase as implemented
+- [x] T033 Update examples/benchmark/main.ny to include a channel + pool demonstration
 
 ---
 

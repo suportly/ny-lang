@@ -233,6 +233,23 @@ fn test_vec() {
     assert_eq!(compile_and_run("vec_test.ny"), 57);
 }
 
+// Phase 15: Concurrency tests
+
+#[test]
+fn test_channel() {
+    assert_eq!(compile_and_run("channel.ny"), 42);
+}
+
+#[test]
+fn test_threadpool() {
+    assert_eq!(compile_and_run("threadpool.ny"), 42);
+}
+
+#[test]
+fn test_par_map() {
+    assert_eq!(compile_and_run("par_map.ny"), 42);
+}
+
 #[test]
 fn test_simd_dotprod() {
     assert_eq!(compile_and_run("simd_dotprod.ny"), 42);

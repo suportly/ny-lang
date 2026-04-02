@@ -142,6 +142,13 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// while let Pattern = expr { body }
+    WhileLet {
+        pattern: Pattern,
+        expr: Expr,
+        body: Expr,
+        span: Span,
+    },
     /// if let Pattern = expr { then } else { else }
     IfLet {
         pattern: Pattern,

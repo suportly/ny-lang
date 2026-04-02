@@ -200,7 +200,8 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg(output_path)
         .arg("-no-pie")
         .arg("-lm")
-        .arg("-lc");
+        .arg("-lc")
+        .arg("-lpthread");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
     for rt_name in &["hashmap.c", "arena.c"] {
@@ -928,6 +929,9 @@ impl<'ctx> CodeGen<'ctx> {
                     let llvm_ty = ny_to_llvm(self.context, ty);
                     let val = self.builder.build_load(llvm_ty, *ptr, name).unwrap();
                     Ok(Some(val))
+                } else if let Some((func, _, _)) = self.functions.get(name) {
+                    // Function name used as value → return function pointer
+                    Ok(Some(func.as_global_value().as_pointer_value().into()))
                 } else {
                     Ok(None)
                 }
@@ -1343,6 +1347,130 @@ impl<'ctx> CodeGen<'ctx> {
                             .unwrap();
                     }
                     return Ok(Some(sum.into()));
+                }
+
+                // SIMD load: simd_load_f32x4(ptr, offset) → load 4 consecutive f32
+                if callee == "simd_load_f32x4" || callee == "simd_load_f32x8" {
+                    let lanes: u32 = if callee == "simd_load_f32x4" { 4 } else { 8 };
+                    let ptr = self.compile_expr(&args[0], function)?.unwrap().into_pointer_value();
+                    let offset = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let offset_i64 = self.builder
+                        .build_int_s_extend_or_bit_cast(offset, self.context.i64_type(), "off64")
+                        .unwrap();
+                    // GEP to ptr + offset (byte-level, offset is in elements)
+                    let f32_ty = self.context.f32_type();
+                    let elem_ptr = unsafe {
+                        self.builder.build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "simd_ptr").unwrap()
+                    };
+                    // Bitcast to vector pointer and load
+                    let vec_ty = f32_ty.vec_type(lanes);
+                    let vec_val = self.builder.build_load(vec_ty, elem_ptr, "simd_load").unwrap();
+                    return Ok(Some(vec_val));
+                }
+
+                // SIMD store: simd_store_f32x4(ptr, offset, vec)
+                if callee == "simd_store_f32x4" || callee == "simd_store_f32x8" {
+                    let ptr = self.compile_expr(&args[0], function)?.unwrap().into_pointer_value();
+                    let offset = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let vec_val = self.compile_expr(&args[2], function)?.unwrap();
+                    let offset_i64 = self.builder
+                        .build_int_s_extend_or_bit_cast(offset, self.context.i64_type(), "off64")
+                        .unwrap();
+                    let f32_ty = self.context.f32_type();
+                    let elem_ptr = unsafe {
+                        self.builder.build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "store_ptr").unwrap()
+                    };
+                    self.builder.build_store(elem_ptr, vec_val).unwrap();
+                    return Ok(None);
+                }
+
+                // to_str(val) → converts any type to str via snprintf
+                if callee == "to_str" {
+                    let arg_ty = self.infer_expr_type(&args[0]);
+                    let val = self.compile_expr(&args[0], function)?.unwrap();
+
+                    let buf_size = self.context.i64_type().const_int(64, false);
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let buf_ptr = self.builder
+                        .build_call(malloc_fn, &[buf_size.into()], "ts_buf")
+                        .unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+                    let snprintf_fn = self.get_or_declare_snprintf();
+
+                    let fmt_str = match &arg_ty {
+                        NyType::I32 => "%d",
+                        NyType::I64 => "%ld",
+                        t if t.is_integer() => "%ld",
+                        NyType::F32 | NyType::F64 => "%f",
+                        NyType::Bool => "%s",
+                        NyType::Str => "%s", // identity for strings
+                        _ => "%d",
+                    };
+                    let fmt = self.builder.build_global_string_ptr(fmt_str, "ts_fmt").unwrap();
+
+                    let print_val: BasicValueEnum = if arg_ty == NyType::Bool {
+                        let b = val.into_int_value();
+                        let ts = self.builder.build_global_string_ptr("true", "ts_t").unwrap();
+                        let fs = self.builder.build_global_string_ptr("false", "ts_f").unwrap();
+                        self.builder.build_select(b, ts.as_pointer_value(), fs.as_pointer_value(), "ts_sel").unwrap()
+                    } else if arg_ty == NyType::Str {
+                        let sv = val.into_struct_value();
+                        self.builder.build_extract_value(sv, 0, "ts_ptr").unwrap()
+                    } else if arg_ty.is_integer() && arg_ty != NyType::I32 {
+                        let ext = self.builder.build_int_s_extend(val.into_int_value(), self.context.i64_type(), "ts_ext").unwrap();
+                        ext.into()
+                    } else {
+                        val
+                    };
+
+                    self.builder.build_call(
+                        snprintf_fn,
+                        &[buf_ptr.into(), buf_size.into(), fmt.as_pointer_value().into(), print_val.into()],
+                        "",
+                    ).unwrap();
+
+                    let strlen_fn = self.get_or_declare_strlen();
+                    let len = self.builder
+                        .build_call(strlen_fn, &[buf_ptr.into()], "ts_len")
+                        .unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+
+                    let str_ty = str_type(self.context);
+                    let str_val = str_ty.const_zero();
+                    let str_val = self.builder.build_insert_value(str_val, buf_ptr, 0, "ts_p").unwrap();
+                    let str_val = self.builder.build_insert_value(str_val, len, 1, "ts_l").unwrap();
+                    return Ok(Some(str_val.into_struct_value().into()));
+                }
+
+                // Thread builtins
+                if callee == "thread_spawn" {
+                    // thread_spawn(fn_ptr) → spawns a pthread, returns thread handle
+                    let fn_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let pthread_create = self.get_or_declare_pthread_create();
+                    // Allocate space for pthread_t (i64)
+                    let handle_alloca = self.builder
+                        .build_alloca(self.context.i64_type(), "thread_handle")
+                        .unwrap();
+                    let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                    self.builder.build_call(
+                        pthread_create,
+                        &[handle_alloca.into(), null.into(), fn_ptr.into(), null.into()],
+                        "spawn",
+                    ).unwrap();
+                    let handle = self.builder
+                        .build_load(self.context.i64_type(), handle_alloca, "tid")
+                        .unwrap();
+                    return Ok(Some(handle));
+                }
+
+                if callee == "thread_join" {
+                    let handle = self.compile_expr(&args[0], function)?.unwrap();
+                    let pthread_join = self.get_or_declare_pthread_join();
+                    let null = self.context.ptr_type(AddressSpace::default()).const_null();
+                    self.builder.build_call(
+                        pthread_join,
+                        &[handle.into(), null.into()],
+                        "join",
+                    ).unwrap();
+                    return Ok(None);
                 }
 
                 // Handle vec_new() — creates empty Vec with correct elem_size
@@ -3667,6 +3795,46 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
 
+            Stmt::WhileLet {
+                pattern,
+                expr: match_expr,
+                body: while_body,
+                span: while_span,
+            } => {
+                // Desugar: loop { match expr { Pattern => body, _ => break } }
+                let loop_body_bb = self.context.append_basic_block(*function, "whilelet_body");
+                let exit_bb = self.context.append_basic_block(*function, "whilelet_exit");
+
+                self.builder.build_unconditional_branch(loop_body_bb).unwrap();
+                self.loop_stack.push(LoopFrame { break_bb: exit_bb, continue_bb: loop_body_bb });
+
+                self.builder.position_at_end(loop_body_bb);
+
+                // Build: match expr { pattern => body, _ => break }
+                let break_body = Expr::Block {
+                    stmts: vec![Stmt::Break { span: *while_span }],
+                    tail_expr: None,
+                    span: *while_span,
+                };
+                let match_ast = Expr::Match {
+                    subject: Box::new(match_expr.clone()),
+                    arms: vec![
+                        MatchArm { pattern: pattern.clone(), body: while_body.clone() },
+                        MatchArm { pattern: Pattern::Wildcard(Span::empty(0)), body: break_body },
+                    ],
+                    span: *while_span,
+                };
+                self.compile_expr(&match_ast, function)?;
+
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(loop_body_bb).unwrap();
+                }
+
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                Ok(())
+            }
+
             Stmt::IfLet {
                 pattern,
                 expr: match_expr,
@@ -4737,6 +4905,22 @@ impl<'ctx> CodeGen<'ctx> {
             .unwrap();
 
         Ok(())
+    }
+
+    fn get_or_declare_pthread_create(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("pthread_create") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("pthread_create", fn_ty, None)
+    }
+
+    fn get_or_declare_pthread_join(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("pthread_join") { return f; }
+        let i64_ty = self.context.i64_type();
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.i32_type().fn_type(&[i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("pthread_join", fn_ty, None)
     }
 
     fn get_or_declare_ny_arena_new(&self) -> FunctionValue<'ctx> {

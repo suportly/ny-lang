@@ -674,6 +674,42 @@ impl TypeChecker {
                     return NyType::Str;
                 }
 
+                // SIMD builtins
+                if callee == "simd_splat_f32x4" || callee == "simd_load_f32x4" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 };
+                }
+                if callee == "simd_splat_f32x8" || callee == "simd_load_f32x8" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 };
+                }
+                if callee == "simd_reduce_add_f32" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::F32;
+                }
+                if callee == "simd_store_f32x4" || callee == "simd_store_f32x8" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+
+                // Built-in to_str(any) -> str
+                if callee == "to_str" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
+
+                // Built-in thread_spawn(fn) -> i64
+                if callee == "thread_spawn" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I64;
+                }
+
+                // Built-in thread_join(handle) -> ()
+                if callee == "thread_join" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+
                 // Built-in sleep_ms(milliseconds) -> Unit
                 if callee == "sleep_ms" {
                     for arg in args {
@@ -1803,6 +1839,32 @@ impl TypeChecker {
                         *span,
                     ));
                 }
+            }
+
+            // ── WhileLet ──────────────────────────────────────────────
+            Stmt::WhileLet { pattern, expr, body, .. } => {
+                let expr_ty = self.check_expr(expr);
+                if let Pattern::EnumVariant { variant, bindings, .. } = pattern {
+                    if let NyType::Enum { variants, .. } = &expr_ty {
+                        if let Some((_, payload)) = variants.iter().find(|(n, _)| n == variant) {
+                            if !bindings.is_empty() {
+                                self.push_scope();
+                                for (i, b) in bindings.iter().enumerate() {
+                                    let ty = payload.get(i).cloned().unwrap_or(NyType::I32);
+                                    self.declare(b, ty);
+                                }
+                                self.loop_depth += 1;
+                                self.check_expr(body);
+                                self.loop_depth -= 1;
+                                self.pop_scope();
+                                return;
+                            }
+                        }
+                    }
+                }
+                self.loop_depth += 1;
+                self.check_expr(body);
+                self.loop_depth -= 1;
             }
 
             // ── IfLet ─────────────────────────────────────────────────

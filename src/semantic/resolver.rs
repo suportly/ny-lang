@@ -156,7 +156,13 @@ impl Resolver {
 
         // ---- Pass 1: Register all struct definitions ----
         for item in &program.items {
-            if let Item::StructDef { name, type_params: _, fields, span } = item {
+            if let Item::StructDef {
+                name,
+                type_params: _,
+                fields,
+                span,
+            } = item
+            {
                 if resolver.structs.contains_key(name) {
                     resolver.errors.push(CompileError::name_error(
                         format!("duplicate struct definition '{}'", name),
@@ -226,10 +232,9 @@ impl Resolver {
                     let ret_type = resolver
                         .resolve_type_annotation(&ext_fn.return_type)
                         .unwrap_or(NyType::Unit);
-                    resolver.functions.insert(
-                        ext_fn.name.clone(),
-                        (param_types, ret_type, ext_fn.span),
-                    );
+                    resolver
+                        .functions
+                        .insert(ext_fn.name.clone(), (param_types, ret_type, ext_fn.span));
                 }
             }
         }
@@ -460,10 +465,7 @@ impl Resolver {
                 self.resolve_expr(index);
             }
             Expr::RangeIndex {
-                object,
-                start,
-                end,
-                ..
+                object, start, end, ..
             } => {
                 self.resolve_expr(object);
                 self.resolve_expr(start);
@@ -774,15 +776,25 @@ impl Resolver {
                 }
             }
             // ---- while let ----
-            Stmt::WhileLet { pattern, expr, body, .. } => {
+            Stmt::WhileLet {
+                pattern,
+                expr,
+                body,
+                ..
+            } => {
                 self.resolve_expr(expr);
                 if let Pattern::EnumVariant { bindings, .. } = pattern {
                     self.push_scope();
                     for binding in bindings {
-                        self.declare(binding, Symbol {
-                            name: binding.clone(), ty: NyType::I32,
-                            mutability: Mutability::Immutable, span: expr.span(),
-                        });
+                        self.declare(
+                            binding,
+                            Symbol {
+                                name: binding.clone(),
+                                ty: NyType::I32,
+                                mutability: Mutability::Immutable,
+                                span: expr.span(),
+                            },
+                        );
                     }
                     self.loop_depth += 1;
                     self.resolve_expr(body);

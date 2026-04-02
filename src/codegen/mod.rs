@@ -49,7 +49,9 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
                 find_free_vars_inner(arg, bound, free);
             }
         }
-        Expr::Block { stmts, tail_expr, .. } => {
+        Expr::Block {
+            stmts, tail_expr, ..
+        } => {
             for stmt in stmts {
                 match stmt {
                     Stmt::VarDecl { init, .. } | Stmt::ConstDecl { value: init, .. } => {
@@ -70,7 +72,12 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
                 find_free_vars_inner(te, bound, free);
             }
         }
-        Expr::If { condition, then_branch, else_branch, .. } => {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             find_free_vars_inner(condition, bound, free);
             find_free_vars_inner(then_branch, bound, free);
             if let Some(eb) = else_branch {
@@ -385,10 +392,7 @@ impl<'ctx> CodeGen<'ctx> {
 
     /// Build the LLVM struct type for a data-carrying enum: { i32, field0, field1, ... }
     /// where fields are the UNION of all payload positions across variants (largest at each position).
-    fn enum_struct_type(
-        &self,
-        enum_name: &str,
-    ) -> inkwell::types::StructType<'ctx> {
+    fn enum_struct_type(&self, enum_name: &str) -> inkwell::types::StructType<'ctx> {
         let variants = self.enum_variants.get(enum_name).unwrap();
         // Find max payload count across all variants
         let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
@@ -489,8 +493,7 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                     }
                     // Use builtin registry for return types
-                    builtins::builtin_return_type(callee, &[])
-                        .unwrap_or(NyType::Unit)
+                    builtins::builtin_return_type(callee, &[]).unwrap_or(NyType::Unit)
                 }
             }
             Expr::If { then_branch, .. } => self.infer_expr_type(then_branch),
@@ -716,23 +719,19 @@ impl<'ctx> CodeGen<'ctx> {
                         .iter()
                         .map(|t| ny_to_llvm(self.context, t))
                         .collect();
-                    let param_meta: Vec<_> =
-                        llvm_param_types.iter().map(|t| (*t).into()).collect();
+                    let param_meta: Vec<_> = llvm_param_types.iter().map(|t| (*t).into()).collect();
 
                     let fn_type = match &ret_ty {
-                        NyType::Unit => {
-                            self.context.void_type().fn_type(&param_meta, ext_fn.variadic)
-                        }
-                        ty => ny_to_llvm(self.context, ty)
+                        NyType::Unit => self
+                            .context
+                            .void_type()
                             .fn_type(&param_meta, ext_fn.variadic),
+                        ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, ext_fn.variadic),
                     };
 
-                    let function =
-                        self.module.add_function(&ext_fn.name, fn_type, None);
-                    self.functions.insert(
-                        ext_fn.name.clone(),
-                        (function, param_types, ret_ty),
-                    );
+                    let function = self.module.add_function(&ext_fn.name, fn_type, None);
+                    self.functions
+                        .insert(ext_fn.name.clone(), (function, param_types, ret_ty));
                 }
             }
         }
@@ -741,7 +740,10 @@ impl<'ctx> CodeGen<'ctx> {
         let mut impl_methods: Vec<(String, &Vec<Param>, &TypeAnnotation, &Expr, Span)> = Vec::new();
         for item in &program.items {
             if let Item::ImplBlock {
-                type_name, methods, trait_name: _, ..
+                type_name,
+                methods,
+                trait_name: _,
+                ..
             } = item
             {
                 for method in methods {
@@ -1116,42 +1118,71 @@ impl<'ctx> CodeGen<'ctx> {
                 // Arena builtins — call C runtime functions
                 if callee == "arena_new" {
                     let size_hint = self.compile_expr(&args[0], function)?.unwrap();
-                    let size_i64 = self.builder.build_int_s_extend_or_bit_cast(
-                        size_hint.into_int_value(), self.context.i64_type(), "arena_size"
-                    ).unwrap();
+                    let size_i64 = self
+                        .builder
+                        .build_int_s_extend_or_bit_cast(
+                            size_hint.into_int_value(),
+                            self.context.i64_type(),
+                            "arena_size",
+                        )
+                        .unwrap();
                     let arena_fn = self.get_or_declare_ny_arena_new();
-                    let ptr = self.builder.build_call(arena_fn, &[size_i64.into()], "arena").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let ptr = self
+                        .builder
+                        .build_call(arena_fn, &[size_i64.into()], "arena")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
                 if callee == "arena_alloc" {
                     let arena = self.compile_expr(&args[0], function)?.unwrap();
                     let size = self.compile_expr(&args[1], function)?.unwrap();
-                    let size_i64 = self.builder.build_int_s_extend_or_bit_cast(
-                        size.into_int_value(), self.context.i64_type(), "alloc_size"
-                    ).unwrap();
+                    let size_i64 = self
+                        .builder
+                        .build_int_s_extend_or_bit_cast(
+                            size.into_int_value(),
+                            self.context.i64_type(),
+                            "alloc_size",
+                        )
+                        .unwrap();
                     let alloc_fn = self.get_or_declare_ny_arena_alloc();
-                    let ptr = self.builder.build_call(alloc_fn, &[arena.into(), size_i64.into()], "arena_ptr").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let ptr = self
+                        .builder
+                        .build_call(alloc_fn, &[arena.into(), size_i64.into()], "arena_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
                 if callee == "arena_free" {
                     let arena = self.compile_expr(&args[0], function)?.unwrap();
                     let free_fn = self.get_or_declare_ny_arena_free();
-                    self.builder.build_call(free_fn, &[arena.into()], "").unwrap();
+                    self.builder
+                        .build_call(free_fn, &[arena.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "arena_reset" {
                     let arena = self.compile_expr(&args[0], function)?.unwrap();
                     let reset_fn = self.get_or_declare_ny_arena_reset();
-                    self.builder.build_call(reset_fn, &[arena.into()], "").unwrap();
+                    self.builder
+                        .build_call(reset_fn, &[arena.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "arena_bytes_used" {
                     let arena = self.compile_expr(&args[0], function)?.unwrap();
                     let bytes_fn = self.get_or_declare_ny_arena_bytes_used();
-                    let result = self.builder.build_call(bytes_fn, &[arena.into()], "arena_used").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(bytes_fn, &[arena.into()], "arena_used")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
 
@@ -1196,7 +1227,12 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .build_call(
                             insert_fn,
-                            &[map_ptr.into(), key_ptr.into(), key_len.into(), value_i64.into()],
+                            &[
+                                map_ptr.into(),
+                                key_ptr.into(),
+                                key_len.into(),
+                                value_i64.into(),
+                            ],
                             "",
                         )
                         .unwrap();
@@ -1221,7 +1257,11 @@ impl<'ctx> CodeGen<'ctx> {
                     let get_fn = self.get_or_declare_ny_map_get();
                     let result = self
                         .builder
-                        .build_call(get_fn, &[map_ptr.into(), key_ptr.into(), key_len.into()], "map_val")
+                        .build_call(
+                            get_fn,
+                            &[map_ptr.into(), key_ptr.into(), key_len.into()],
+                            "map_val",
+                        )
                         .unwrap()
                         .try_as_basic_value()
                         .basic()
@@ -1344,11 +1384,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let lanes = vec.get_type().get_size();
                     let mut sum = self
                         .builder
-                        .build_extract_element(
-                            vec,
-                            self.context.i32_type().const_zero(),
-                            "lane_0",
-                        )
+                        .build_extract_element(vec, self.context.i32_type().const_zero(), "lane_0")
                         .unwrap()
                         .into_float_value();
                     for i in 1..lanes {
@@ -1369,33 +1405,54 @@ impl<'ctx> CodeGen<'ctx> {
                 // SIMD load: simd_load_f32x4(ptr, offset) → load 4 consecutive f32
                 if callee == "simd_load_f32x4" || callee == "simd_load_f32x8" {
                     let lanes: u32 = if callee == "simd_load_f32x4" { 4 } else { 8 };
-                    let ptr = self.compile_expr(&args[0], function)?.unwrap().into_pointer_value();
-                    let offset = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
-                    let offset_i64 = self.builder
+                    let ptr = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_pointer_value();
+                    let offset = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_int_value();
+                    let offset_i64 = self
+                        .builder
                         .build_int_s_extend_or_bit_cast(offset, self.context.i64_type(), "off64")
                         .unwrap();
                     // GEP to ptr + offset (byte-level, offset is in elements)
                     let f32_ty = self.context.f32_type();
                     let elem_ptr = unsafe {
-                        self.builder.build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "simd_ptr").unwrap()
+                        self.builder
+                            .build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "simd_ptr")
+                            .unwrap()
                     };
                     // Bitcast to vector pointer and load
                     let vec_ty = f32_ty.vec_type(lanes);
-                    let vec_val = self.builder.build_load(vec_ty, elem_ptr, "simd_load").unwrap();
+                    let vec_val = self
+                        .builder
+                        .build_load(vec_ty, elem_ptr, "simd_load")
+                        .unwrap();
                     return Ok(Some(vec_val));
                 }
 
                 // SIMD store: simd_store_f32x4(ptr, offset, vec)
                 if callee == "simd_store_f32x4" || callee == "simd_store_f32x8" {
-                    let ptr = self.compile_expr(&args[0], function)?.unwrap().into_pointer_value();
-                    let offset = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let ptr = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_pointer_value();
+                    let offset = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_int_value();
                     let vec_val = self.compile_expr(&args[2], function)?.unwrap();
-                    let offset_i64 = self.builder
+                    let offset_i64 = self
+                        .builder
                         .build_int_s_extend_or_bit_cast(offset, self.context.i64_type(), "off64")
                         .unwrap();
                     let f32_ty = self.context.f32_type();
                     let elem_ptr = unsafe {
-                        self.builder.build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "store_ptr").unwrap()
+                        self.builder
+                            .build_in_bounds_gep(f32_ty, ptr, &[offset_i64], "store_ptr")
+                            .unwrap()
                     };
                     self.builder.build_store(elem_ptr, vec_val).unwrap();
                     return Ok(None);
@@ -1408,9 +1465,14 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let buf_size = self.context.i64_type().const_int(64, false);
                     let malloc_fn = self.get_or_declare_malloc();
-                    let buf_ptr = self.builder
+                    let buf_ptr = self
+                        .builder
                         .build_call(malloc_fn, &[buf_size.into()], "ts_buf")
-                        .unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
                     let snprintf_fn = self.get_or_declare_snprintf();
 
                     let fmt_str = match &arg_ty {
@@ -1422,73 +1484,140 @@ impl<'ctx> CodeGen<'ctx> {
                         NyType::Str => "%s", // identity for strings
                         _ => "%d",
                     };
-                    let fmt = self.builder.build_global_string_ptr(fmt_str, "ts_fmt").unwrap();
+                    let fmt = self
+                        .builder
+                        .build_global_string_ptr(fmt_str, "ts_fmt")
+                        .unwrap();
 
                     let print_val: BasicValueEnum = if arg_ty == NyType::Bool {
                         let b = val.into_int_value();
-                        let ts = self.builder.build_global_string_ptr("true", "ts_t").unwrap();
-                        let fs = self.builder.build_global_string_ptr("false", "ts_f").unwrap();
-                        self.builder.build_select(b, ts.as_pointer_value(), fs.as_pointer_value(), "ts_sel").unwrap()
+                        let ts = self
+                            .builder
+                            .build_global_string_ptr("true", "ts_t")
+                            .unwrap();
+                        let fs = self
+                            .builder
+                            .build_global_string_ptr("false", "ts_f")
+                            .unwrap();
+                        self.builder
+                            .build_select(b, ts.as_pointer_value(), fs.as_pointer_value(), "ts_sel")
+                            .unwrap()
                     } else if arg_ty == NyType::Str {
                         let sv = val.into_struct_value();
                         self.builder.build_extract_value(sv, 0, "ts_ptr").unwrap()
                     } else if arg_ty.is_integer() && arg_ty != NyType::I32 {
-                        let ext = self.builder.build_int_s_extend(val.into_int_value(), self.context.i64_type(), "ts_ext").unwrap();
+                        let ext = self
+                            .builder
+                            .build_int_s_extend(
+                                val.into_int_value(),
+                                self.context.i64_type(),
+                                "ts_ext",
+                            )
+                            .unwrap();
                         ext.into()
                     } else {
                         val
                     };
 
-                    self.builder.build_call(
-                        snprintf_fn,
-                        &[buf_ptr.into(), buf_size.into(), fmt.as_pointer_value().into(), print_val.into()],
-                        "",
-                    ).unwrap();
+                    self.builder
+                        .build_call(
+                            snprintf_fn,
+                            &[
+                                buf_ptr.into(),
+                                buf_size.into(),
+                                fmt.as_pointer_value().into(),
+                                print_val.into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
 
                     let strlen_fn = self.get_or_declare_strlen();
-                    let len = self.builder
+                    let len = self
+                        .builder
                         .build_call(strlen_fn, &[buf_ptr.into()], "ts_len")
-                        .unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_int_value();
 
                     let str_ty = str_type(self.context);
                     let str_val = str_ty.const_zero();
-                    let str_val = self.builder.build_insert_value(str_val, buf_ptr, 0, "ts_p").unwrap();
-                    let str_val = self.builder.build_insert_value(str_val, len, 1, "ts_l").unwrap();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, buf_ptr, 0, "ts_p")
+                        .unwrap();
+                    let str_val = self
+                        .builder
+                        .build_insert_value(str_val, len, 1, "ts_l")
+                        .unwrap();
                     return Ok(Some(str_val.into_struct_value().into()));
                 }
 
                 // Channel builtins
                 if callee == "channel_new" {
                     let cap = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_channel_new",
-                        self.context.ptr_type(AddressSpace::default()).fn_type(&[self.context.i32_type().into()], false));
-                    let ptr = self.builder.build_call(fn_decl, &[cap.into()], "ch").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_channel_new",
+                        self.context
+                            .ptr_type(AddressSpace::default())
+                            .fn_type(&[self.context.i32_type().into()], false),
+                    );
+                    let ptr = self
+                        .builder
+                        .build_call(fn_decl, &[cap.into()], "ch")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
                 if callee == "channel_send" {
                     let ch = self.compile_expr(&args[0], function)?.unwrap();
                     let val = self.compile_expr(&args[1], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_channel_send",
-                        self.context.void_type().fn_type(&[
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                            self.context.i32_type().into(),
-                        ], false));
-                    self.builder.build_call(fn_decl, &[ch.into(), val.into()], "").unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_channel_send",
+                        self.context.void_type().fn_type(
+                            &[
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                                self.context.i32_type().into(),
+                            ],
+                            false,
+                        ),
+                    );
+                    self.builder
+                        .build_call(fn_decl, &[ch.into(), val.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "channel_recv" {
                     let ch = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_channel_recv",
-                        self.context.i32_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
-                    let val = self.builder.build_call(fn_decl, &[ch.into()], "recv").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_channel_recv",
+                        self.context.i32_type().fn_type(
+                            &[self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
+                    let val = self
+                        .builder
+                        .build_call(fn_decl, &[ch.into()], "recv")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(val));
                 }
                 if callee == "channel_close" {
                     let ch = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_channel_close",
-                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_channel_close",
+                        self.context.void_type().fn_type(
+                            &[self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
                     self.builder.build_call(fn_decl, &[ch.into()], "").unwrap();
                     return Ok(None);
                 }
@@ -1496,35 +1625,65 @@ impl<'ctx> CodeGen<'ctx> {
                 // Pool builtins
                 if callee == "pool_new" {
                     let n = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_pool_new",
-                        self.context.ptr_type(AddressSpace::default()).fn_type(&[self.context.i32_type().into()], false));
-                    let ptr = self.builder.build_call(fn_decl, &[n.into()], "pool").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_pool_new",
+                        self.context
+                            .ptr_type(AddressSpace::default())
+                            .fn_type(&[self.context.i32_type().into()], false),
+                    );
+                    let ptr = self
+                        .builder
+                        .build_call(fn_decl, &[n.into()], "pool")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
                 if callee == "pool_submit" {
                     let pool = self.compile_expr(&args[0], function)?.unwrap();
                     let fn_ptr = self.compile_expr(&args[1], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_pool_submit",
-                        self.context.void_type().fn_type(&[
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                        ], false));
-                    self.builder.build_call(fn_decl, &[pool.into(), fn_ptr.into()], "").unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_pool_submit",
+                        self.context.void_type().fn_type(
+                            &[
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                            ],
+                            false,
+                        ),
+                    );
+                    self.builder
+                        .build_call(fn_decl, &[pool.into(), fn_ptr.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "pool_wait" {
                     let pool = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_pool_wait",
-                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
-                    self.builder.build_call(fn_decl, &[pool.into()], "").unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_pool_wait",
+                        self.context.void_type().fn_type(
+                            &[self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
+                    self.builder
+                        .build_call(fn_decl, &[pool.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "pool_free" {
                     let pool = self.compile_expr(&args[0], function)?.unwrap();
-                    let fn_decl = self.get_or_declare_c_fn("ny_pool_free",
-                        self.context.void_type().fn_type(&[self.context.ptr_type(AddressSpace::default()).into()], false));
-                    self.builder.build_call(fn_decl, &[pool.into()], "").unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_pool_free",
+                        self.context.void_type().fn_type(
+                            &[self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
+                    self.builder
+                        .build_call(fn_decl, &[pool.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
 
@@ -1537,9 +1696,32 @@ impl<'ctx> CodeGen<'ctx> {
                     let pool = self.compile_expr(&args[4], function)?.unwrap();
                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
                     let i32_ty = self.context.i32_type();
-                    let fn_decl = self.get_or_declare_c_fn("ny_par_map",
-                        self.context.void_type().fn_type(&[ptr_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
-                    self.builder.build_call(fn_decl, &[data.into(), n.into(), result.into(), map_fn.into(), pool.into()], "").unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_par_map",
+                        self.context.void_type().fn_type(
+                            &[
+                                ptr_ty.into(),
+                                i32_ty.into(),
+                                ptr_ty.into(),
+                                ptr_ty.into(),
+                                ptr_ty.into(),
+                            ],
+                            false,
+                        ),
+                    );
+                    self.builder
+                        .build_call(
+                            fn_decl,
+                            &[
+                                data.into(),
+                                n.into(),
+                                result.into(),
+                                map_fn.into(),
+                                pool.into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "par_reduce" {
@@ -1550,10 +1732,36 @@ impl<'ctx> CodeGen<'ctx> {
                     let pool = self.compile_expr(&args[4], function)?.unwrap();
                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
                     let i32_ty = self.context.i32_type();
-                    let fn_decl = self.get_or_declare_c_fn("ny_par_reduce",
-                        i32_ty.fn_type(&[ptr_ty.into(), i32_ty.into(), i32_ty.into(), ptr_ty.into(), ptr_ty.into()], false));
-                    let val = self.builder.build_call(fn_decl, &[data.into(), n.into(), init.into(), reduce_fn.into(), pool.into()], "par_red").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let fn_decl = self.get_or_declare_c_fn(
+                        "ny_par_reduce",
+                        i32_ty.fn_type(
+                            &[
+                                ptr_ty.into(),
+                                i32_ty.into(),
+                                i32_ty.into(),
+                                ptr_ty.into(),
+                                ptr_ty.into(),
+                            ],
+                            false,
+                        ),
+                    );
+                    let val = self
+                        .builder
+                        .build_call(
+                            fn_decl,
+                            &[
+                                data.into(),
+                                n.into(),
+                                init.into(),
+                                reduce_fn.into(),
+                                pool.into(),
+                            ],
+                            "par_red",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(val));
                 }
 
@@ -1562,7 +1770,8 @@ impl<'ctx> CodeGen<'ctx> {
                     // thread_spawn(fn_ptr) or thread_spawn(fn_ptr, arg)
                     let fn_ptr = self.compile_expr(&args[0], function)?.unwrap();
                     let pthread_create = self.get_or_declare_pthread_create();
-                    let handle_alloca = self.builder
+                    let handle_alloca = self
+                        .builder
                         .build_alloca(self.context.i64_type(), "thread_handle")
                         .unwrap();
                     let null = self.context.ptr_type(AddressSpace::default()).const_null();
@@ -1571,12 +1780,20 @@ impl<'ctx> CodeGen<'ctx> {
                     } else {
                         null.into()
                     };
-                    self.builder.build_call(
-                        pthread_create,
-                        &[handle_alloca.into(), null.into(), fn_ptr.into(), thread_arg.into()],
-                        "spawn",
-                    ).unwrap();
-                    let handle = self.builder
+                    self.builder
+                        .build_call(
+                            pthread_create,
+                            &[
+                                handle_alloca.into(),
+                                null.into(),
+                                fn_ptr.into(),
+                                thread_arg.into(),
+                            ],
+                            "spawn",
+                        )
+                        .unwrap();
+                    let handle = self
+                        .builder
                         .build_load(self.context.i64_type(), handle_alloca, "tid")
                         .unwrap();
                     return Ok(Some(handle));
@@ -1586,11 +1803,9 @@ impl<'ctx> CodeGen<'ctx> {
                     let handle = self.compile_expr(&args[0], function)?.unwrap();
                     let pthread_join = self.get_or_declare_pthread_join();
                     let null = self.context.ptr_type(AddressSpace::default()).const_null();
-                    self.builder.build_call(
-                        pthread_join,
-                        &[handle.into(), null.into()],
-                        "join",
-                    ).unwrap();
+                    self.builder
+                        .build_call(pthread_join, &[handle.into(), null.into()], "join")
+                        .unwrap();
                     return Ok(None);
                 }
 
@@ -1694,10 +1909,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                     // Strip trailing newline: if buf[len-1] == '\n', len--
                     let one = self.context.i64_type().const_int(1, false);
-                    let len_minus_1 = self
-                        .builder
-                        .build_int_sub(len, one, "len_m1")
-                        .unwrap();
+                    let len_minus_1 = self.builder.build_int_sub(len, one, "len_m1").unwrap();
                     let last_char_ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
@@ -1828,11 +2040,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .into_int_value();
                     let us_val = self
                         .builder
-                        .build_int_mul(
-                            ms_val,
-                            self.context.i32_type().const_int(1000, false),
-                            "us",
-                        )
+                        .build_int_mul(ms_val, self.context.i32_type().const_int(1000, false), "us")
                         .unwrap();
                     let usleep_fn = self.get_or_declare_usleep();
                     self.builder
@@ -1856,8 +2064,7 @@ impl<'ctx> CodeGen<'ctx> {
                         let val = self.compile_expr(arg, function)?.unwrap();
                         arg_values.push(val.into());
                     }
-                    let call =
-                        self.builder.build_call(func, &arg_values, "call").unwrap();
+                    let call = self.builder.build_call(func, &arg_values, "call").unwrap();
 
                     if ret_ty == NyType::Unit {
                         Ok(None)
@@ -1904,7 +2111,11 @@ impl<'ctx> CodeGen<'ctx> {
                     }
 
                     // Calling a function pointer variable
-                    if let NyType::Function { params: param_tys, ret } = &var_ty {
+                    if let NyType::Function {
+                        params: param_tys,
+                        ret,
+                    } = &var_ty
+                    {
                         let llvm_param_types: Vec<BasicTypeEnum> = param_tys
                             .iter()
                             .map(|t| ny_to_llvm(self.context, t))
@@ -1912,9 +2123,7 @@ impl<'ctx> CodeGen<'ctx> {
                         let param_meta: Vec<_> =
                             llvm_param_types.iter().map(|t| (*t).into()).collect();
                         let fn_type = match ret.as_ref() {
-                            NyType::Unit => {
-                                self.context.void_type().fn_type(&param_meta, false)
-                            }
+                            NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
                             ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
                         };
 
@@ -2157,8 +2366,10 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_in_bounds_gep(elem_llvm, ptr, &[idx_i64], "slice_idx_ptr")
                                 .unwrap()
                         };
-                        let val =
-                            self.builder.build_load(elem_llvm, gep, "slice_idx_val").unwrap();
+                        let val = self
+                            .builder
+                            .build_load(elem_llvm, gep, "slice_idx_val")
+                            .unwrap();
                         Ok(Some(val))
                     }
                     _ => Err(vec![CompileError::type_error(
@@ -2301,10 +2512,7 @@ impl<'ctx> CodeGen<'ctx> {
                         "len" => {
                             let obj_val = self.compile_expr(object, function)?.unwrap();
                             let sv = obj_val.into_struct_value();
-                            let len = self
-                                .builder
-                                .build_extract_value(sv, 1, "vec_len")
-                                .unwrap();
+                            let len = self.builder.build_extract_value(sv, 1, "vec_len").unwrap();
                             return Ok(Some(len));
                         }
                         "get" => {
@@ -2344,10 +2552,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     )
                                     .unwrap()
                             };
-                            let val = self
-                                .builder
-                                .build_load(elem_llvm, gep, "vec_elem")
-                                .unwrap();
+                            let val = self.builder.build_load(elem_llvm, gep, "vec_elem").unwrap();
                             return Ok(Some(val));
                         }
                         "push" => {
@@ -2395,10 +2600,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_int_compare(IntPredicate::UGE, len, cap, "needs_grow")
                                 .unwrap();
 
-                            let grow_bb =
-                                self.context.append_basic_block(*function, "vec_grow");
-                            let push_bb =
-                                self.context.append_basic_block(*function, "vec_push");
+                            let grow_bb = self.context.append_basic_block(*function, "vec_grow");
+                            let push_bb = self.context.append_basic_block(*function, "vec_push");
 
                             self.builder
                                 .build_conditional_branch(needs_grow, grow_bb, push_bb)
@@ -2434,9 +2637,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .into_pointer_value();
                             self.builder.build_store(data_gep, new_data).unwrap();
                             self.builder.build_store(cap_gep, new_cap).unwrap();
-                            self.builder
-                                .build_unconditional_branch(push_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(push_bb).unwrap();
 
                             // Push: store value at data[len], increment len
                             self.builder.position_at_end(push_bb);
@@ -2669,10 +2870,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 if self.enum_has_payload(&enum_name) {
                     let enum_ty = self.enum_struct_type(&enum_name);
-                    let alloca = self
-                        .builder
-                        .build_alloca(enum_ty, "try_subject")
-                        .unwrap();
+                    let alloca = self.builder.build_alloca(enum_ty, "try_subject").unwrap();
                     self.builder.build_store(alloca, subject_raw).unwrap();
 
                     // Extract tag
@@ -2686,12 +2884,8 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap()
                         .into_int_value();
 
-                    let ok_bb = self
-                        .context
-                        .append_basic_block(*function, "try_ok");
-                    let err_bb = self
-                        .context
-                        .append_basic_block(*function, "try_err");
+                    let ok_bb = self.context.append_basic_block(*function, "try_ok");
+                    let err_bb = self.context.append_basic_block(*function, "try_err");
 
                     // tag == 0 means first variant (Ok)
                     let zero = self.context.i32_type().const_zero();
@@ -2852,20 +3046,15 @@ impl<'ctx> CodeGen<'ctx> {
                     {
                         let alloca_name = format!("__cl{}_{}", id, cap_name);
                         let llvm_ty = ny_to_llvm(self.context, cap_ty);
-                        let alloca = self
-                            .builder
-                            .build_alloca(llvm_ty, &alloca_name)
-                            .unwrap();
+                        let alloca = self.builder.build_alloca(llvm_ty, &alloca_name).unwrap();
                         self.builder.build_store(alloca, *cap_val).unwrap();
                         self.variables
                             .insert(alloca_name.clone(), (alloca, cap_ty.clone()));
                         capture_alloca_names.push((alloca_name, cap_ty.clone()));
                     }
 
-                    self.closure_captures.insert(
-                        lambda_name.clone(),
-                        (lambda_name, capture_alloca_names),
-                    );
+                    self.closure_captures
+                        .insert(lambda_name.clone(), (lambda_name, capture_alloca_names));
                 }
 
                 Ok(Some(fn_ptr.into()))
@@ -2873,36 +3062,22 @@ impl<'ctx> CodeGen<'ctx> {
 
             // ---- Range index (arr[start..end] → slice {ptr, len}) ----
             Expr::RangeIndex {
-                object,
-                start,
-                end,
-                ..
+                object, start, end, ..
             } => {
                 let obj_ty = self.infer_expr_type(object);
                 let start_val = self
                     .compile_expr(start, function)?
                     .unwrap()
                     .into_int_value();
-                let end_val = self
-                    .compile_expr(end, function)?
-                    .unwrap()
-                    .into_int_value();
+                let end_val = self.compile_expr(end, function)?.unwrap().into_int_value();
 
                 let start_i64 = self
                     .builder
-                    .build_int_z_extend_or_bit_cast(
-                        start_val,
-                        self.context.i64_type(),
-                        "start_ext",
-                    )
+                    .build_int_z_extend_or_bit_cast(start_val, self.context.i64_type(), "start_ext")
                     .unwrap();
                 let end_i64 = self
                     .builder
-                    .build_int_z_extend_or_bit_cast(
-                        end_val,
-                        self.context.i64_type(),
-                        "end_ext",
-                    )
+                    .build_int_z_extend_or_bit_cast(end_val, self.context.i64_type(), "end_ext")
                     .unwrap();
 
                 match &obj_ty {
@@ -2970,10 +3145,7 @@ impl<'ctx> CodeGen<'ctx> {
                     } else {
                         // Data-carrying enum — build { tag, payload... } struct
                         let enum_ty = self.enum_struct_type(enum_name);
-                        let alloca = self
-                            .builder
-                            .build_alloca(enum_ty, "enum_val")
-                            .unwrap();
+                        let alloca = self.builder.build_alloca(enum_ty, "enum_val").unwrap();
 
                         // Store tag
                         let tag_ptr = self
@@ -3032,10 +3204,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     let enum_ty = self.enum_struct_type(&enum_name);
                     // Store subject to alloca so we can GEP into it
-                    let alloca = self
-                        .builder
-                        .build_alloca(enum_ty, "match_subject")
-                        .unwrap();
+                    let alloca = self.builder.build_alloca(enum_ty, "match_subject").unwrap();
                     self.builder.build_store(alloca, subject_raw).unwrap();
                     // Extract tag
                     let tag_ptr = self
@@ -3148,19 +3317,12 @@ impl<'ctx> CodeGen<'ctx> {
                                             &format!("bind_{}", binding_name),
                                         )
                                         .unwrap();
-                                    let payload_ny_ty = payload_types
-                                        .get(j)
-                                        .cloned()
-                                        .unwrap_or(NyType::I32);
-                                    let payload_llvm_ty =
-                                        ny_to_llvm(self.context, &payload_ny_ty);
+                                    let payload_ny_ty =
+                                        payload_types.get(j).cloned().unwrap_or(NyType::I32);
+                                    let payload_llvm_ty = ny_to_llvm(self.context, &payload_ny_ty);
                                     let val = self
                                         .builder
-                                        .build_load(
-                                            payload_llvm_ty,
-                                            field_ptr,
-                                            binding_name,
-                                        )
+                                        .build_load(payload_llvm_ty, field_ptr, binding_name)
                                         .unwrap();
                                     // Declare binding as a variable
                                     let bind_alloca = self
@@ -3168,10 +3330,8 @@ impl<'ctx> CodeGen<'ctx> {
                                         .build_alloca(payload_llvm_ty, binding_name)
                                         .unwrap();
                                     self.builder.build_store(bind_alloca, val).unwrap();
-                                    self.variables.insert(
-                                        binding_name.clone(),
-                                        (bind_alloca, payload_ny_ty),
-                                    );
+                                    self.variables
+                                        .insert(binding_name.clone(), (bind_alloca, payload_ny_ty));
                                 }
                             }
                         }
@@ -3720,9 +3880,10 @@ impl<'ctx> CodeGen<'ctx> {
             } => {
                 let coll_ty = self.infer_expr_type(collection);
                 let (elem_ty, coll_len) = match &coll_ty {
-                    NyType::Array { elem, size } => {
-                        (*elem.clone(), self.context.i32_type().const_int(*size as u64, false))
-                    }
+                    NyType::Array { elem, size } => (
+                        *elem.clone(),
+                        self.context.i32_type().const_int(*size as u64, false),
+                    ),
                     NyType::Slice(_) | NyType::Vec(_) => {
                         // Get len dynamically
                         let coll_val = self.compile_expr(collection, function)?.unwrap();
@@ -3824,10 +3985,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 )
                                 .unwrap()
                         };
-                        let elem_val = self
-                            .builder
-                            .build_load(elem_llvm, gep, "elem")
-                            .unwrap();
+                        let elem_val = self.builder.build_load(elem_llvm, gep, "elem").unwrap();
                         self.builder.build_store(var_alloca, elem_val).unwrap();
                     }
                     NyType::Slice(_) | NyType::Vec(_) => {
@@ -3857,10 +4015,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_in_bounds_gep(elem_llvm, data_ptr, &[idx_i64], "forin_gep")
                                 .unwrap()
                         };
-                        let elem_val = self
-                            .builder
-                            .build_load(elem_llvm, gep, "elem")
-                            .unwrap();
+                        let elem_val = self.builder.build_load(elem_llvm, gep, "elem").unwrap();
                         self.builder.build_store(var_alloca, elem_val).unwrap();
                     }
                     _ => {}
@@ -3926,8 +4081,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let loop_body_bb = self.context.append_basic_block(*function, "whilelet_body");
                 let exit_bb = self.context.append_basic_block(*function, "whilelet_exit");
 
-                self.builder.build_unconditional_branch(loop_body_bb).unwrap();
-                self.loop_stack.push(LoopFrame { break_bb: exit_bb, continue_bb: loop_body_bb });
+                self.builder
+                    .build_unconditional_branch(loop_body_bb)
+                    .unwrap();
+                self.loop_stack.push(LoopFrame {
+                    break_bb: exit_bb,
+                    continue_bb: loop_body_bb,
+                });
 
                 self.builder.position_at_end(loop_body_bb);
 
@@ -3940,15 +4100,29 @@ impl<'ctx> CodeGen<'ctx> {
                 let match_ast = Expr::Match {
                     subject: Box::new(match_expr.clone()),
                     arms: vec![
-                        MatchArm { pattern: pattern.clone(), body: while_body.clone() },
-                        MatchArm { pattern: Pattern::Wildcard(Span::empty(0)), body: break_body },
+                        MatchArm {
+                            pattern: pattern.clone(),
+                            body: while_body.clone(),
+                        },
+                        MatchArm {
+                            pattern: Pattern::Wildcard(Span::empty(0)),
+                            body: break_body,
+                        },
                     ],
                     span: *while_span,
                 };
                 self.compile_expr(&match_ast, function)?;
 
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder.build_unconditional_branch(loop_body_bb).unwrap();
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    self.builder
+                        .build_unconditional_branch(loop_body_bb)
+                        .unwrap();
                 }
 
                 self.loop_stack.pop();
@@ -4235,7 +4409,11 @@ impl<'ctx> CodeGen<'ctx> {
             .unwrap();
         let exit_fn = self.get_or_declare_exit();
         self.builder
-            .build_call(exit_fn, &[self.context.i32_type().const_int(1, false).into()], "")
+            .build_call(
+                exit_fn,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "",
+            )
             .unwrap();
         self.builder.build_unreachable().unwrap();
 
@@ -4867,7 +5045,10 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .build_call(
                             printf_fn,
-                            &[fmt_s.as_pointer_value().into(), open.as_pointer_value().into()],
+                            &[
+                                fmt_s.as_pointer_value().into(),
+                                open.as_pointer_value().into(),
+                            ],
                             "",
                         )
                         .unwrap();
@@ -4881,15 +5062,9 @@ impl<'ctx> CodeGen<'ctx> {
                         .build_store(i_alloca, self.context.i64_type().const_zero())
                         .unwrap();
 
-                    let cond_bb = self
-                        .context
-                        .append_basic_block(*function, "vec_print_cond");
-                    let body_bb = self
-                        .context
-                        .append_basic_block(*function, "vec_print_body");
-                    let done_bb = self
-                        .context
-                        .append_basic_block(*function, "vec_print_done");
+                    let cond_bb = self.context.append_basic_block(*function, "vec_print_cond");
+                    let body_bb = self.context.append_basic_block(*function, "vec_print_body");
+                    let done_bb = self.context.append_basic_block(*function, "vec_print_done");
 
                     self.builder.build_unconditional_branch(cond_bb).unwrap();
 
@@ -4932,7 +5107,11 @@ impl<'ctx> CodeGen<'ctx> {
                         )
                         .unwrap();
                     self.builder
-                        .build_call(printf_fn, &[fmt_s.as_pointer_value().into(), sep_str.into()], "")
+                        .build_call(
+                            printf_fn,
+                            &[fmt_s.as_pointer_value().into(), sep_str.into()],
+                            "",
+                        )
                         .unwrap();
 
                     // Print element
@@ -4974,7 +5153,10 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .build_call(
                             printf_fn,
-                            &[fmt_s.as_pointer_value().into(), close.as_pointer_value().into()],
+                            &[
+                                fmt_s.as_pointer_value().into(),
+                                close.as_pointer_value().into(),
+                            ],
                             "",
                         )
                         .unwrap();
@@ -5040,52 +5222,92 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn get_or_declare_pthread_create(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("pthread_create") { return f; }
+        if let Some(f) = self.module.get_function("pthread_create") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
-        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()], false);
+        let fn_ty = i32_ty.fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), ptr_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("pthread_create", fn_ty, None)
     }
 
     fn get_or_declare_pthread_join(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("pthread_join") { return f; }
+        if let Some(f) = self.module.get_function("pthread_join") {
+            return f;
+        }
         let i64_ty = self.context.i64_type();
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let fn_ty = self.context.i32_type().fn_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let fn_ty = self
+            .context
+            .i32_type()
+            .fn_type(&[i64_ty.into(), ptr_ty.into()], false);
         self.module.add_function("pthread_join", fn_ty, None)
     }
 
     fn get_or_declare_ny_arena_new(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_arena_new") { return f; }
+        if let Some(f) = self.module.get_function("ny_arena_new") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_arena_new", ptr_ty.fn_type(&[i64_ty.into()], false), None)
+        self.module.add_function(
+            "ny_arena_new",
+            ptr_ty.fn_type(&[i64_ty.into()], false),
+            None,
+        )
     }
 
     fn get_or_declare_ny_arena_alloc(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_arena_alloc") { return f; }
+        if let Some(f) = self.module.get_function("ny_arena_alloc") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_arena_alloc", ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None)
+        self.module.add_function(
+            "ny_arena_alloc",
+            ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false),
+            None,
+        )
     }
 
     fn get_or_declare_ny_arena_free(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_arena_free") { return f; }
+        if let Some(f) = self.module.get_function("ny_arena_free") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_arena_free", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+        self.module.add_function(
+            "ny_arena_free",
+            self.context.void_type().fn_type(&[ptr_ty.into()], false),
+            None,
+        )
     }
 
     fn get_or_declare_ny_arena_reset(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_arena_reset") { return f; }
+        if let Some(f) = self.module.get_function("ny_arena_reset") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_arena_reset", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+        self.module.add_function(
+            "ny_arena_reset",
+            self.context.void_type().fn_type(&[ptr_ty.into()], false),
+            None,
+        )
     }
 
     fn get_or_declare_ny_arena_bytes_used(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_arena_bytes_used") { return f; }
+        if let Some(f) = self.module.get_function("ny_arena_bytes_used") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_arena_bytes_used", i64_ty.fn_type(&[ptr_ty.into()], false), None)
+        self.module.add_function(
+            "ny_arena_bytes_used",
+            i64_ty.fn_type(&[ptr_ty.into()], false),
+            None,
+        )
     }
 
     fn get_or_declare_ny_map_new(&self) -> FunctionValue<'ctx> {
@@ -5251,8 +5473,10 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         // size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
-        let fwrite_ty =
-            i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        let fwrite_ty = i64_ty.fn_type(
+            &[ptr_ty.into(), i64_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("fwrite", fwrite_ty, None)
     }
 
@@ -5320,8 +5544,7 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         let i64_ty = self.context.i64_type();
-        let snprintf_ty =
-            i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], true);
+        let snprintf_ty = i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], true);
         self.module.add_function("snprintf", snprintf_ty, None)
     }
 
@@ -5503,11 +5726,7 @@ impl<'ctx> CodeGen<'ctx> {
                 BinOp::Add => {
                     let offset_i64 = self
                         .builder
-                        .build_int_s_extend_or_bit_cast(
-                            offset,
-                            self.context.i64_type(),
-                            "ptr_off",
-                        )
+                        .build_int_s_extend_or_bit_cast(offset, self.context.i64_type(), "ptr_off")
                         .unwrap();
                     let result = unsafe {
                         self.builder
@@ -5517,10 +5736,7 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(result.into());
                 }
                 BinOp::Sub => {
-                    let neg_offset = self
-                        .builder
-                        .build_int_neg(offset, "neg_off")
-                        .unwrap();
+                    let neg_offset = self.builder.build_int_neg(offset, "neg_off").unwrap();
                     let neg_i64 = self
                         .builder
                         .build_int_s_extend_or_bit_cast(
@@ -5553,9 +5769,15 @@ impl<'ctx> CodeGen<'ctx> {
             let l_bits = l.get_type().get_bit_width();
             let r_bits = r.get_type().get_bit_width();
             if l_bits < r_bits {
-                l = self.builder.build_int_s_extend(l, r.get_type(), "widen_l").unwrap();
+                l = self
+                    .builder
+                    .build_int_s_extend(l, r.get_type(), "widen_l")
+                    .unwrap();
             } else if r_bits < l_bits {
-                r = self.builder.build_int_s_extend(r, l.get_type(), "widen_r").unwrap();
+                r = self
+                    .builder
+                    .build_int_s_extend(r, l.get_type(), "widen_r")
+                    .unwrap();
             }
             let result: BasicValueEnum = match op {
                 BinOp::Add => self.builder.build_int_add(l, r, "add").unwrap().into(),
@@ -5621,9 +5843,15 @@ impl<'ctx> CodeGen<'ctx> {
             // Auto-widen: f32 → f64 if mixed
             if l.get_type() != r.get_type() {
                 if l.get_type() == self.context.f32_type() {
-                    l = self.builder.build_float_ext(l, self.context.f64_type(), "widen_fl").unwrap();
+                    l = self
+                        .builder
+                        .build_float_ext(l, self.context.f64_type(), "widen_fl")
+                        .unwrap();
                 } else {
-                    r = self.builder.build_float_ext(r, self.context.f64_type(), "widen_fr").unwrap();
+                    r = self
+                        .builder
+                        .build_float_ext(r, self.context.f64_type(), "widen_fr")
+                        .unwrap();
                 }
             }
             let result: BasicValueEnum = match op {
@@ -5680,14 +5908,16 @@ impl<'ctx> CodeGen<'ctx> {
             let (fl, fr) = if lhs.is_float_value() {
                 let f = lhs.into_float_value();
                 let i = rhs.into_int_value();
-                let promoted = self.builder
+                let promoted = self
+                    .builder
                     .build_signed_int_to_float(i, f.get_type(), "i2f")
                     .unwrap();
                 (f, promoted)
             } else {
                 let i = lhs.into_int_value();
                 let f = rhs.into_float_value();
-                let promoted = self.builder
+                let promoted = self
+                    .builder
                     .build_signed_int_to_float(i, f.get_type(), "i2f")
                     .unwrap();
                 (promoted, f)

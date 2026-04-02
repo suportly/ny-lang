@@ -55,9 +55,8 @@ fn resolve_uses(
                     cwd_path.to_path_buf()
                 } else {
                     // Try stdlib/ prefix
-                    let stdlib_path = std::path::Path::new("stdlib").join(
-                        path.strip_prefix("stdlib/").unwrap_or(path),
-                    );
+                    let stdlib_path = std::path::Path::new("stdlib")
+                        .join(path.strip_prefix("stdlib/").unwrap_or(path));
                     if stdlib_path.exists() {
                         stdlib_path
                     } else {

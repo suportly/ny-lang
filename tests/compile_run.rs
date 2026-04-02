@@ -237,9 +237,12 @@ fn test_vec() {
 fn test_fstring() {
     let tmp = TempDir::new().unwrap();
     let output = tmp.path().join("output");
-    Command::cargo_bin("ny").unwrap()
+    Command::cargo_bin("ny")
+        .unwrap()
         .args(["build", "tests/fixtures/valid/fstring.ny", "-o"])
-        .arg(&output).assert().success();
+        .arg(&output)
+        .assert()
+        .success();
     let out = process::Command::new(&output).output().expect("failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Hello Ny"), "stdout: {}", stdout);
@@ -300,9 +303,12 @@ fn test_threads() {
 fn test_to_str() {
     let tmp = TempDir::new().unwrap();
     let output = tmp.path().join("output");
-    Command::cargo_bin("ny").unwrap()
+    Command::cargo_bin("ny")
+        .unwrap()
         .args(["build", "tests/fixtures/valid/to_str_test.ny", "-o"])
-        .arg(&output).assert().success();
+        .arg(&output)
+        .assert()
+        .success();
     let out = process::Command::new(&output).output().expect("failed");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("value=42"), "stdout: {}", stdout);

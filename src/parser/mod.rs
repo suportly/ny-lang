@@ -174,7 +174,8 @@ impl Parser {
             }
 
             // Generic named type — encode the full name for now
-            let args_str: Vec<String> = type_args.iter().map(|a| a.name_str().to_string()).collect();
+            let args_str: Vec<String> =
+                type_args.iter().map(|a| a.name_str().to_string()).collect();
             return Ok(TypeAnnotation::Named {
                 name: format!("{}<{}>", name, args_str.join(",")),
                 span: span.merge(end),

@@ -110,9 +110,7 @@ impl NyType {
 
     pub fn variant_index(&self, variant: &str) -> Option<usize> {
         match self {
-            NyType::Enum { variants, .. } => {
-                variants.iter().position(|(name, _)| name == variant)
-            }
+            NyType::Enum { variants, .. } => variants.iter().position(|(name, _)| name == variant),
             _ => None,
         }
     }
@@ -182,12 +180,30 @@ impl NyType {
             "bool" => Some(NyType::Bool),
             "str" => Some(NyType::Str),
             // SIMD types
-            "f32x4" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 }),
-            "f32x8" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 }),
-            "f64x2" => Some(NyType::Simd { elem: Box::new(NyType::F64), lanes: 2 }),
-            "f64x4" => Some(NyType::Simd { elem: Box::new(NyType::F64), lanes: 4 }),
-            "i32x4" => Some(NyType::Simd { elem: Box::new(NyType::I32), lanes: 4 }),
-            "i32x8" => Some(NyType::Simd { elem: Box::new(NyType::I32), lanes: 8 }),
+            "f32x4" => Some(NyType::Simd {
+                elem: Box::new(NyType::F32),
+                lanes: 4,
+            }),
+            "f32x8" => Some(NyType::Simd {
+                elem: Box::new(NyType::F32),
+                lanes: 8,
+            }),
+            "f64x2" => Some(NyType::Simd {
+                elem: Box::new(NyType::F64),
+                lanes: 2,
+            }),
+            "f64x4" => Some(NyType::Simd {
+                elem: Box::new(NyType::F64),
+                lanes: 4,
+            }),
+            "i32x4" => Some(NyType::Simd {
+                elem: Box::new(NyType::I32),
+                lanes: 4,
+            }),
+            "i32x8" => Some(NyType::Simd {
+                elem: Box::new(NyType::I32),
+                lanes: 8,
+            }),
             _ => {
                 // Check for Vec<T> pattern
                 if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {

@@ -161,13 +161,7 @@ fn main() {
                 // Only compile tests that have void/unit return (return 0 on success)
                 std::fs::write(&tmp_src, &wrapper_source).unwrap();
 
-                match ny::compile(
-                    &wrapper_source,
-                    &tmp_src,
-                    &tmp_out,
-                    0,
-                    "exe",
-                ) {
+                match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe") {
                     Ok(()) => {
                         let status = process::Command::new(&tmp_out)
                             .status()
@@ -176,7 +170,11 @@ fn main() {
                             println!("  test {} ... ok", test_name);
                             passed += 1;
                         } else {
-                            println!("  test {} ... FAILED (exit code {})", test_name, status.code().unwrap_or(-1));
+                            println!(
+                                "  test {} ... FAILED (exit code {})",
+                                test_name,
+                                status.code().unwrap_or(-1)
+                            );
                             failed += 1;
                         }
                     }

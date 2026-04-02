@@ -33,12 +33,14 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "vec_get" => Some(NyType::I32), // refined by method call handler
 
         // SIMD
-        "simd_splat_f32x4" | "simd_load_f32x4" => {
-            Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 })
-        }
-        "simd_splat_f32x8" | "simd_load_f32x8" => {
-            Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 })
-        }
+        "simd_splat_f32x4" | "simd_load_f32x4" => Some(NyType::Simd {
+            elem: Box::new(NyType::F32),
+            lanes: 4,
+        }),
+        "simd_splat_f32x8" | "simd_load_f32x8" => Some(NyType::Simd {
+            elem: Box::new(NyType::F32),
+            lanes: 8,
+        }),
         "simd_store_f32x4" | "simd_store_f32x8" => Some(NyType::Unit),
         "simd_reduce_add_f32" => Some(NyType::F32),
         "thread_spawn" => Some(NyType::I64),

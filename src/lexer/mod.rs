@@ -362,16 +362,17 @@ impl Lexer {
                     match self.advance() {
                         None => break,
                         Some('"') => break,
-                        Some('\\') => {
-                            match self.advance() {
-                                Some('n') => value.push('\n'),
-                                Some('t') => value.push('\t'),
-                                Some('\\') => value.push('\\'),
-                                Some('"') => value.push('"'),
-                                Some(c) => { value.push('\\'); value.push(c); }
-                                None => break,
+                        Some('\\') => match self.advance() {
+                            Some('n') => value.push('\n'),
+                            Some('t') => value.push('\t'),
+                            Some('\\') => value.push('\\'),
+                            Some('"') => value.push('"'),
+                            Some(c) => {
+                                value.push('\\');
+                                value.push(c);
                             }
-                        }
+                            None => break,
+                        },
                         Some(c) => value.push(c),
                     }
                 }

@@ -361,6 +361,24 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    pub(super) fn get_or_declare_toupper(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("toupper") {
+            return f;
+        }
+        let i32_ty = self.context.i32_type();
+        let toupper_ty = i32_ty.fn_type(&[i32_ty.into()], false);
+        self.module.add_function("toupper", toupper_ty, None)
+    }
+
+    pub(super) fn get_or_declare_tolower(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("tolower") {
+            return f;
+        }
+        let i32_ty = self.context.i32_type();
+        let tolower_ty = i32_ty.fn_type(&[i32_ty.into()], false);
+        self.module.add_function("tolower", tolower_ty, None)
+    }
+
     pub(super) fn get_or_declare_fprintf(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("fprintf") {
             return f;

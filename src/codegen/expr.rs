@@ -2406,6 +2406,159 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(done_bb);
                             return Ok(None);
                         }
+                        "contains" | "index_of" => {
+                            // v.contains(val) -> bool / v.index_of(val) -> i32
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "vc_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "vc_len")
+                                .unwrap()
+                                .into_int_value();
+                            let needle = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap();
+
+                            let i64_ty = self.context.i64_type();
+                            let i32_ty = self.context.i32_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "vc_loop");
+                            let check_bb =
+                                self.context.append_basic_block(*function, "vc_check");
+                            let inc_bb =
+                                self.context.append_basic_block(*function, "vc_inc");
+                            let found_bb =
+                                self.context.append_basic_block(*function, "vc_found");
+                            let not_bb =
+                                self.context.append_basic_block(*function, "vc_not");
+                            let merge_bb =
+                                self.context.append_basic_block(*function, "vc_merge");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "vc_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "vc_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, check_bb, not_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(check_bb);
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[i_val], "vc_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            let elem_val = self
+                                .builder
+                                .build_load(elem_llvm, elem_ptr, "vc_val")
+                                .unwrap();
+
+                            let is_eq = if elem_ty.is_float() {
+                                self.builder
+                                    .build_float_compare(
+                                        inkwell::FloatPredicate::OEQ,
+                                        elem_val.into_float_value(),
+                                        needle.into_float_value(),
+                                        "vc_feq",
+                                    )
+                                    .unwrap()
+                            } else {
+                                self.builder
+                                    .build_int_compare(
+                                        IntPredicate::EQ,
+                                        elem_val.into_int_value(),
+                                        needle.into_int_value(),
+                                        "vc_ieq",
+                                    )
+                                    .unwrap()
+                            };
+                            self.builder
+                                .build_conditional_branch(is_eq, found_bb, inc_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(inc_bb);
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "vc_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, inc_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            if method == "contains" {
+                                // contains: return bool
+                                self.builder.position_at_end(found_bb);
+                                let true_val =
+                                    self.context.bool_type().const_int(1, false);
+                                self.builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .unwrap();
+
+                                self.builder.position_at_end(not_bb);
+                                let false_val =
+                                    self.context.bool_type().const_int(0, false);
+                                self.builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .unwrap();
+
+                                self.builder.position_at_end(merge_bb);
+                                let phi = self
+                                    .builder
+                                    .build_phi(self.context.bool_type(), "vc_result")
+                                    .unwrap();
+                                phi.add_incoming(&[
+                                    (&true_val, found_bb),
+                                    (&false_val, not_bb),
+                                ]);
+                                return Ok(Some(phi.as_basic_value()));
+                            } else {
+                                // index_of: return i32
+                                self.builder.position_at_end(found_bb);
+                                let idx = self
+                                    .builder
+                                    .build_int_truncate(i_val, i32_ty, "vc_idx")
+                                    .unwrap();
+                                self.builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .unwrap();
+
+                                self.builder.position_at_end(not_bb);
+                                let neg1 = i32_ty.const_all_ones();
+                                self.builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .unwrap();
+
+                                self.builder.position_at_end(merge_bb);
+                                let phi = self
+                                    .builder
+                                    .build_phi(i32_ty, "vc_idx_result")
+                                    .unwrap();
+                                phi.add_incoming(&[
+                                    (&idx, found_bb),
+                                    (&neg1, not_bb),
+                                ]);
+                                return Ok(Some(phi.as_basic_value()));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -2540,6 +2693,271 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_int_z_extend(byte, self.context.i32_type(), "char_i32")
                                 .unwrap();
                             return Ok(Some(as_i32.into()));
+                        }
+                        "trim" => {
+                            // s.trim() -> str — strip leading/trailing whitespace (no alloc)
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "trim_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "trim_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let i8_ty = self.context.i8_type();
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let space = i8_ty.const_int(32, false); // ' '
+
+                            // Find start: skip leading spaces/tabs/newlines
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let start_loop =
+                                self.context.append_basic_block(*function, "trim_start");
+                            let start_done =
+                                self.context.append_basic_block(*function, "trim_start_done");
+                            self.builder.build_unconditional_branch(start_loop).unwrap();
+
+                            self.builder.position_at_end(start_loop);
+                            let s_phi = self.builder.build_phi(i64_ty, "trim_s").unwrap();
+                            s_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let s_val = s_phi.as_basic_value().into_int_value();
+                            let in_range = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, s_val, len, "s_lt")
+                                .unwrap();
+                            let check_bb =
+                                self.context.append_basic_block(*function, "trim_s_check");
+                            self.builder
+                                .build_conditional_branch(in_range, check_bb, start_done)
+                                .unwrap();
+
+                            self.builder.position_at_end(check_bb);
+                            let ch_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, ptr, &[s_val], "s_ch_ptr")
+                                    .unwrap()
+                            };
+                            let ch = self
+                                .builder
+                                .build_load(i8_ty, ch_ptr, "s_ch")
+                                .unwrap()
+                                .into_int_value();
+                            let is_space = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULE, ch, space, "is_sp")
+                                .unwrap();
+                            let next_s = self
+                                .builder
+                                .build_int_add(s_val, one, "next_s")
+                                .unwrap();
+                            s_phi.add_incoming(&[(&next_s, check_bb)]);
+                            self.builder
+                                .build_conditional_branch(is_space, start_loop, start_done)
+                                .unwrap();
+
+                            self.builder.position_at_end(start_done);
+                            let start_idx = self
+                                .builder
+                                .build_phi(i64_ty, "start_idx")
+                                .unwrap();
+                            start_idx.add_incoming(&[(&s_val, start_loop), (&s_val, check_bb)]);
+                            let start_val = start_idx.as_basic_value().into_int_value();
+
+                            // Find end: skip trailing spaces
+                            let end_pre = self.builder.get_insert_block().unwrap();
+                            let end_loop =
+                                self.context.append_basic_block(*function, "trim_end");
+                            let end_done =
+                                self.context.append_basic_block(*function, "trim_end_done");
+                            self.builder.build_unconditional_branch(end_loop).unwrap();
+
+                            self.builder.position_at_end(end_loop);
+                            let e_phi = self.builder.build_phi(i64_ty, "trim_e").unwrap();
+                            e_phi.add_incoming(&[(&len, end_pre)]);
+                            let e_val = e_phi.as_basic_value().into_int_value();
+                            let e_gt_start = self
+                                .builder
+                                .build_int_compare(IntPredicate::UGT, e_val, start_val, "e_gt")
+                                .unwrap();
+                            let end_check_bb =
+                                self.context.append_basic_block(*function, "trim_e_check");
+                            self.builder
+                                .build_conditional_branch(e_gt_start, end_check_bb, end_done)
+                                .unwrap();
+
+                            self.builder.position_at_end(end_check_bb);
+                            let e_m1 = self
+                                .builder
+                                .build_int_sub(e_val, one, "e_m1")
+                                .unwrap();
+                            let ech_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, ptr, &[e_m1], "e_ch_ptr")
+                                    .unwrap()
+                            };
+                            let ech = self
+                                .builder
+                                .build_load(i8_ty, ech_ptr, "e_ch")
+                                .unwrap()
+                                .into_int_value();
+                            let e_is_space = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULE, ech, space, "e_is_sp")
+                                .unwrap();
+                            e_phi.add_incoming(&[(&e_m1, end_check_bb)]);
+                            self.builder
+                                .build_conditional_branch(e_is_space, end_loop, end_done)
+                                .unwrap();
+
+                            self.builder.position_at_end(end_done);
+                            let end_idx = self
+                                .builder
+                                .build_phi(i64_ty, "end_idx")
+                                .unwrap();
+                            end_idx.add_incoming(&[(&e_val, end_loop), (&e_val, end_check_bb)]);
+                            let end_val = end_idx.as_basic_value().into_int_value();
+
+                            // Build result: {ptr + start, end - start}
+                            let new_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        i8_ty, ptr, &[start_val], "trim_new_ptr",
+                                    )
+                                    .unwrap()
+                            };
+                            let new_len = self
+                                .builder
+                                .build_int_sub(end_val, start_val, "trim_new_len")
+                                .unwrap();
+
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, new_ptr, 0, "t_ptr")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, new_len, 1, "t_len")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
+                        }
+                        "to_upper" | "to_lower" => {
+                            // Allocate new string, convert each byte
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "case_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "case_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let malloc_fn = self.get_or_declare_malloc();
+                            let new_buf = self
+                                .builder
+                                .build_call(malloc_fn, &[len.into()], "case_buf")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let convert_fn = if method == "to_upper" {
+                                self.get_or_declare_toupper()
+                            } else {
+                                self.get_or_declare_tolower()
+                            };
+
+                            let i8_ty = self.context.i8_type();
+                            let i32_ty = self.context.i32_type();
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "case_loop");
+                            let body_bb =
+                                self.context.append_basic_block(*function, "case_body");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "case_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "case_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "case_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let src_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, ptr, &[i_val], "src_p")
+                                    .unwrap()
+                            };
+                            let byte = self
+                                .builder
+                                .build_load(i8_ty, src_ptr, "src_byte")
+                                .unwrap()
+                                .into_int_value();
+                            let byte_i32 = self
+                                .builder
+                                .build_int_z_extend(byte, i32_ty, "byte_i32")
+                                .unwrap();
+                            let converted = self
+                                .builder
+                                .build_call(convert_fn, &[byte_i32.into()], "conv")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_int_value();
+                            let conv_i8 = self
+                                .builder
+                                .build_int_truncate(converted, i8_ty, "conv_i8")
+                                .unwrap();
+                            let dst_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, new_buf, &[i_val], "dst_p")
+                                    .unwrap()
+                            };
+                            self.builder.build_store(dst_ptr, conv_i8).unwrap();
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "case_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, body_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, new_buf, 0, "cu_ptr")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, len, 1, "cu_len")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
                         }
                         "index_of" => {
                             // s.index_of(needle) -> i32 (-1 if not found)

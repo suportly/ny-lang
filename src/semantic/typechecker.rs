@@ -1489,6 +1489,18 @@ impl TypeChecker {
                 }
                 "pop" => return *elem.clone(),
                 "sort" | "reverse" | "clear" => return NyType::Unit,
+                "contains" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::Bool;
+                }
+                "index_of" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::I32;
+                }
                 _ => {
                     for arg in args {
                         self.check_expr(arg);
@@ -1567,6 +1579,12 @@ impl TypeChecker {
                             ));
                         }
                     }
+                    return NyType::Str;
+                }
+                "trim" => {
+                    return NyType::Str;
+                }
+                "to_upper" | "to_lower" => {
                     return NyType::Str;
                 }
                 "char_at" => {

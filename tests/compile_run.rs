@@ -580,3 +580,13 @@ fn test_string_index_of() {
 fn test_vec_reverse() {
     assert_eq!(compile_and_run("vec_reverse.ny"), 42);
 }
+
+#[test]
+fn test_string_transform() {
+    assert_eq!(compile_and_run("string_transform.ny"), 42);
+}
+
+#[test]
+fn test_vec_search() {
+    assert_eq!(compile_and_run("vec_search.ny"), 42);
+}

@@ -234,6 +234,34 @@ fn test_vec() {
 }
 
 #[test]
+fn test_simd_dotprod() {
+    assert_eq!(compile_and_run("simd_dotprod.ny"), 42);
+}
+
+#[test]
+fn test_threads() {
+    assert_eq!(compile_and_run("threads.ny"), 42);
+}
+
+#[test]
+fn test_to_str() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny").unwrap()
+        .args(["build", "tests/fixtures/valid/to_str_test.ny", "-o"])
+        .arg(&output).assert().success();
+    let out = process::Command::new(&output).output().expect("failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("value=42"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
+}
+
+#[test]
+fn test_while_let() {
+    assert_eq!(compile_and_run("while_let.ny"), 42);
+}
+
+#[test]
 fn test_simd() {
     assert_eq!(compile_and_run("simd.ny"), 42);
 }

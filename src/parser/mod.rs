@@ -864,6 +864,23 @@ impl Parser {
     fn parse_while_stmt(&mut self) -> Result<Stmt, CompileError> {
         let start = self.peek_span();
         self.expect(&TokenKind::While)?;
+
+        // Check for while let
+        if *self.peek() == TokenKind::Let {
+            self.expect(&TokenKind::Let)?;
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Assign)?;
+            let expr = self.parse_expr(0)?;
+            let body = self.parse_block_expr()?;
+            let end = body.span();
+            return Ok(Stmt::WhileLet {
+                pattern,
+                expr,
+                body,
+                span: start.merge(end),
+            });
+        }
+
         let condition = self.parse_expr(0)?;
         let body = self.parse_block_expr()?;
         let end = body.span();

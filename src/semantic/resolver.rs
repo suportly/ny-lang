@@ -772,6 +772,27 @@ impl Resolver {
                     ));
                 }
             }
+            // ---- while let ----
+            Stmt::WhileLet { pattern, expr, body, .. } => {
+                self.resolve_expr(expr);
+                if let Pattern::EnumVariant { bindings, .. } = pattern {
+                    self.push_scope();
+                    for binding in bindings {
+                        self.declare(binding, Symbol {
+                            name: binding.clone(), ty: NyType::I32,
+                            mutability: Mutability::Immutable, span: expr.span(),
+                        });
+                    }
+                    self.loop_depth += 1;
+                    self.resolve_expr(body);
+                    self.loop_depth -= 1;
+                    self.pop_scope();
+                } else {
+                    self.loop_depth += 1;
+                    self.resolve_expr(body);
+                    self.loop_depth -= 1;
+                }
+            }
             // ---- if let ----
             Stmt::IfLet {
                 pattern,

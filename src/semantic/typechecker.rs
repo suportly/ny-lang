@@ -267,7 +267,9 @@ impl TypeChecker {
                 // Extern functions registered in resolver pass
             }
             Item::TraitDef {
-                name, methods, span,
+                name,
+                methods,
+                span,
             } => {
                 // Register trait for conformance checking
                 let sigs: Vec<(String, Vec<NyType>, NyType)> = methods
@@ -564,19 +566,27 @@ impl TypeChecker {
 
                 // Arena builtins
                 if callee == "arena_new" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "arena_alloc" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "arena_free" || callee == "arena_reset" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 if callee == "arena_bytes_used" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I64;
                 }
 
@@ -585,19 +595,27 @@ impl TypeChecker {
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "map_insert" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 if callee == "map_get" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I32;
                 }
                 if callee == "map_contains" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Bool;
                 }
                 if callee == "map_len" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I64;
                 }
 
@@ -676,69 +694,103 @@ impl TypeChecker {
 
                 // SIMD builtins
                 if callee == "simd_splat_f32x4" || callee == "simd_load_f32x4" {
-                    for arg in args { self.check_expr(arg); }
-                    return NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 };
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Simd {
+                        elem: Box::new(NyType::F32),
+                        lanes: 4,
+                    };
                 }
                 if callee == "simd_splat_f32x8" || callee == "simd_load_f32x8" {
-                    for arg in args { self.check_expr(arg); }
-                    return NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 };
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Simd {
+                        elem: Box::new(NyType::F32),
+                        lanes: 8,
+                    };
                 }
                 if callee == "simd_reduce_add_f32" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::F32;
                 }
                 if callee == "simd_store_f32x4" || callee == "simd_store_f32x8" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
 
                 // Channel builtins
                 if callee == "channel_new" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "channel_send" || callee == "channel_close" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 if callee == "channel_recv" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I32;
                 }
                 // Pool builtins
                 if callee == "pool_new" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "pool_submit" || callee == "pool_wait" || callee == "pool_free" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 // Parallel iterator builtins
                 if callee == "par_map" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 if callee == "par_reduce" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I32;
                 }
 
                 // Built-in to_str(any) -> str
                 if callee == "to_str" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
 
                 // Built-in thread_spawn(fn) -> i64
                 if callee == "thread_spawn" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I64;
                 }
 
                 // Built-in thread_join(handle) -> ()
                 if callee == "thread_join" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
 
@@ -1169,10 +1221,8 @@ impl TypeChecker {
                                         if !bindings.is_empty() {
                                             self.push_scope();
                                             for (i, binding) in bindings.iter().enumerate() {
-                                                let ty = payload
-                                                    .get(i)
-                                                    .cloned()
-                                                    .unwrap_or(NyType::I32);
+                                                let ty =
+                                                    payload.get(i).cloned().unwrap_or(NyType::I32);
                                                 self.declare(binding, ty);
                                             }
                                             let body_ty = self.check_expr(&arm.body);
@@ -1244,13 +1294,16 @@ impl TypeChecker {
                     if !has_wildcard {
                         for (variant_name, _) in variants {
                             if !covered_variants.contains(variant_name) {
-                                self.errors.push(CompileError::type_error(
-                                    format!(
-                                        "non-exhaustive match: variant '{}::{}' not covered",
-                                        name, variant_name
-                                    ),
-                                    *span,
-                                ));
+                                self.errors.push(
+                                    CompileError::type_error(
+                                        format!(
+                                            "non-exhaustive match: variant '{}::{}' not covered",
+                                            name, variant_name
+                                        ),
+                                        *span,
+                                    )
+                                    .with_note("consider adding a wildcard arm: _ => { ... }"),
+                                );
                             }
                         }
                     }
@@ -1272,7 +1325,11 @@ impl TypeChecker {
                     NyType::Enum { variants, name } => {
                         if variants.len() < 2 {
                             self.errors.push(CompileError::type_error(
-                                format!("'?' requires enum with at least 2 variants, '{}' has {}", name, variants.len()),
+                                format!(
+                                    "'?' requires enum with at least 2 variants, '{}' has {}",
+                                    name,
+                                    variants.len()
+                                ),
                                 *span,
                             ));
                             NyType::I32
@@ -1419,7 +1476,9 @@ impl TypeChecker {
                 }
                 "pop" => return *elem.clone(),
                 _ => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     self.errors.push(CompileError::type_error(
                         format!("no method '{}' found for Vec type", method),
                         span,
@@ -1877,9 +1936,17 @@ impl TypeChecker {
             }
 
             // ── WhileLet ──────────────────────────────────────────────
-            Stmt::WhileLet { pattern, expr, body, .. } => {
+            Stmt::WhileLet {
+                pattern,
+                expr,
+                body,
+                ..
+            } => {
                 let expr_ty = self.check_expr(expr);
-                if let Pattern::EnumVariant { variant, bindings, .. } = pattern {
+                if let Pattern::EnumVariant {
+                    variant, bindings, ..
+                } = pattern
+                {
                     if let NyType::Enum { variants, .. } = &expr_ty {
                         if let Some((_, payload)) = variants.iter().find(|(n, _)| n == variant) {
                             if !bindings.is_empty() {
@@ -1920,14 +1987,11 @@ impl TypeChecker {
                 } = pattern
                 {
                     if let NyType::Enum { variants, .. } = &expr_ty {
-                        if let Some((_, payload)) =
-                            variants.iter().find(|(n, _)| n == variant)
-                        {
+                        if let Some((_, payload)) = variants.iter().find(|(n, _)| n == variant) {
                             if !bindings.is_empty() {
                                 self.push_scope();
                                 for (i, binding) in bindings.iter().enumerate() {
-                                    let ty =
-                                        payload.get(i).cloned().unwrap_or(NyType::I32);
+                                    let ty = payload.get(i).cloned().unwrap_or(NyType::I32);
                                     self.declare(binding, ty);
                                 }
                                 self.check_expr(then_body);

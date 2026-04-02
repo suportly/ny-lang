@@ -3,9 +3,11 @@
 //! Provides: diagnostics (inline errors), hover (type info), go-to-definition.
 //! Runs as a separate process, communicates via stdio with LSP protocol.
 
+#![allow(clippy::mutable_key_type)]
+
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, Notification as _};
-use lsp_types::request::{GotoDefinition, HoverRequest, Request as _};
+use lsp_types::request::{GotoDefinition, HoverRequest};
 use lsp_types::*;
 type Url = lsp_types::Uri;
 use std::collections::HashMap;
@@ -17,9 +19,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = serde_json::to_value(ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(
-            TextDocumentSyncKind::FULL,
-        )),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         ..Default::default()
@@ -55,9 +55,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                 }
 
                 let req_clone = req.clone();
-                if let Some((id, params)) =
-                    cast_request::<HoverRequest>(req_clone.clone())
-                {
+                if let Some((id, params)) = cast_request::<HoverRequest>(req_clone.clone()) {
                     let uri = params.text_document_position_params.text_document.uri;
                     let pos = params.text_document_position_params.position;
                     let hover = handle_hover(&documents, &uri, pos);
@@ -70,9 +68,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     continue;
                 }
 
-                if let Some((id, params)) =
-                    cast_request::<GotoDefinition>(req_clone)
-                {
+                if let Some((id, params)) = cast_request::<GotoDefinition>(req_clone) {
                     let uri = params.text_document_position_params.text_document.uri;
                     let pos = params.text_document_position_params.position;
                     let def = handle_goto_def(&documents, &uri, pos);
@@ -87,16 +83,13 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
             }
             Message::Notification(notif) => {
                 if notif.method == DidOpenTextDocument::METHOD {
-                    let params: DidOpenTextDocumentParams =
-                        serde_json::from_value(notif.params)?;
+                    let params: DidOpenTextDocumentParams = serde_json::from_value(notif.params)?;
                     let uri = params.text_document.uri.clone();
                     let text = params.text_document.text.clone();
                     documents.insert(uri.clone(), text.clone());
                     publish_diagnostics(&connection, &uri, &text)?;
-                }
-                else if notif.method == DidChangeTextDocument::METHOD {
-                    let params: DidChangeTextDocumentParams =
-                        serde_json::from_value(notif.params)?;
+                } else if notif.method == DidChangeTextDocument::METHOD {
+                    let params: DidChangeTextDocumentParams = serde_json::from_value(notif.params)?;
                     let uri = params.text_document.uri.clone();
                     if let Some(change) = params.content_changes.into_iter().last() {
                         let text = change.text;
@@ -194,11 +187,7 @@ fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
-fn handle_hover(
-    documents: &HashMap<Url, String>,
-    uri: &Url,
-    pos: Position,
-) -> Option<Hover> {
+fn handle_hover(documents: &HashMap<Url, String>, uri: &Url, pos: Position) -> Option<Hover> {
     let source = documents.get(uri)?;
     let offset = line_col_to_byte_offset(source, pos.line as usize, pos.character as usize)?;
 
@@ -297,7 +286,7 @@ fn infer_type_at_position(source: &str, name: &str) -> String {
                     if !ty.is_empty() {
                         return format!("{}: {} (mutable)", name, ty);
                     }
-                } else if let Some(rest) = rest.strip_prefix('=') {
+                } else if let Some(_rest) = rest.strip_prefix('=') {
                     // type inference
                     return format!("{} (type inferred)", name);
                 } else {
@@ -339,9 +328,7 @@ fn find_definition(source: &str, name: &str) -> Option<usize> {
     None
 }
 
-fn cast_request<R: lsp_types::request::Request>(
-    req: Request,
-) -> Option<(RequestId, R::Params)> {
+fn cast_request<R: lsp_types::request::Request>(req: Request) -> Option<(RequestId, R::Params)> {
     if req.method == R::METHOD {
         let params = serde_json::from_value(req.params).ok()?;
         Some((req.id, params))

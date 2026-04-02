@@ -30,6 +30,7 @@ fn error_code(kind: &ErrorKind) -> &'static str {
         ErrorKind::Name => "E003",
         ErrorKind::Immutability => "E004",
         ErrorKind::IO => "E005",
+        ErrorKind::Internal => "E006",
     }
 }
 

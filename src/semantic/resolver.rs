@@ -79,6 +79,27 @@ impl Resolver {
         BUILTIN_FUNCTIONS.contains(&name)
     }
 
+    /// Find a similar name in scope for "did you mean?" suggestions.
+    fn find_similar_name(&self, name: &str) -> Option<String> {
+        let mut best: Option<(String, usize)> = None;
+        for scope in &self.scopes {
+            for key in scope.keys() {
+                let dist = crate::common::edit_distance(name, key);
+                if dist <= 2 && dist < name.len() && best.as_ref().map_or(true, |(_, d)| dist < *d)
+                {
+                    best = Some((key.clone(), dist));
+                }
+            }
+        }
+        for key in self.functions.keys() {
+            let dist = crate::common::edit_distance(name, key);
+            if dist <= 2 && dist < name.len() && best.as_ref().map_or(true, |(_, d)| dist < *d) {
+                best = Some((key.clone(), dist));
+            }
+        }
+        best.map(|(name, _)| name)
+    }
+
     /// Resolve a TypeAnnotation into a NyType, reporting errors for unknown types.
     fn resolve_type_annotation(&mut self, annotation: &TypeAnnotation) -> Option<NyType> {
         match annotation {
@@ -156,7 +177,13 @@ impl Resolver {
 
         // ---- Pass 1: Register all struct definitions ----
         for item in &program.items {
-            if let Item::StructDef { name, type_params: _, fields, span } = item {
+            if let Item::StructDef {
+                name,
+                type_params: _,
+                fields,
+                span,
+            } = item
+            {
                 if resolver.structs.contains_key(name) {
                     resolver.errors.push(CompileError::name_error(
                         format!("duplicate struct definition '{}'", name),
@@ -226,10 +253,9 @@ impl Resolver {
                     let ret_type = resolver
                         .resolve_type_annotation(&ext_fn.return_type)
                         .unwrap_or(NyType::Unit);
-                    resolver.functions.insert(
-                        ext_fn.name.clone(),
-                        (param_types, ret_type, ext_fn.span),
-                    );
+                    resolver
+                        .functions
+                        .insert(ext_fn.name.clone(), (param_types, ret_type, ext_fn.span));
                 }
             }
         }
@@ -398,10 +424,12 @@ impl Resolver {
                     && !self.structs.contains_key(name)
                     && !self.enums.contains_key(name)
                 {
-                    self.errors.push(CompileError::name_error(
-                        format!("undeclared variable '{}'", name),
-                        *span,
-                    ));
+                    let mut err =
+                        CompileError::name_error(format!("undeclared variable '{}'", name), *span);
+                    if let Some(suggestion) = self.find_similar_name(name) {
+                        err = err.with_note(format!("did you mean '{}'?", suggestion));
+                    }
+                    self.errors.push(err);
                 }
             }
             Expr::BinOp { lhs, rhs, .. } => {
@@ -460,10 +488,7 @@ impl Resolver {
                 self.resolve_expr(index);
             }
             Expr::RangeIndex {
-                object,
-                start,
-                end,
-                ..
+                object, start, end, ..
             } => {
                 self.resolve_expr(object);
                 self.resolve_expr(start);
@@ -774,15 +799,25 @@ impl Resolver {
                 }
             }
             // ---- while let ----
-            Stmt::WhileLet { pattern, expr, body, .. } => {
+            Stmt::WhileLet {
+                pattern,
+                expr,
+                body,
+                ..
+            } => {
                 self.resolve_expr(expr);
                 if let Pattern::EnumVariant { bindings, .. } = pattern {
                     self.push_scope();
                     for binding in bindings {
-                        self.declare(binding, Symbol {
-                            name: binding.clone(), ty: NyType::I32,
-                            mutability: Mutability::Immutable, span: expr.span(),
-                        });
+                        self.declare(
+                            binding,
+                            Symbol {
+                                name: binding.clone(),
+                                ty: NyType::I32,
+                                mutability: Mutability::Immutable,
+                                span: expr.span(),
+                            },
+                        );
                     }
                     self.loop_depth += 1;
                     self.resolve_expr(body);
@@ -866,10 +901,12 @@ impl Resolver {
         match target {
             AssignTarget::Var(name) => match self.resolve_name(name) {
                 None => {
-                    self.errors.push(CompileError::name_error(
-                        format!("undeclared variable '{}'", name),
-                        span,
-                    ));
+                    let mut err =
+                        CompileError::name_error(format!("undeclared variable '{}'", name), span);
+                    if let Some(suggestion) = self.find_similar_name(name) {
+                        err = err.with_note(format!("did you mean '{}'?", suggestion));
+                    }
+                    self.errors.push(err);
                 }
                 Some(sym) if sym.mutability == Mutability::Immutable => {
                     let decl_span = sym.span;
@@ -878,7 +915,10 @@ impl Resolver {
                             format!("cannot assign to immutable variable '{}'", name),
                             span,
                         )
-                        .with_secondary(decl_span, "declared as immutable here".to_string()),
+                        .with_secondary(decl_span, "declared as immutable here".to_string())
+                        .with_note(
+                            "use ':~' to declare a mutable variable: x :~ type = value".to_string(),
+                        ),
                     );
                 }
                 Some(_) => {}

@@ -96,6 +96,14 @@ fn test_missing_trait_method() {
 }
 
 #[test]
+fn test_fstring_empty_expr() {
+    compile_invalid("fstring_empty.ny")
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("empty expression in f-string"));
+}
+
+#[test]
 fn test_nonexistent_file() {
     let mut cmd = Command::cargo_bin("ny").unwrap();
     cmd.arg("build").arg("nonexistent.lnge");

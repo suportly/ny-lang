@@ -76,9 +76,9 @@ pub fn monomorphize(program: &mut Program) {
     }
 
     // Step 5: Remove generic function templates and add specialized ones
-    program
-        .items
-        .retain(|item| !matches!(item, Item::FunctionDef { type_params, .. } if !type_params.is_empty()));
+    program.items.retain(
+        |item| !matches!(item, Item::FunctionDef { type_params, .. } if !type_params.is_empty()),
+    );
     program.items.extend(new_items);
 }
 
@@ -125,7 +125,6 @@ impl SimpleTypeEnv {
             self.vars.insert(name.to_string(), ty);
         }
     }
-
 }
 
 fn collect_specializations_in_item(
@@ -174,7 +173,7 @@ fn collect_specializations_in_expr(
                     for (i, arg) in args.iter().enumerate() {
                         if let Some(param) = params.get(i) {
                             if let TypeAnnotation::Named { name, .. } = &param.ty {
-                                if type_params.contains(name) {
+                                if type_params.iter().any(|tp| &tp.name == name) {
                                     if let Some(concrete) = env.infer(arg) {
                                         type_map.insert(name.clone(), concrete);
                                     }
@@ -186,7 +185,7 @@ fn collect_specializations_in_expr(
                     if type_map.len() == type_params.len() {
                         let concrete_types: Vec<NyType> = type_params
                             .iter()
-                            .map(|tp| type_map.get(tp).cloned().unwrap_or(NyType::I32))
+                            .map(|tp| type_map.get(&tp.name).cloned().unwrap_or(NyType::I32))
                             .collect();
                         specs.push((callee.clone(), concrete_types));
                     }
@@ -197,7 +196,9 @@ fn collect_specializations_in_expr(
                 collect_specializations_in_expr(arg, generic_fns, specs, env);
             }
         }
-        Expr::Block { stmts, tail_expr, .. } => {
+        Expr::Block {
+            stmts, tail_expr, ..
+        } => {
             for stmt in stmts {
                 collect_specializations_in_stmt(stmt, generic_fns, specs, env);
             }
@@ -268,7 +269,9 @@ fn collect_specializations_in_stmt(
                 collect_specializations_in_expr(v, generic_fns, specs, env);
             }
         }
-        Stmt::While { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        } => {
             collect_specializations_in_expr(condition, generic_fns, specs, env);
             collect_specializations_in_expr(body, generic_fns, specs, env);
         }
@@ -306,7 +309,7 @@ fn specialize_function(template: &Item, concrete_types: &[NyType]) -> Option<Ite
         let type_map: HashMap<String, NyType> = type_params
             .iter()
             .zip(concrete_types.iter())
-            .map(|(tp, ct)| (tp.clone(), ct.clone()))
+            .map(|(tp, ct)| (tp.name.clone(), ct.clone()))
             .collect();
 
         let mangled_name = mangle_name(name, concrete_types);
@@ -397,7 +400,9 @@ fn rewrite_calls_in_expr(expr: &mut Expr, specs: &HashMap<String, Vec<(Vec<NyTyp
                 rewrite_calls_in_expr(arg, specs);
             }
         }
-        Expr::Block { stmts, tail_expr, .. } => {
+        Expr::Block {
+            stmts, tail_expr, ..
+        } => {
             for stmt in stmts {
                 rewrite_calls_in_stmt(stmt, specs);
             }
@@ -450,7 +455,9 @@ fn rewrite_calls_in_stmt(stmt: &mut Stmt, specs: &HashMap<String, Vec<(Vec<NyTyp
                 rewrite_calls_in_expr(v, specs);
             }
         }
-        Stmt::While { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        } => {
             rewrite_calls_in_expr(condition, specs);
             rewrite_calls_in_expr(body, specs);
         }
@@ -561,7 +568,7 @@ fn specialize_enum(template: &Item, type_args: &[String]) -> Option<Item> {
         let type_map: HashMap<String, String> = type_params
             .iter()
             .zip(type_args.iter())
-            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .map(|(tp, arg)| (tp.name.clone(), arg.clone()))
             .collect();
 
         let mangled_name = format!("{}_{}", name, type_args.join("_"));
@@ -600,7 +607,7 @@ fn specialize_struct(template: &Item, type_args: &[String]) -> Option<Item> {
         let type_map: HashMap<String, String> = type_params
             .iter()
             .zip(type_args.iter())
-            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .map(|(tp, arg)| (tp.name.clone(), arg.clone()))
             .collect();
 
         let mangled_name = format!("{}_{}", name, type_args.join("_"));
@@ -671,8 +678,7 @@ fn collect_generic_in_annotation(
             let base = &name[..open];
             if generic_structs.contains_key(base) {
                 let args_str = &name[open + 1..name.len() - 1];
-                let args: Vec<String> =
-                    args_str.split(',').map(|s| s.trim().to_string()).collect();
+                let args: Vec<String> = args_str.split(',').map(|s| s.trim().to_string()).collect();
                 usages.push((base.to_string(), args));
             }
         }
@@ -783,7 +789,9 @@ fn rewrite_enum_refs_in_expr(expr: &mut Expr, map: &HashMap<String, Vec<String>>
                 rewrite_enum_refs_in_expr(&mut arm.body, map);
             }
         }
-        Expr::Block { stmts, tail_expr, .. } => {
+        Expr::Block {
+            stmts, tail_expr, ..
+        } => {
             for stmt in stmts {
                 rewrite_enum_refs_in_stmt(stmt, map);
             }
@@ -791,7 +799,12 @@ fn rewrite_enum_refs_in_expr(expr: &mut Expr, map: &HashMap<String, Vec<String>>
                 rewrite_enum_refs_in_expr(te, map);
             }
         }
-        Expr::If { condition, then_branch, else_branch, .. } => {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             rewrite_enum_refs_in_expr(condition, map);
             rewrite_enum_refs_in_expr(then_branch, map);
             if let Some(eb) = else_branch {
@@ -828,11 +841,15 @@ fn rewrite_enum_refs_in_stmt(stmt: &mut Stmt, map: &HashMap<String, Vec<String>>
             }
         }
         Stmt::Assign { value, .. } => rewrite_enum_refs_in_expr(value, map),
-        Stmt::While { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        } => {
             rewrite_enum_refs_in_expr(condition, map);
             rewrite_enum_refs_in_expr(body, map);
         }
-        Stmt::ForRange { start, end, body, .. } => {
+        Stmt::ForRange {
+            start, end, body, ..
+        } => {
             rewrite_enum_refs_in_expr(start, map);
             rewrite_enum_refs_in_expr(end, map);
             rewrite_enum_refs_in_expr(body, map);
@@ -840,7 +857,13 @@ fn rewrite_enum_refs_in_stmt(stmt: &mut Stmt, map: &HashMap<String, Vec<String>>
         Stmt::Loop { body, .. } | Stmt::Defer { body, .. } => {
             rewrite_enum_refs_in_expr(body, map);
         }
-        Stmt::IfLet { expr, then_body, else_body, pattern, .. } => {
+        Stmt::IfLet {
+            expr,
+            then_body,
+            else_body,
+            pattern,
+            ..
+        } => {
             rewrite_enum_refs_in_expr(expr, map);
             if let Pattern::EnumVariant { enum_name, .. } = pattern {
                 if let Some(concretes) = map.get(enum_name.as_str()) {
@@ -854,7 +877,12 @@ fn rewrite_enum_refs_in_stmt(stmt: &mut Stmt, map: &HashMap<String, Vec<String>>
                 rewrite_enum_refs_in_expr(eb, map);
             }
         }
-        Stmt::WhileLet { expr, body, pattern, .. } => {
+        Stmt::WhileLet {
+            expr,
+            body,
+            pattern,
+            ..
+        } => {
             rewrite_enum_refs_in_expr(expr, map);
             if let Pattern::EnumVariant { enum_name, .. } = pattern {
                 if let Some(concretes) = map.get(enum_name.as_str()) {

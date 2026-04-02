@@ -1,3 +1,11 @@
+#![allow(
+    clippy::collapsible_match,
+    clippy::collapsible_if,
+    clippy::type_complexity,
+    clippy::manual_filter_map,
+    clippy::unnecessary_filter_map
+)]
+
 pub mod codegen;
 pub mod common;
 pub mod diagnostics;
@@ -55,9 +63,8 @@ fn resolve_uses(
                     cwd_path.to_path_buf()
                 } else {
                     // Try stdlib/ prefix
-                    let stdlib_path = std::path::Path::new("stdlib").join(
-                        path.strip_prefix("stdlib/").unwrap_or(path),
-                    );
+                    let stdlib_path = std::path::Path::new("stdlib")
+                        .join(path.strip_prefix("stdlib/").unwrap_or(path));
                     if stdlib_path.exists() {
                         stdlib_path
                     } else {

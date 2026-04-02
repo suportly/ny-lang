@@ -15,6 +15,9 @@ use crate::parser::ast::*;
 /// - Generates specialized copies
 /// - Rewrites calls to point to specialized versions
 pub fn monomorphize(program: &mut Program) {
+    // Step 0: Monomorphize generic structs
+    monomorphize_structs(program);
+
     // Step 1: Collect generic function templates
     let mut generic_fns: HashMap<String, Item> = HashMap::new();
     for item in &program.items {
@@ -464,5 +467,184 @@ fn rewrite_calls_in_stmt(stmt: &mut Stmt, specs: &HashMap<String, Vec<(Vec<NyTyp
             rewrite_calls_in_expr(body, specs);
         }
         _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic struct monomorphization
+// ---------------------------------------------------------------------------
+
+fn monomorphize_structs(program: &mut Program) {
+    let mut generic_structs: HashMap<String, Item> = HashMap::new();
+    for item in &program.items {
+        if let Item::StructDef {
+            name, type_params, ..
+        } = item
+        {
+            if !type_params.is_empty() {
+                generic_structs.insert(name.clone(), item.clone());
+            }
+        }
+    }
+
+    if generic_structs.is_empty() {
+        return;
+    }
+
+    // Scan type annotations for usages like "Pair<i32,bool>"
+    let mut struct_usages: Vec<(String, Vec<String>)> = Vec::new();
+    for item in &program.items {
+        collect_generic_type_usages_in_item(item, &generic_structs, &mut struct_usages);
+    }
+    struct_usages.sort();
+    struct_usages.dedup();
+
+    // Generate concrete struct definitions
+    let mut new_structs: Vec<Item> = Vec::new();
+    for (base_name, type_args) in &struct_usages {
+        if let Some(template) = generic_structs.get(base_name) {
+            if let Some(concrete) = specialize_struct(template, type_args) {
+                new_structs.push(concrete);
+            }
+        }
+    }
+
+    // Build rewrite map: "Pair<i32,bool>" → "Pair_i32_bool"
+    let rewrite_map: HashMap<String, String> = struct_usages
+        .iter()
+        .map(|(base, args)| {
+            let key = format!("{}<{}>", base, args.join(","));
+            let val = format!("{}_{}", base, args.join("_"));
+            (key, val)
+        })
+        .collect();
+
+    for item in &mut program.items {
+        rewrite_type_names_in_item(item, &rewrite_map);
+    }
+
+    // Remove generic templates, add concrete versions
+    program.items.retain(
+        |item| !matches!(item, Item::StructDef { type_params, .. } if !type_params.is_empty()),
+    );
+    program.items.splice(0..0, new_structs);
+}
+
+fn specialize_struct(template: &Item, type_args: &[String]) -> Option<Item> {
+    if let Item::StructDef {
+        name,
+        type_params,
+        fields,
+        span,
+    } = template
+    {
+        let type_map: HashMap<String, String> = type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .collect();
+
+        let mangled_name = format!("{}_{}", name, type_args.join("_"));
+        let new_fields: Vec<(String, TypeAnnotation)> = fields
+            .iter()
+            .map(|(fname, fty)| (fname.clone(), substitute_type_str(fty, &type_map)))
+            .collect();
+
+        Some(Item::StructDef {
+            name: mangled_name,
+            type_params: Vec::new(),
+            fields: new_fields,
+            span: *span,
+        })
+    } else {
+        None
+    }
+}
+
+fn substitute_type_str(ann: &TypeAnnotation, map: &HashMap<String, String>) -> TypeAnnotation {
+    match ann {
+        TypeAnnotation::Named { name, span } => {
+            if let Some(concrete) = map.get(name) {
+                TypeAnnotation::Named {
+                    name: concrete.clone(),
+                    span: *span,
+                }
+            } else {
+                ann.clone()
+            }
+        }
+        _ => ann.clone(),
+    }
+}
+
+fn collect_generic_type_usages_in_item(
+    item: &Item,
+    generic_structs: &HashMap<String, Item>,
+    usages: &mut Vec<(String, Vec<String>)>,
+) {
+    match item {
+        Item::FunctionDef {
+            params,
+            return_type,
+            ..
+        } => {
+            for p in params {
+                collect_generic_in_annotation(&p.ty, generic_structs, usages);
+            }
+            collect_generic_in_annotation(return_type, generic_structs, usages);
+        }
+        Item::ImplBlock { methods, .. } => {
+            for m in methods {
+                collect_generic_type_usages_in_item(m, generic_structs, usages);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_generic_in_annotation(
+    ann: &TypeAnnotation,
+    generic_structs: &HashMap<String, Item>,
+    usages: &mut Vec<(String, Vec<String>)>,
+) {
+    if let TypeAnnotation::Named { name, .. } = ann {
+        if let Some(open) = name.find('<') {
+            let base = &name[..open];
+            if generic_structs.contains_key(base) {
+                let args_str = &name[open + 1..name.len() - 1];
+                let args: Vec<String> =
+                    args_str.split(',').map(|s| s.trim().to_string()).collect();
+                usages.push((base.to_string(), args));
+            }
+        }
+    }
+}
+
+fn rewrite_type_names_in_item(item: &mut Item, map: &HashMap<String, String>) {
+    match item {
+        Item::FunctionDef {
+            params,
+            return_type,
+            ..
+        } => {
+            for p in params {
+                rewrite_annotation(&mut p.ty, map);
+            }
+            rewrite_annotation(return_type, map);
+        }
+        Item::ImplBlock { methods, .. } => {
+            for m in methods {
+                rewrite_type_names_in_item(m, map);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_annotation(ann: &mut TypeAnnotation, map: &HashMap<String, String>) {
+    if let TypeAnnotation::Named { name, .. } = ann {
+        if let Some(replacement) = map.get(name.as_str()) {
+            *name = replacement.clone();
+        }
     }
 }

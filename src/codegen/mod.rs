@@ -1,3 +1,4 @@
+pub mod builtins;
 pub mod types;
 
 use std::collections::HashMap;
@@ -469,20 +470,9 @@ impl<'ctx> CodeGen<'ctx> {
                             return ret_ty.clone();
                         }
                     }
-                    // Built-in return types
-                    match callee.as_str() {
-                        "alloc" | "fopen" => NyType::Pointer(Box::new(NyType::U8)),
-                        "sizeof" => NyType::I64,
-                        "fclose" | "fread_byte" | "fwrite_str" | "str_to_int" => NyType::I32,
-                        "read_line" | "int_to_str" => NyType::Str,
-                        "vec_new" => NyType::Vec(Box::new(NyType::I32)),
-                        "vec_len" | "map_len" => NyType::I64,
-                        "map_new" | "arena_new" | "arena_alloc" => NyType::Pointer(Box::new(NyType::U8)),
-                        "arena_bytes_used" => NyType::I64,
-                        "map_get" => NyType::I32,
-                        "map_contains" => NyType::Bool,
-                        _ => NyType::Unit,
-                    }
+                    // Use builtin registry for return types
+                    builtins::builtin_return_type(callee, &[])
+                        .unwrap_or(NyType::Unit)
                 }
             }
             Expr::If { then_branch, .. } => self.infer_expr_type(then_branch),

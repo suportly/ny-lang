@@ -150,9 +150,10 @@ impl Parser {
         let (name, span) = self.expect_ident()?;
 
         // Check for generic type args: Name<T1, T2>
-        // Only parse < as generic args for known generic types to avoid ambiguity with < operator
-        let is_generic_type = matches!(name.as_str(), "Vec" | "Option" | "Result" | "HashMap");
-        if is_generic_type && *self.peek() == TokenKind::Lt {
+        // In type annotation context, < is always a generic delimiter (not comparison)
+        // so we can safely parse it for any capitalized type name
+        let starts_upper = name.chars().next().map_or(false, |c| c.is_uppercase());
+        if starts_upper && *self.peek() == TokenKind::Lt {
             self.advance(); // consume <
             let mut type_args = Vec::new();
             while *self.peek() != TokenKind::Gt {
@@ -243,6 +244,21 @@ impl Parser {
         let start = self.peek_span();
         self.expect(&TokenKind::Struct)?;
         let (name, _) = self.expect_ident()?;
+
+        // Optional type parameters: struct Pair<A, B> { ... }
+        let mut type_params = Vec::new();
+        if *self.peek() == TokenKind::Lt {
+            self.advance();
+            while *self.peek() != TokenKind::Gt {
+                if !type_params.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                let (tp, _) = self.expect_ident()?;
+                type_params.push(tp);
+            }
+            self.expect(&TokenKind::Gt)?;
+        }
+
         self.expect(&TokenKind::LBrace)?;
 
         let mut fields = Vec::new();
@@ -260,6 +276,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Item::StructDef {
             name,
+            type_params,
             fields,
             span: start.merge(end),
         })

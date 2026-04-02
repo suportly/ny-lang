@@ -492,3 +492,51 @@ fn test_string_ops() {
     assert!(stdout.contains("5"), "stdout: {}", stdout);
     assert_eq!(out.status.code().unwrap(), 42);
 }
+
+// Showcase / example tests
+
+fn compile_and_run_example(path: &str) -> (i32, String) {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny")
+        .unwrap()
+        .args(["build", path, "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let out = process::Command::new(&output)
+        .output()
+        .expect("failed to run compiled binary");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    (out.status.code().unwrap(), stdout)
+}
+
+#[test]
+fn test_example_mandelbrot() {
+    let (code, stdout) = compile_and_run_example("examples/mandelbrot.ny");
+    assert_eq!(code, 0);
+    // Should produce 36 lines of 78-char ASCII art
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 36, "expected 36 lines, got {}", lines.len());
+    // The set boundary should contain various characters
+    assert!(stdout.contains('.'), "should contain dots");
+    assert!(stdout.contains(':'), "should contain colons");
+}
+
+#[test]
+fn test_example_word_count() {
+    let (code, stdout) = compile_and_run_example("examples/word_count.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Lines: 3"), "stdout: {}", stdout);
+    assert!(stdout.contains("Words: 25"), "stdout: {}", stdout);
+    assert!(stdout.contains("Word length distribution:"), "stdout: {}", stdout);
+}
+
+#[test]
+fn test_example_matmul() {
+    let (code, stdout) = compile_and_run_example("examples/matmul_bench.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Matrix size: 64x64"), "stdout: {}", stdout);
+    assert!(stdout.contains("C[0][0] = 366"), "stdout: {}", stdout);
+    assert!(stdout.contains("Benchmark Complete"), "stdout: {}", stdout);
+}

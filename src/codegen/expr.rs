@@ -25,6 +25,7 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
                 free.push(name.clone());
             }
         }
+        Expr::Literal { .. } => {}
         Expr::BinOp { lhs, rhs, .. } => {
             find_free_vars_inner(lhs, bound, free);
             find_free_vars_inner(rhs, bound, free);
@@ -40,22 +41,7 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
         Expr::Block {
             stmts, tail_expr, ..
         } => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::VarDecl { init, .. } | Stmt::ConstDecl { value: init, .. } => {
-                        find_free_vars_inner(init, bound, free);
-                    }
-                    Stmt::ExprStmt { expr, .. } => {
-                        find_free_vars_inner(expr, bound, free);
-                    }
-                    Stmt::Return { value, .. } => {
-                        if let Some(v) = value {
-                            find_free_vars_inner(v, bound, free);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            find_free_vars_in_stmts(stmts, bound, free);
             if let Some(te) = tail_expr {
                 find_free_vars_inner(te, bound, free);
             }
@@ -72,7 +58,168 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
                 find_free_vars_inner(eb, bound, free);
             }
         }
-        _ => {}
+        Expr::ArrayLit { elements, .. } | Expr::TupleLit { elements, .. } => {
+            for elem in elements {
+                find_free_vars_inner(elem, bound, free);
+            }
+        }
+        Expr::Index { object, index, .. } => {
+            find_free_vars_inner(object, bound, free);
+            find_free_vars_inner(index, bound, free);
+        }
+        Expr::FieldAccess { object, .. } | Expr::TupleIndex { object, .. } => {
+            find_free_vars_inner(object, bound, free);
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, val) in fields {
+                find_free_vars_inner(val, bound, free);
+            }
+        }
+        Expr::AddrOf { operand, .. }
+        | Expr::Deref { operand, .. }
+        | Expr::Cast { expr: operand, .. }
+        | Expr::Try { operand, .. } => {
+            find_free_vars_inner(operand, bound, free);
+        }
+        Expr::MethodCall { object, args, .. } => {
+            find_free_vars_inner(object, bound, free);
+            for arg in args {
+                find_free_vars_inner(arg, bound, free);
+            }
+        }
+        Expr::Match { subject, arms, .. } => {
+            find_free_vars_inner(subject, bound, free);
+            for arm in arms {
+                // Bindings in pattern become bound within the arm body
+                let mut arm_bound: Vec<String> = bound.to_vec();
+                if let Pattern::EnumVariant { bindings, .. } = &arm.pattern {
+                    arm_bound.extend(bindings.iter().cloned());
+                }
+                find_free_vars_inner(&arm.body, &arm_bound, free);
+            }
+        }
+        Expr::EnumVariant { args, .. } => {
+            for arg in args {
+                find_free_vars_inner(arg, bound, free);
+            }
+        }
+        Expr::RangeIndex {
+            object, start, end, ..
+        } => {
+            find_free_vars_inner(object, bound, free);
+            find_free_vars_inner(start, bound, free);
+            find_free_vars_inner(end, bound, free);
+        }
+        Expr::Lambda {
+            params, body, ..
+        } => {
+            // Nested lambda params become bound within its body
+            let mut inner_bound: Vec<String> = bound.to_vec();
+            for p in params {
+                inner_bound.push(p.name.clone());
+            }
+            find_free_vars_inner(body, &inner_bound, free);
+        }
+    }
+}
+
+fn find_free_vars_in_stmts(stmts: &[Stmt], bound: &[String], free: &mut Vec<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::VarDecl { init, .. } | Stmt::ConstDecl { value: init, .. } => {
+                find_free_vars_inner(init, bound, free);
+            }
+            Stmt::Assign { target, value, .. } => {
+                find_free_vars_in_assign_target(target, bound, free);
+                find_free_vars_inner(value, bound, free);
+            }
+            Stmt::ExprStmt { expr, .. } => {
+                find_free_vars_inner(expr, bound, free);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    find_free_vars_inner(v, bound, free);
+                }
+            }
+            Stmt::While { condition, body, .. } => {
+                find_free_vars_inner(condition, bound, free);
+                find_free_vars_inner(body, bound, free);
+            }
+            Stmt::ForRange {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                find_free_vars_inner(start, bound, free);
+                find_free_vars_inner(end, bound, free);
+                let mut loop_bound: Vec<String> = bound.to_vec();
+                loop_bound.push(var.clone());
+                find_free_vars_inner(body, &loop_bound, free);
+            }
+            Stmt::ForIn {
+                var,
+                collection,
+                body,
+                ..
+            } => {
+                find_free_vars_inner(collection, bound, free);
+                let mut loop_bound: Vec<String> = bound.to_vec();
+                loop_bound.push(var.clone());
+                find_free_vars_inner(body, &loop_bound, free);
+            }
+            Stmt::TupleDestructure { init, .. } => {
+                find_free_vars_inner(init, bound, free);
+            }
+            Stmt::Defer { body, .. } => {
+                find_free_vars_inner(body, bound, free);
+            }
+            Stmt::WhileLet { expr, body, .. } => {
+                find_free_vars_inner(expr, bound, free);
+                find_free_vars_inner(body, bound, free);
+            }
+            Stmt::IfLet {
+                expr,
+                then_body,
+                else_body,
+                ..
+            } => {
+                find_free_vars_inner(expr, bound, free);
+                find_free_vars_inner(then_body, bound, free);
+                if let Some(eb) = else_body {
+                    find_free_vars_inner(eb, bound, free);
+                }
+            }
+            Stmt::Loop { body, .. } => {
+                find_free_vars_inner(body, bound, free);
+            }
+            Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        }
+    }
+}
+
+fn find_free_vars_in_assign_target(
+    target: &AssignTarget,
+    bound: &[String],
+    free: &mut Vec<String>,
+) {
+    match target {
+        AssignTarget::Var(name) => {
+            if !bound.contains(name) && !free.contains(name) {
+                free.push(name.clone());
+            }
+        }
+        AssignTarget::Index(obj, idx) => {
+            find_free_vars_inner(obj, bound, free);
+            find_free_vars_inner(idx, bound, free);
+        }
+        AssignTarget::Field(obj, _) => {
+            find_free_vars_inner(obj, bound, free);
+        }
+        AssignTarget::Deref(obj) => {
+            find_free_vars_inner(obj, bound, free);
+        }
     }
 }
 

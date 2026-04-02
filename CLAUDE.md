@@ -10,27 +10,31 @@ Last updated: 2026-04-01
 ```text
 src/
 ├── main.rs              # CLI (ny build, ny test)
-├── lib.rs               # Compiler pipeline
+├── lib.rs               # Compiler pipeline + module resolution
+├── monomorphize.rs      # Generic function specialization
 ├── lexer/               # Tokenization
 ├── parser/              # Pratt parser → AST
 ├── semantic/            # Name resolution + type checking
 ├── codegen/             # LLVM IR generation
 ├── common/              # Types, spans, errors
 └── diagnostics/         # Error reporting
+runtime/
+└── hashmap.c            # C runtime (HashMap implementation)
 specs/                   # Feature specifications (001–014)
 tests/
-├── compile_run.rs       # Integration tests (28)
-├── error_tests.rs       # Negative tests (10)
+├── compile_run.rs       # Integration tests (47)
+├── error_tests.rs       # Negative tests (11)
 └── fixtures/            # .ny test programs
 ```
 
 ## Commands
 
 ```bash
-cargo test               # Run all tests
+cargo test               # Run all tests (58 total)
 cargo clippy             # Lint
 cargo build --release    # Release binary
 ny build file.ny         # Compile .ny to executable
+ny build file.ny -O 2    # Compile with optimization
 ny test file.ny          # Run test_* functions
 ```
 
@@ -50,28 +54,51 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 | 6 | Tagged unions (data-carrying enums), loop keyword | specs/006-tagged-unions-loop/ |
 | 7 | Impl blocks, pub keyword | specs/007-impl-blocks/ |
 | 8 | Trait definitions, impl Trait for Type | specs/008-traits/ |
-| 9 | Slice type []T | specs/009-slices/ |
+| 9 | Slice type []T + range indexing | specs/009-slices/ |
 | 10 | File I/O: fopen/fclose/fwrite_str/fread_byte, exit | specs/010-file-io/ |
-| 11 | Unsafe pointer operations | specs/011-unsafe-pointers/ |
+| 11 | Unsafe pointers, pointer arithmetic | specs/011-unsafe-pointers/ |
 | 12 | Concurrency foundation: sleep_ms | specs/012-concurrency-foundation/ |
 | 13 | SIMD infrastructure (prepared) | specs/013-simd-infrastructure/ |
 | 14 | Test framework: ny test | specs/014-test-framework/ |
 
+## Additional Features (beyond original phases)
+
+- Generic functions with monomorphization: `fn max<T>(a: T, b: T) -> T`
+- Module system: `use "module.ny";`
+- Extern C FFI: `extern { fn abs(x: i32) -> i32; }`
+- Vec<T> dynamic arrays: push/get/len with auto-grow
+- HashMap (str->i32): C runtime backed
+- Capturing closures: `|x: i32| -> i32 { x * n }`
+- for-in iteration: `for item in collection { ... }`
+- ? operator: `val := divide(10, 0)?;`
+- if let: `if let Option::Some(v) = expr { ... }`
+- Void functions: `fn greet() { ... }` without -> ()
+- Pointer arithmetic: `ptr + offset`, `*(ptr + n)`
+
 ## Builtin Functions
 
-| Function | Signature | Phase |
-|----------|-----------|-------|
-| print | (any...) -> () | 2 |
-| println | (any...) -> () | 2 |
-| alloc | (i32) -> *u8 | 5 |
-| free | (*u8) -> () | 5 |
-| sizeof | (any) -> i64 | 5 |
-| fopen | (str, str) -> *u8 | 10 |
-| fclose | (*u8) -> i32 | 10 |
-| fwrite_str | (*u8, str) -> i32 | 10 |
-| fread_byte | (*u8) -> i32 | 10 |
-| exit | (i32) -> ! | 10 |
-| sleep_ms | (i32) -> () | 12 |
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| print | (any...) -> () | Print to stdout |
+| println | (any...) -> () | Print with newline |
+| alloc | (i32) -> *u8 | Heap allocation |
+| free | (*u8) -> () | Free heap memory |
+| sizeof | (any) -> i64 | Size in bytes |
+| vec_new | () -> Vec<T> | Create empty vector |
+| map_new | () -> *u8 | Create empty hashmap |
+| map_insert | (*u8, str, i32) -> () | Insert key-value |
+| map_get | (*u8, str) -> i32 | Get by key |
+| map_contains | (*u8, str) -> bool | Check key exists |
+| map_len | (*u8) -> i64 | Map size |
+| fopen | (str, str) -> *u8 | Open file |
+| fclose | (*u8) -> i32 | Close file |
+| fwrite_str | (*u8, str) -> i32 | Write string to file |
+| fread_byte | (*u8) -> i32 | Read byte |
+| read_line | () -> str | Read stdin line |
+| int_to_str | (i32) -> str | Int to string |
+| str_to_int | (str) -> i32 | String to int |
+| exit | (i32) -> ! | Exit process |
+| sleep_ms | (i32) -> () | Sleep milliseconds |
 
 ## Reserved Keywords
 

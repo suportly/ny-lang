@@ -102,7 +102,7 @@ impl SimpleTypeEnv {
                 LitValue::Str(_) => Some(NyType::Str),
             },
             Expr::Ident { name, .. } => self.vars.get(name).cloned(),
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee: _, .. } => {
                 // If calling a known non-generic function, we'd need its return type
                 // For now, fall back to None
                 None
@@ -119,22 +119,6 @@ impl SimpleTypeEnv {
         }
     }
 
-    /// Record a variable from a call to a generic function that we've already specialized.
-    fn record_var_from_call(&mut self, name: &str, callee: &str, generic_fns: &HashMap<String, Item>, concrete_types: &[NyType]) {
-        if let Some(template) = generic_fns.get(callee) {
-            if let Item::FunctionDef { type_params, return_type, .. } = template {
-                let type_map: HashMap<String, NyType> = type_params.iter()
-                    .zip(concrete_types.iter())
-                    .map(|(tp, ct)| (tp.clone(), ct.clone()))
-                    .collect();
-                if let TypeAnnotation::Named { name: ret_name, .. } = return_type {
-                    if let Some(concrete) = type_map.get(ret_name) {
-                        self.vars.insert(name.to_string(), concrete.clone());
-                    }
-                }
-            }
-        }
-    }
 }
 
 fn collect_specializations_in_item(

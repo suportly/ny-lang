@@ -600,7 +600,7 @@ impl TypeChecker {
 
                 // Built-in vec_get(v: Vec<T>, idx: i32) -> T
                 if callee == "vec_get" {
-                    if args.len() >= 1 {
+                    if !args.is_empty() {
                         let vec_ty = self.check_expr(&args[0]);
                         if let NyType::Vec(elem) = &vec_ty {
                             for arg in args.iter().skip(1) {
@@ -1510,7 +1510,7 @@ impl TypeChecker {
                         self.declare(name, declared_ty);
                     } else {
                         self.errors.push(CompileError::type_error(
-                            format!("unknown type in annotation"),
+                            "unknown type in annotation".to_string(),
                             annotation.span(),
                         ));
                         // Fall back to inferred type

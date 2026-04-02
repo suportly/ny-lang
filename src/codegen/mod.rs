@@ -547,13 +547,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let obj_ty = self.infer_expr_type(object);
                 match &obj_ty {
                     NyType::Vec(elem) => match method.as_str() {
-                        "len" => return NyType::I64,
-                        "get" | "pop" => return *elem.clone(),
-                        _ => return NyType::Unit,
+                        "len" => NyType::I64,
+                        "get" | "pop" => *elem.clone(),
+                        _ => NyType::Unit,
                     },
                     NyType::Slice(_) => match method.as_str() {
-                        "len" => return NyType::I64,
-                        _ => return NyType::Unit,
+                        "len" => NyType::I64,
+                        _ => NyType::Unit,
                     },
                     NyType::Str => match method.as_str() {
                         "len" => NyType::I64,
@@ -2133,15 +2133,12 @@ impl<'ctx> CodeGen<'ctx> {
                 if let NyType::Slice(_) = &obj_ty {
                     let obj_val = self.compile_expr(object, function)?.unwrap();
                     let slice_val = obj_val.into_struct_value();
-                    match method.as_str() {
-                        "len" => {
-                            let len_val = self
-                                .builder
-                                .build_extract_value(slice_val, 1, "slice_len")
-                                .unwrap();
-                            return Ok(Some(len_val));
-                        }
-                        _ => {}
+                    if method.as_str() == "len" {
+                        let len_val = self
+                            .builder
+                            .build_extract_value(slice_val, 1, "slice_len")
+                            .unwrap();
+                        return Ok(Some(len_val));
                     }
                 }
 
@@ -4982,7 +4979,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 _ => {
                     return Err(vec![CompileError::type_error(
-                        format!("unsupported binary operation on struct/string types"),
+                        "unsupported binary operation on struct/string types".to_string(),
                         Span::empty(0),
                     )]);
                 }

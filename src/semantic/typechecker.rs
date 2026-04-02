@@ -314,6 +314,10 @@ impl TypeChecker {
 
                 match op {
                     BinOp::Add => {
+                        // SIMD vector arithmetic
+                        if lhs_ty.is_simd() && lhs_ty == rhs_ty {
+                            return lhs_ty;
+                        }
                         // String concatenation: str + str → str
                         if lhs_ty == NyType::Str && rhs_ty == NyType::Str {
                             NyType::Str
@@ -342,6 +346,10 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        // SIMD vector arithmetic
+                        if lhs_ty.is_simd() && lhs_ty == rhs_ty {
+                            return lhs_ty;
+                        }
                         // pointer - int → pointer
                         if *op == BinOp::Sub && lhs_ty.is_pointer() && rhs_ty.is_integer() {
                             return lhs_ty;

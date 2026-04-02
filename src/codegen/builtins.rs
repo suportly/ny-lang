@@ -32,6 +32,11 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "vec_push" => Some(NyType::Unit),
         "vec_get" => Some(NyType::I32), // refined by method call handler
 
+        // SIMD
+        "simd_splat_f32x4" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 4 }),
+        "simd_splat_f32x8" => Some(NyType::Simd { elem: Box::new(NyType::F32), lanes: 8 }),
+        "simd_reduce_add_f32" => Some(NyType::F32),
+
         _ => None,
     }
 }
@@ -71,4 +76,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "arena_free",
     "arena_reset",
     "arena_bytes_used",
+    "simd_splat_f32x4",
+    "simd_splat_f32x8",
+    "simd_reduce_add_f32",
 ];

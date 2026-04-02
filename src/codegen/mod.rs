@@ -1269,6 +1269,82 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(result));
                 }
 
+                // SIMD builtins
+                if callee == "simd_splat_f32x4" {
+                    let raw_scalar = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_float_value();
+                    // Truncate to f32 if the literal is f64
+                    let scalar = if raw_scalar.get_type() == self.context.f64_type() {
+                        self.builder
+                            .build_float_trunc(raw_scalar, self.context.f32_type(), "f32_trunc")
+                            .unwrap()
+                    } else {
+                        raw_scalar
+                    };
+                    let vec_ty = self.context.f32_type().vec_type(4);
+                    let mut vec_val = vec_ty.get_undef();
+                    for i in 0..4u32 {
+                        let idx = self.context.i32_type().const_int(i as u64, false);
+                        vec_val = self
+                            .builder
+                            .build_insert_element(vec_val, scalar, idx, &format!("splat_{}", i))
+                            .unwrap();
+                    }
+                    return Ok(Some(vec_val.into()));
+                }
+                if callee == "simd_splat_f32x8" {
+                    let raw_scalar = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_float_value();
+                    let scalar = if raw_scalar.get_type() == self.context.f64_type() {
+                        self.builder
+                            .build_float_trunc(raw_scalar, self.context.f32_type(), "f32_trunc")
+                            .unwrap()
+                    } else {
+                        raw_scalar
+                    };
+                    let vec_ty = self.context.f32_type().vec_type(8);
+                    let mut vec_val = vec_ty.get_undef();
+                    for i in 0..8u32 {
+                        let idx = self.context.i32_type().const_int(i as u64, false);
+                        vec_val = self
+                            .builder
+                            .build_insert_element(vec_val, scalar, idx, &format!("splat_{}", i))
+                            .unwrap();
+                    }
+                    return Ok(Some(vec_val.into()));
+                }
+                if callee == "simd_reduce_add_f32" {
+                    let vec_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let vec = vec_val.into_vector_value();
+                    let lanes = vec.get_type().get_size();
+                    let mut sum = self
+                        .builder
+                        .build_extract_element(
+                            vec,
+                            self.context.i32_type().const_zero(),
+                            "lane_0",
+                        )
+                        .unwrap()
+                        .into_float_value();
+                    for i in 1..lanes {
+                        let idx = self.context.i32_type().const_int(i as u64, false);
+                        let lane = self
+                            .builder
+                            .build_extract_element(vec, idx, &format!("lane_{}", i))
+                            .unwrap()
+                            .into_float_value();
+                        sum = self
+                            .builder
+                            .build_float_add(sum, lane, &format!("hadd_{}", i))
+                            .unwrap();
+                    }
+                    return Ok(Some(sum.into()));
+                }
+
                 // Handle vec_new() — creates empty Vec with correct elem_size
                 if callee == "vec_new" {
                     let initial_cap: u64 = 8;
@@ -5263,6 +5339,40 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             };
             Ok(result)
+        } else if lhs.is_vector_value() && rhs.is_vector_value() {
+            // SIMD vector arithmetic
+            let l = lhs.into_vector_value();
+            let r = rhs.into_vector_value();
+            // Check if the element type is float or int
+            let elem_kind = l.get_type().get_element_type();
+            if elem_kind.is_float_type() {
+                let result: BasicValueEnum = match op {
+                    BinOp::Add => self.builder.build_float_add(l, r, "vadd").unwrap().into(),
+                    BinOp::Sub => self.builder.build_float_sub(l, r, "vsub").unwrap().into(),
+                    BinOp::Mul => self.builder.build_float_mul(l, r, "vmul").unwrap().into(),
+                    BinOp::Div => self.builder.build_float_div(l, r, "vdiv").unwrap().into(),
+                    _ => {
+                        return Err(vec![CompileError::type_error(
+                            "unsupported SIMD operation".to_string(),
+                            Span::empty(0),
+                        )]);
+                    }
+                };
+                Ok(result)
+            } else {
+                let result: BasicValueEnum = match op {
+                    BinOp::Add => self.builder.build_int_add(l, r, "vadd").unwrap().into(),
+                    BinOp::Sub => self.builder.build_int_sub(l, r, "vsub").unwrap().into(),
+                    BinOp::Mul => self.builder.build_int_mul(l, r, "vmul").unwrap().into(),
+                    _ => {
+                        return Err(vec![CompileError::type_error(
+                            "unsupported SIMD operation".to_string(),
+                            Span::empty(0),
+                        )]);
+                    }
+                };
+                Ok(result)
+            }
         } else {
             Err(vec![CompileError::type_error(
                 "binary operation on incompatible types".to_string(),

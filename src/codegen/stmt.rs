@@ -43,9 +43,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .builder
                         .build_struct_gep(vec_struct_ty, alloca, 3, "vec_fix_es")
                         .unwrap();
-                    self.builder
-                        .build_store(es_ptr, actual_elem_size)
-                        .unwrap();
+                    self.builder.build_store(es_ptr, actual_elem_size).unwrap();
 
                     // If actual elem_size > 8, the initial buffer (cap * 8) is too small.
                     // Realloc to cap * actual_elem_size.
@@ -63,9 +61,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let realloc_bb = self
                         .context
                         .append_basic_block(*function, "vec_init_realloc");
-                    let done_bb = self
-                        .context
-                        .append_basic_block(*function, "vec_init_done");
+                    let done_bb = self.context.append_basic_block(*function, "vec_init_done");
                     self.builder
                         .build_conditional_branch(needs_realloc, realloc_bb, done_bb)
                         .unwrap();
@@ -111,9 +107,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap()
                         .into_pointer_value();
                     self.builder.build_store(data_ptr_gep, new_data).unwrap();
-                    self.builder
-                        .build_unconditional_branch(done_bb)
-                        .unwrap();
+                    self.builder.build_unconditional_branch(done_bb).unwrap();
 
                     self.builder.position_at_end(done_bb);
                 }

@@ -477,13 +477,18 @@ fn rewrite_calls_in_stmt(stmt: &mut Stmt, specs: &HashMap<String, Vec<(Vec<NyTyp
 fn monomorphize_structs(program: &mut Program) {
     let mut generic_structs: HashMap<String, Item> = HashMap::new();
     for item in &program.items {
-        if let Item::StructDef {
-            name, type_params, ..
-        } = item
-        {
-            if !type_params.is_empty() {
+        match item {
+            Item::StructDef {
+                name, type_params, ..
+            } if !type_params.is_empty() => {
                 generic_structs.insert(name.clone(), item.clone());
             }
+            Item::EnumDef {
+                name, type_params, ..
+            } if !type_params.is_empty() => {
+                generic_structs.insert(name.clone(), item.clone());
+            }
+            _ => {}
         }
     }
 
@@ -503,8 +508,18 @@ fn monomorphize_structs(program: &mut Program) {
     let mut new_structs: Vec<Item> = Vec::new();
     for (base_name, type_args) in &struct_usages {
         if let Some(template) = generic_structs.get(base_name) {
-            if let Some(concrete) = specialize_struct(template, type_args) {
-                new_structs.push(concrete);
+            match template {
+                Item::StructDef { .. } => {
+                    if let Some(concrete) = specialize_struct(template, type_args) {
+                        new_structs.push(concrete);
+                    }
+                }
+                Item::EnumDef { .. } => {
+                    if let Some(concrete) = specialize_enum(template, type_args) {
+                        new_structs.push(concrete);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -524,10 +539,50 @@ fn monomorphize_structs(program: &mut Program) {
     }
 
     // Remove generic templates, add concrete versions
-    program.items.retain(
-        |item| !matches!(item, Item::StructDef { type_params, .. } if !type_params.is_empty()),
-    );
+    program.items.retain(|item| {
+        !matches!(item, Item::StructDef { type_params, .. } if !type_params.is_empty())
+            && !matches!(item, Item::EnumDef { type_params, .. } if !type_params.is_empty())
+    });
     program.items.splice(0..0, new_structs);
+}
+
+fn specialize_enum(template: &Item, type_args: &[String]) -> Option<Item> {
+    if let Item::EnumDef {
+        name,
+        type_params,
+        variants,
+        span,
+    } = template
+    {
+        let type_map: HashMap<String, String> = type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .collect();
+
+        let mangled_name = format!("{}_{}", name, type_args.join("_"));
+        let new_variants: Vec<EnumVariantDef> = variants
+            .iter()
+            .map(|v| EnumVariantDef {
+                name: v.name.clone(),
+                payload: v
+                    .payload
+                    .iter()
+                    .map(|ty| substitute_type_str(ty, &type_map))
+                    .collect(),
+                span: v.span,
+            })
+            .collect();
+
+        Some(Item::EnumDef {
+            name: mangled_name,
+            type_params: Vec::new(),
+            variants: new_variants,
+            span: *span,
+        })
+    } else {
+        None
+    }
 }
 
 fn specialize_struct(template: &Item, type_args: &[String]) -> Option<Item> {

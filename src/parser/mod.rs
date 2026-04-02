@@ -286,6 +286,21 @@ impl Parser {
         let start = self.peek_span();
         self.expect(&TokenKind::Enum)?;
         let (name, _) = self.expect_ident()?;
+
+        // Optional type parameters: enum Option<T> { ... }
+        let mut type_params = Vec::new();
+        if *self.peek() == TokenKind::Lt {
+            self.advance();
+            while *self.peek() != TokenKind::Gt {
+                if !type_params.is_empty() {
+                    self.expect(&TokenKind::Comma)?;
+                }
+                let (tp, _) = self.expect_ident()?;
+                type_params.push(tp);
+            }
+            self.expect(&TokenKind::Gt)?;
+        }
+
         self.expect(&TokenKind::LBrace)?;
 
         let mut variants = Vec::new();
@@ -319,6 +334,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace)?;
         Ok(Item::EnumDef {
             name,
+            type_params,
             variants,
             span: start.merge(end),
         })

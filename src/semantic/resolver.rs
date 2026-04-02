@@ -183,6 +183,7 @@ impl Resolver {
             }
             if let Item::EnumDef {
                 name,
+                type_params: _,
                 variants,
                 span,
             } = item

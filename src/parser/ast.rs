@@ -23,6 +23,7 @@ pub enum Item {
     },
     EnumDef {
         name: String,
+        type_params: Vec<String>,
         variants: Vec<EnumVariantDef>,
         span: Span,
     },

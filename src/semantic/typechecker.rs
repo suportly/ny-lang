@@ -333,7 +333,7 @@ impl TypeChecker {
                                     lhs.span(),
                                 ));
                             }
-                            if lhs_ty != rhs_ty {
+                            if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) {
                                 self.errors.push(CompileError::type_error(
                                     format!(
                                         "type mismatch in arithmetic: '{}' and '{}'",
@@ -363,7 +363,7 @@ impl TypeChecker {
                                 lhs.span(),
                             ));
                         }
-                        if lhs_ty != rhs_ty {
+                        if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) {
                             self.errors.push(CompileError::type_error(
                                 format!(
                                     "type mismatch in arithmetic: '{}' and '{}'",
@@ -375,7 +375,7 @@ impl TypeChecker {
                         lhs_ty
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                        if lhs_ty != rhs_ty {
+                        if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) {
                             self.errors.push(CompileError::type_error(
                                 format!("cannot compare '{}' with '{}'", lhs_ty, rhs_ty),
                                 *span,
@@ -1592,9 +1592,10 @@ impl TypeChecker {
                 let init_ty = self.check_expr(init);
                 if let Some(annotation) = ty {
                     if let Some(declared_ty) = self.resolve_type_annotation(annotation) {
-                        // Allow Vec coercion: vec_new() returns Vec<i32> but declared type wins
+                        // Allow numeric coercion and Vec coercion
                         let compatible = init_ty == declared_ty
-                            || (init_ty.is_vec() && declared_ty.is_vec());
+                            || (init_ty.is_vec() && declared_ty.is_vec())
+                            || (init_ty.is_numeric() && declared_ty.is_numeric());
                         if !compatible {
                             self.errors.push(CompileError::type_error(
                                 format!("expected '{}', found '{}'", declared_ty, init_ty),
@@ -1752,7 +1753,9 @@ impl TypeChecker {
                     NyType::Unit
                 };
 
-                if ret_ty != self.current_return_type {
+                if ret_ty != self.current_return_type
+                    && !(ret_ty.is_numeric() && self.current_return_type.is_numeric())
+                {
                     self.errors.push(CompileError::type_error(
                         format!(
                             "return type mismatch: expected '{}', found '{}'",

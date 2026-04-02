@@ -1,14 +1,25 @@
-// Test: stdlib math functions
+// Test: stdlib math + strings
 use "stdlib/math.ny";
+use "stdlib/strings.ny";
 
 fn main() -> i32 {
+    // Math
     a := abs_i32(-7);       // 7
     b := max_i32(10, 20);   // 20
-    c := min_i32(10, 20);   // 10
-    d := gcd_i32(48, 18);   // 6
-    e := pow_i32(2, 3);     // 8
-    f := factorial(4);      // 24
+    c := gcd_i32(48, 18);   // 6
+    d := factorial(4);      // 24
 
-    // 7 + 20 - 10 + 6 - 8 + 24 + 3 = 42
-    return a + b - c + d - e + f + 3;
+    // Strings
+    starts := str_starts_with("hello", "hel");
+    hello := str_repeat("ab", 2);  // "abab"
+    println(hello);
+
+    // 7 + 20 + 6 - 24 = 9
+    result :~ i32 = a + b + c - d;
+
+    // starts = true → +1 = 10
+    if starts { result = result + 1; }
+
+    // 10 + 32 = 42
+    return result + 32;
 }

@@ -9,6 +9,7 @@ pub struct Program {
 pub enum Item {
     FunctionDef {
         name: String,
+        type_params: Vec<String>,
         params: Vec<Param>,
         return_type: TypeAnnotation,
         body: Expr,
@@ -19,6 +20,54 @@ pub enum Item {
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
+    EnumDef {
+        name: String,
+        variants: Vec<EnumVariantDef>,
+        span: Span,
+    },
+    Use {
+        path: String,
+        span: Span,
+    },
+    ExternBlock {
+        functions: Vec<ExternFnDecl>,
+        span: Span,
+    },
+    ImplBlock {
+        type_name: String,
+        trait_name: Option<String>,
+        methods: Vec<Item>,
+        span: Span,
+    },
+    TraitDef {
+        name: String,
+        methods: Vec<TraitMethodSig>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeAnnotation,
+    pub variadic: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeAnnotation,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariantDef {
+    pub name: String,
+    pub payload: Vec<TypeAnnotation>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -69,10 +118,39 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// for item in collection { body } — iterates over array/slice elements
+    ForIn {
+        var: String,
+        collection: Expr,
+        body: Expr,
+        span: Span,
+    },
     Break {
         span: Span,
     },
     Continue {
+        span: Span,
+    },
+    TupleDestructure {
+        names: Vec<String>,
+        mutability: Mutability,
+        init: Expr,
+        span: Span,
+    },
+    Defer {
+        body: Expr,
+        span: Span,
+    },
+    /// if let Pattern = expr { then } else { else }
+    IfLet {
+        pattern: Pattern,
+        expr: Expr,
+        then_body: Expr,
+        else_body: Option<Expr>,
+        span: Span,
+    },
+    Loop {
+        body: Expr,
         span: Span,
     },
 }
@@ -167,6 +245,45 @@ pub enum Expr {
         target_type: TypeAnnotation,
         span: Span,
     },
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    TupleLit {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    TupleIndex {
+        object: Box<Expr>,
+        index: usize,
+        span: Span,
+    },
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    /// expr? — try operator, extracts Ok or returns Err
+    Try {
+        operand: Box<Expr>,
+        span: Span,
+    },
+    /// |params| -> RetType { body } (non-capturing lambda)
+    Lambda {
+        params: Vec<Param>,
+        return_type: TypeAnnotation,
+        body: Box<Expr>,
+        span: Span,
+    },
+    /// arr[start..end] → creates a slice
+    RangeIndex {
+        object: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -186,7 +303,14 @@ impl Expr {
             | Expr::AddrOf { span, .. }
             | Expr::Deref { span, .. }
             | Expr::MethodCall { span, .. }
-            | Expr::Cast { span, .. } => *span,
+            | Expr::Cast { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::TupleLit { span, .. }
+            | Expr::TupleIndex { span, .. }
+            | Expr::EnumVariant { span, .. }
+            | Expr::RangeIndex { span, .. }
+            | Expr::Lambda { span, .. }
+            | Expr::Try { span, .. } => *span,
         }
     }
 }
@@ -229,6 +353,24 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        bindings: Vec<String>,
+        span: Span,
+    },
+    IntLit(i128, Span),
+    Wildcard(Span),
+}
+
+#[derive(Debug, Clone)]
 pub enum TypeAnnotation {
     Named {
         name: String,
@@ -243,6 +385,19 @@ pub enum TypeAnnotation {
         inner: Box<TypeAnnotation>,
         span: Span,
     },
+    Tuple {
+        elements: Vec<Box<TypeAnnotation>>,
+        span: Span,
+    },
+    Slice {
+        elem: Box<TypeAnnotation>,
+        span: Span,
+    },
+    Function {
+        params: Vec<Box<TypeAnnotation>>,
+        ret: Box<TypeAnnotation>,
+        span: Span,
+    },
 }
 
 impl TypeAnnotation {
@@ -250,7 +405,10 @@ impl TypeAnnotation {
         match self {
             TypeAnnotation::Named { span, .. }
             | TypeAnnotation::Array { span, .. }
-            | TypeAnnotation::Pointer { span, .. } => *span,
+            | TypeAnnotation::Pointer { span, .. }
+            | TypeAnnotation::Tuple { span, .. }
+            | TypeAnnotation::Slice { span, .. }
+            | TypeAnnotation::Function { span, .. } => *span,
         }
     }
 
@@ -259,6 +417,9 @@ impl TypeAnnotation {
             TypeAnnotation::Named { name, .. } => name.as_str(),
             TypeAnnotation::Array { .. } => "<array>",
             TypeAnnotation::Pointer { .. } => "<pointer>",
+            TypeAnnotation::Tuple { .. } => "<tuple>",
+            TypeAnnotation::Slice { .. } => "<slice>",
+            TypeAnnotation::Function { .. } => "<function>",
         }
     }
 }

@@ -32,7 +32,65 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
             struct_ty.set_body(&field_types, false);
             struct_ty.into()
         }
-        NyType::Unit | NyType::Function { .. } => {
+        NyType::Enum { variants, .. } => {
+            // If any variant has a payload, use struct type { i32, payload... }
+            let has_payload = variants.iter().any(|(_, p)| !p.is_empty());
+            if has_payload {
+                let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
+                let mut field_types: Vec<BasicTypeEnum> = vec![context.i32_type().into()];
+                for i in 0..max_fields {
+                    let mut found = false;
+                    for (_, payload) in variants {
+                        if let Some(ty) = payload.get(i) {
+                            field_types.push(ny_to_llvm(context, ty));
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        field_types.push(context.i32_type().into());
+                    }
+                }
+                context.struct_type(&field_types, false).into()
+            } else {
+                context.i32_type().into()
+            }
+        }
+        NyType::Vec(_) => {
+            // Vec is { ptr, len: i64, cap: i64 }
+            context
+                .struct_type(
+                    &[
+                        context.ptr_type(AddressSpace::default()).into(),
+                        context.i64_type().into(),
+                        context.i64_type().into(),
+                    ],
+                    false,
+                )
+                .into()
+        }
+        NyType::Slice(_) => {
+            // Slice is { ptr, len } like str
+            context
+                .struct_type(
+                    &[
+                        context.ptr_type(AddressSpace::default()).into(),
+                        context.i64_type().into(),
+                    ],
+                    false,
+                )
+                .into()
+        }
+        NyType::Tuple(elems) => {
+            let field_types: Vec<BasicTypeEnum> =
+                elems.iter().map(|t| ny_to_llvm(context, t)).collect();
+            context.struct_type(&field_types, false).into()
+        }
+        NyType::Function { .. } => {
+            // Function pointers are opaque pointers in LLVM
+            context.ptr_type(AddressSpace::default()).into()
+        }
+        NyType::Unit => {
             panic!("cannot convert {} to LLVM basic type", ty)
         }
     }

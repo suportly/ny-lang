@@ -30,6 +30,13 @@ pub enum NyType {
         fields: Vec<(String, NyType)>,
     },
     Pointer(Box<NyType>),
+    Enum {
+        name: String,
+        variants: Vec<(String, Vec<NyType>)>,
+    },
+    Tuple(Vec<NyType>),
+    Slice(Box<NyType>),
+    Vec(Box<NyType>),
 }
 
 impl NyType {
@@ -74,6 +81,41 @@ impl NyType {
 
     pub fn is_pointer(&self) -> bool {
         matches!(self, NyType::Pointer(_))
+    }
+
+    pub fn is_enum(&self) -> bool {
+        matches!(self, NyType::Enum { .. })
+    }
+
+    pub fn is_tuple(&self) -> bool {
+        matches!(self, NyType::Tuple(_))
+    }
+
+    pub fn is_slice(&self) -> bool {
+        matches!(self, NyType::Slice(_))
+    }
+
+    pub fn is_vec(&self) -> bool {
+        matches!(self, NyType::Vec(_))
+    }
+
+    pub fn variant_index(&self, variant: &str) -> Option<usize> {
+        match self {
+            NyType::Enum { variants, .. } => {
+                variants.iter().position(|(name, _)| name == variant)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn variant_payload(&self, variant: &str) -> Option<&Vec<NyType>> {
+        match self {
+            NyType::Enum { variants, .. } => variants
+                .iter()
+                .find(|(name, _)| name == variant)
+                .map(|(_, payload)| payload),
+            _ => None,
+        }
     }
 
     pub fn elem_type(&self) -> Option<&NyType> {
@@ -130,7 +172,17 @@ impl NyType {
             "f64" => Some(NyType::F64),
             "bool" => Some(NyType::Bool),
             "str" => Some(NyType::Str),
-            _ => None,
+            _ => {
+                // Check for Vec<T> pattern
+                if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(elem_ty) = NyType::from_name(inner) {
+                        return Some(NyType::Vec(Box::new(elem_ty)));
+                    }
+                    // Also try to match struct names embedded in Vec
+                    return Some(NyType::Vec(Box::new(NyType::Str))); // fallback for unknown
+                }
+                None
+            }
         }
     }
 }
@@ -166,6 +218,19 @@ impl fmt::Display for NyType {
             NyType::Array { elem, size } => write!(f, "[{}]{}", size, elem),
             NyType::Struct { name, .. } => write!(f, "{}", name),
             NyType::Pointer(inner) => write!(f, "*{}", inner),
+            NyType::Enum { name, .. } => write!(f, "{name}"),
+            NyType::Slice(elem) => write!(f, "[]{}", elem),
+            NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
+            NyType::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

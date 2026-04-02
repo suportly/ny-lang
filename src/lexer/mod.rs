@@ -150,8 +150,21 @@ impl Lexer {
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "as" => TokenKind::As,
+            "enum" => TokenKind::Enum,
+            "match" => TokenKind::Match,
+            "defer" => TokenKind::Defer,
+            "pub" => TokenKind::Pub,
+            "use" => TokenKind::Use,
+            "mod" => TokenKind::Mod,
+            "trait" => TokenKind::Trait,
+            "impl" => TokenKind::Impl,
+            "loop" => TokenKind::Loop,
+            "unsafe" => TokenKind::Unsafe,
+            "extern" => TokenKind::Extern,
+            "let" => TokenKind::Let,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
+            "_" => TokenKind::Underscore,
             _ => TokenKind::Ident(text),
         }
     }
@@ -273,10 +286,14 @@ impl Lexer {
                 if self.peek() == Some('=') {
                     self.advance();
                     TokenKind::Eq
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::FatArrow
                 } else {
                     TokenKind::Assign
                 }
             }
+            '?' => TokenKind::Question,
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();

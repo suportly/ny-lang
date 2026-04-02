@@ -4,7 +4,31 @@ use crate::common::{CompileError, NyType, Span};
 use crate::parser::ast::*;
 
 /// Built-in function names that should not trigger "undeclared function" errors.
-const BUILTIN_FUNCTIONS: &[&str] = &["print", "println"];
+const BUILTIN_FUNCTIONS: &[&str] = &[
+    "print",
+    "println",
+    "alloc",
+    "free",
+    "sizeof",
+    "fopen",
+    "fclose",
+    "fwrite_str",
+    "fread_byte",
+    "exit",
+    "sleep_ms",
+    "read_line",
+    "str_to_int",
+    "int_to_str",
+    "vec_new",
+    "vec_push",
+    "vec_len",
+    "vec_get",
+    "map_new",
+    "map_insert",
+    "map_get",
+    "map_contains",
+    "map_len",
+];
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -18,6 +42,7 @@ pub struct Resolver {
     scopes: Vec<HashMap<String, Symbol>>,
     functions: HashMap<String, (Vec<NyType>, NyType, Span)>,
     structs: HashMap<String, Vec<(String, NyType)>>,
+    enums: HashMap<String, Vec<(String, Vec<NyType>)>>,
     errors: Vec<CompileError>,
     loop_depth: usize,
 }
@@ -34,6 +59,7 @@ impl Resolver {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             structs: HashMap::new(),
+            enums: HashMap::new(),
             errors: Vec::new(),
             loop_depth: 0,
         }
@@ -92,6 +118,13 @@ impl Resolver {
                         fields: fields.clone(),
                     });
                 }
+                // Try registered enum types
+                if let Some(variant_defs) = self.enums.get(name) {
+                    return Some(NyType::Enum {
+                        name: name.clone(),
+                        variants: variant_defs.clone(),
+                    });
+                }
                 // "unit" / "()" as a special case for return types
                 if name == "()" {
                     return Some(NyType::Unit);
@@ -116,6 +149,28 @@ impl Resolver {
             TypeAnnotation::Pointer { inner, span: _ } => {
                 let inner_ty = self.resolve_type_annotation(inner)?;
                 Some(NyType::Pointer(Box::new(inner_ty)))
+            }
+            TypeAnnotation::Tuple { elements, .. } => {
+                let mut resolved = Vec::new();
+                for elem in elements {
+                    resolved.push(self.resolve_type_annotation(elem)?);
+                }
+                Some(NyType::Tuple(resolved))
+            }
+            TypeAnnotation::Slice { elem, .. } => {
+                let elem_ty = self.resolve_type_annotation(elem)?;
+                Some(NyType::Slice(Box::new(elem_ty)))
+            }
+            TypeAnnotation::Function { params, ret, .. } => {
+                let mut param_types = Vec::new();
+                for p in params {
+                    param_types.push(self.resolve_type_annotation(p)?);
+                }
+                let ret_ty = self.resolve_type_annotation(ret)?;
+                Some(NyType::Function {
+                    params: param_types,
+                    ret: Box::new(ret_ty),
+                })
             }
         }
     }
@@ -150,9 +205,104 @@ impl Resolver {
                     resolver.structs.insert(name.clone(), resolved_fields);
                 }
             }
+            if let Item::EnumDef {
+                name,
+                variants,
+                span,
+            } = item
+            {
+                if resolver.enums.contains_key(name) || resolver.structs.contains_key(name) {
+                    resolver.errors.push(CompileError::name_error(
+                        format!("duplicate type definition '{}'", name),
+                        *span,
+                    ));
+                    continue;
+                }
+                // Convert EnumVariantDef to (name, payload_types)
+                let mut resolved_variants: Vec<(String, Vec<NyType>)> = Vec::new();
+                for vdef in variants {
+                    let mut payload_types = Vec::new();
+                    for ty_ann in &vdef.payload {
+                        if let Some(ty) = resolver.resolve_type_annotation(ty_ann) {
+                            payload_types.push(ty);
+                        }
+                    }
+                    resolved_variants.push((vdef.name.clone(), payload_types));
+                }
+                resolver.enums.insert(name.clone(), resolved_variants);
+            }
+        }
+
+        // ---- Pass 1b: Register trait definitions (for later validation) ----
+        // (Currently we just parse them; trait conformance checking is future work)
+
+        // ---- Pass 1c: Register extern function declarations ----
+        for item in &program.items {
+            if let Item::ExternBlock { functions, .. } = item {
+                for ext_fn in functions {
+                    let mut param_types: Vec<NyType> = Vec::new();
+                    for p in &ext_fn.params {
+                        if let Some(ty) = resolver.resolve_type_annotation(&p.ty) {
+                            param_types.push(ty);
+                        }
+                    }
+                    let ret_type = resolver
+                        .resolve_type_annotation(&ext_fn.return_type)
+                        .unwrap_or(NyType::Unit);
+                    resolver.functions.insert(
+                        ext_fn.name.clone(),
+                        (param_types, ret_type, ext_fn.span),
+                    );
+                }
+            }
         }
 
         // ---- Pass 2: Register all function signatures (forward references) ----
+        // First, register impl block methods as TypeName_method functions
+        for item in &program.items {
+            if let Item::ImplBlock {
+                type_name, methods, ..
+            } = item
+            {
+                for method in methods {
+                    if let Item::FunctionDef {
+                        name,
+                        params,
+                        return_type,
+                        span,
+                        ..
+                    } = method
+                    {
+                        let qualified_name = format!("{}_{}", type_name, name);
+                        let mut param_types: Vec<NyType> = Vec::new();
+                        for p in params {
+                            if let Some(ty) = resolver.resolve_type_annotation(&p.ty) {
+                                param_types.push(ty);
+                            }
+                        }
+                        let ret_type = resolver
+                            .resolve_type_annotation(return_type)
+                            .unwrap_or(NyType::Unit);
+                        resolver
+                            .functions
+                            .insert(qualified_name, (param_types, ret_type, *span));
+                        // Also register with original name for direct method lookup
+                        let mut param_types2: Vec<NyType> = Vec::new();
+                        for p in params {
+                            if let Some(ty) = resolver.resolve_type_annotation(&p.ty) {
+                                param_types2.push(ty);
+                            }
+                        }
+                        let ret_type2 = resolver
+                            .resolve_type_annotation(return_type)
+                            .unwrap_or(NyType::Unit);
+                        resolver
+                            .functions
+                            .insert(name.clone(), (param_types2, ret_type2, *span));
+                    }
+                }
+            }
+        }
         for item in &program.items {
             if let Item::FunctionDef {
                 name,
@@ -196,7 +346,31 @@ impl Resolver {
             }
         }
 
-        // ---- Pass 3: Resolve all function bodies ----
+        // ---- Pass 3: Resolve all function bodies (including impl methods) ----
+        for item in &program.items {
+            if let Item::ImplBlock { methods, .. } = item {
+                for method in methods {
+                    if let Item::FunctionDef { params, body, .. } = method {
+                        resolver.push_scope();
+                        for p in params {
+                            if let Some(ty) = resolver.resolve_type_annotation(&p.ty) {
+                                resolver.declare(
+                                    &p.name,
+                                    Symbol {
+                                        name: p.name.clone(),
+                                        ty,
+                                        mutability: Mutability::Immutable,
+                                        span: p.span,
+                                    },
+                                );
+                            }
+                        }
+                        resolver.resolve_expr(body);
+                        resolver.pop_scope();
+                    }
+                }
+            }
+        }
         for item in &program.items {
             if let Item::FunctionDef { params, body, .. } = item {
                 resolver.push_scope();
@@ -222,6 +396,7 @@ impl Resolver {
             Ok(ResolvedInfo {
                 functions: resolver.functions,
                 structs: resolver.structs,
+                enums: resolver.enums,
             })
         } else {
             Err(resolver.errors)
@@ -244,6 +419,7 @@ impl Resolver {
                     && !self.functions.contains_key(name)
                     && !Self::is_builtin(name)
                     && !self.structs.contains_key(name)
+                    && !self.enums.contains_key(name)
                 {
                     self.errors.push(CompileError::name_error(
                         format!("undeclared variable '{}'", name),
@@ -259,7 +435,10 @@ impl Resolver {
                 self.resolve_expr(operand);
             }
             Expr::Call { callee, args, span } => {
-                if !self.functions.contains_key(callee) && !Self::is_builtin(callee) {
+                if !self.functions.contains_key(callee)
+                    && !Self::is_builtin(callee)
+                    && self.resolve_name(callee).is_none()
+                {
                     self.errors.push(CompileError::name_error(
                         format!("undeclared function '{}'", callee),
                         *span,
@@ -303,6 +482,16 @@ impl Resolver {
                 self.resolve_expr(object);
                 self.resolve_expr(index);
             }
+            Expr::RangeIndex {
+                object,
+                start,
+                end,
+                ..
+            } => {
+                self.resolve_expr(object);
+                self.resolve_expr(start);
+                self.resolve_expr(end);
+            }
             // ---- Phase 2: Struct expressions ----
             Expr::StructInit { name, fields, span } => {
                 // Verify the struct type exists
@@ -338,6 +527,123 @@ impl Resolver {
             }
             Expr::Cast { expr, .. } => {
                 self.resolve_expr(expr);
+            }
+            // ---- Phase 4: Enum variant ----
+            Expr::EnumVariant {
+                enum_name,
+                variant,
+                args,
+                span,
+            } => {
+                for arg in args {
+                    self.resolve_expr(arg);
+                }
+                match self.enums.get(enum_name) {
+                    None => {
+                        self.errors.push(CompileError::name_error(
+                            format!("undeclared enum type '{}'", enum_name),
+                            *span,
+                        ));
+                    }
+                    Some(variants) => {
+                        if !variants.iter().any(|(name, _)| name == variant) {
+                            self.errors.push(CompileError::name_error(
+                                format!("enum '{}' has no variant '{}'", enum_name, variant),
+                                *span,
+                            ));
+                        }
+                    }
+                }
+            }
+            // ---- Phase 4: Match expression ----
+            Expr::Match { subject, arms, .. } => {
+                self.resolve_expr(subject);
+                for arm in arms {
+                    // Resolve pattern: EnumVariant patterns need checking
+                    match &arm.pattern {
+                        Pattern::EnumVariant {
+                            enum_name,
+                            variant,
+                            bindings,
+                            span,
+                        } => {
+                            match self.enums.get(enum_name) {
+                                None => {
+                                    self.errors.push(CompileError::name_error(
+                                        format!("undeclared enum type '{}'", enum_name),
+                                        *span,
+                                    ));
+                                }
+                                Some(variants) => {
+                                    if !variants.iter().any(|(name, _)| name == variant) {
+                                        self.errors.push(CompileError::name_error(
+                                            format!(
+                                                "enum '{}' has no variant '{}'",
+                                                enum_name, variant
+                                            ),
+                                            *span,
+                                        ));
+                                    }
+                                }
+                            }
+                            // Declare bindings in arm body scope
+                            if !bindings.is_empty() {
+                                self.push_scope();
+                                for binding in bindings {
+                                    self.declare(
+                                        binding,
+                                        Symbol {
+                                            name: binding.clone(),
+                                            ty: NyType::I32, // placeholder, typechecker refines
+                                            mutability: Mutability::Immutable,
+                                            span: *span,
+                                        },
+                                    );
+                                }
+                                self.resolve_expr(&arm.body);
+                                self.pop_scope();
+                                continue; // skip the resolve_expr below
+                            }
+                        }
+                        Pattern::IntLit(_, _) | Pattern::Wildcard(_) => {
+                            // Nothing to resolve
+                        }
+                    }
+                    self.resolve_expr(&arm.body);
+                }
+            }
+            // ---- Phase 4: Tuple literal ----
+            Expr::TupleLit { elements, .. } => {
+                for elem in elements {
+                    self.resolve_expr(elem);
+                }
+            }
+            // ---- Phase 4: Tuple index ----
+            Expr::TupleIndex { object, .. } => {
+                self.resolve_expr(object);
+            }
+            // ---- Phase C: Try ----
+            Expr::Try { operand, .. } => {
+                self.resolve_expr(operand);
+            }
+            // ---- Phase 11: Lambda ----
+            Expr::Lambda { params, body, .. } => {
+                self.push_scope();
+                for p in params {
+                    if let Some(ty) = self.resolve_type_annotation(&p.ty) {
+                        self.declare(
+                            &p.name,
+                            Symbol {
+                                name: p.name.clone(),
+                                ty,
+                                mutability: Mutability::Immutable,
+                                span: p.span,
+                            },
+                        );
+                    }
+                }
+                self.resolve_expr(body);
+                self.pop_scope();
             }
         }
     }
@@ -450,6 +756,29 @@ impl Resolver {
                 self.loop_depth -= 1;
                 self.pop_scope();
             }
+            // ---- ForIn ----
+            Stmt::ForIn {
+                var,
+                collection,
+                body,
+                span,
+            } => {
+                self.resolve_expr(collection);
+                self.push_scope();
+                self.declare(
+                    var,
+                    Symbol {
+                        name: var.clone(),
+                        ty: NyType::I32, // placeholder
+                        mutability: Mutability::Immutable,
+                        span: *span,
+                    },
+                );
+                self.loop_depth += 1;
+                self.resolve_expr(body);
+                self.loop_depth -= 1;
+                self.pop_scope();
+            }
             // ---- Phase 2: Break / Continue ----
             Stmt::Break { span } => {
                 if self.loop_depth == 0 {
@@ -465,6 +794,68 @@ impl Resolver {
                         "'continue' used outside of a loop",
                         *span,
                     ));
+                }
+            }
+            // ---- if let ----
+            Stmt::IfLet {
+                pattern,
+                expr,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.resolve_expr(expr);
+                // Declare bindings from pattern in then_body scope
+                if let Pattern::EnumVariant { bindings, .. } = pattern {
+                    self.push_scope();
+                    for binding in bindings {
+                        self.declare(
+                            binding,
+                            Symbol {
+                                name: binding.clone(),
+                                ty: NyType::I32,
+                                mutability: Mutability::Immutable,
+                                span: expr.span(),
+                            },
+                        );
+                    }
+                    self.resolve_expr(then_body);
+                    self.pop_scope();
+                } else {
+                    self.resolve_expr(then_body);
+                }
+                if let Some(eb) = else_body {
+                    self.resolve_expr(eb);
+                }
+            }
+            // ---- Phase 5: Defer ----
+            Stmt::Defer { body, .. } => {
+                self.resolve_expr(body);
+            }
+            // ---- Phase 6: Loop ----
+            Stmt::Loop { body, .. } => {
+                self.loop_depth += 1;
+                self.resolve_expr(body);
+                self.loop_depth -= 1;
+            }
+            // ---- Phase 4: Tuple destructure ----
+            Stmt::TupleDestructure {
+                names,
+                mutability,
+                init,
+                span,
+            } => {
+                self.resolve_expr(init);
+                for name in names {
+                    self.declare(
+                        name,
+                        Symbol {
+                            name: name.clone(),
+                            ty: NyType::I32, // Placeholder; type checker will refine
+                            mutability: *mutability,
+                            span: *span,
+                        },
+                    );
                 }
             }
         }
@@ -516,4 +907,5 @@ impl Resolver {
 pub struct ResolvedInfo {
     pub functions: HashMap<String, (Vec<NyType>, NyType, Span)>,
     pub structs: HashMap<String, Vec<(String, NyType)>>,
+    pub enums: HashMap<String, Vec<(String, Vec<NyType>)>>,
 }

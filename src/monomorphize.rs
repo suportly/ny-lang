@@ -173,7 +173,7 @@ fn collect_specializations_in_expr(
                     for (i, arg) in args.iter().enumerate() {
                         if let Some(param) = params.get(i) {
                             if let TypeAnnotation::Named { name, .. } = &param.ty {
-                                if type_params.contains(name) {
+                                if type_params.iter().any(|tp| &tp.name == name) {
                                     if let Some(concrete) = env.infer(arg) {
                                         type_map.insert(name.clone(), concrete);
                                     }
@@ -185,7 +185,7 @@ fn collect_specializations_in_expr(
                     if type_map.len() == type_params.len() {
                         let concrete_types: Vec<NyType> = type_params
                             .iter()
-                            .map(|tp| type_map.get(tp).cloned().unwrap_or(NyType::I32))
+                            .map(|tp| type_map.get(&tp.name).cloned().unwrap_or(NyType::I32))
                             .collect();
                         specs.push((callee.clone(), concrete_types));
                     }
@@ -309,7 +309,7 @@ fn specialize_function(template: &Item, concrete_types: &[NyType]) -> Option<Ite
         let type_map: HashMap<String, NyType> = type_params
             .iter()
             .zip(concrete_types.iter())
-            .map(|(tp, ct)| (tp.clone(), ct.clone()))
+            .map(|(tp, ct)| (tp.name.clone(), ct.clone()))
             .collect();
 
         let mangled_name = mangle_name(name, concrete_types);
@@ -568,7 +568,7 @@ fn specialize_enum(template: &Item, type_args: &[String]) -> Option<Item> {
         let type_map: HashMap<String, String> = type_params
             .iter()
             .zip(type_args.iter())
-            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .map(|(tp, arg)| (tp.name.clone(), arg.clone()))
             .collect();
 
         let mangled_name = format!("{}_{}", name, type_args.join("_"));
@@ -607,7 +607,7 @@ fn specialize_struct(template: &Item, type_args: &[String]) -> Option<Item> {
         let type_map: HashMap<String, String> = type_params
             .iter()
             .zip(type_args.iter())
-            .map(|(tp, arg)| (tp.clone(), arg.clone()))
+            .map(|(tp, arg)| (tp.name.clone(), arg.clone()))
             .collect();
 
         let mangled_name = format!("{}_{}", name, type_args.join("_"));

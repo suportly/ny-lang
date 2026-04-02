@@ -1294,13 +1294,16 @@ impl TypeChecker {
                     if !has_wildcard {
                         for (variant_name, _) in variants {
                             if !covered_variants.contains(variant_name) {
-                                self.errors.push(CompileError::type_error(
-                                    format!(
-                                        "non-exhaustive match: variant '{}::{}' not covered",
-                                        name, variant_name
-                                    ),
-                                    *span,
-                                ));
+                                self.errors.push(
+                                    CompileError::type_error(
+                                        format!(
+                                            "non-exhaustive match: variant '{}::{}' not covered",
+                                            name, variant_name
+                                        ),
+                                        *span,
+                                    )
+                                    .with_note("consider adding a wildcard arm: _ => { ... }"),
+                                );
                             }
                         }
                     }

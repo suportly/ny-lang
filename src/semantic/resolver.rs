@@ -79,6 +79,30 @@ impl Resolver {
         BUILTIN_FUNCTIONS.contains(&name)
     }
 
+    /// Find a similar name in scope for "did you mean?" suggestions.
+    fn find_similar_name(&self, name: &str) -> Option<String> {
+        let mut best: Option<(String, usize)> = None;
+        for scope in &self.scopes {
+            for key in scope.keys() {
+                let dist = crate::common::edit_distance(name, key);
+                if dist <= 2 && dist < name.len() {
+                    if best.as_ref().is_none_or(|(_, d)| dist < *d) {
+                        best = Some((key.clone(), dist));
+                    }
+                }
+            }
+        }
+        for key in self.functions.keys() {
+            let dist = crate::common::edit_distance(name, key);
+            if dist <= 2 && dist < name.len() {
+                if best.as_ref().is_none_or(|(_, d)| dist < *d) {
+                    best = Some((key.clone(), dist));
+                }
+            }
+        }
+        best.map(|(name, _)| name)
+    }
+
     /// Resolve a TypeAnnotation into a NyType, reporting errors for unknown types.
     fn resolve_type_annotation(&mut self, annotation: &TypeAnnotation) -> Option<NyType> {
         match annotation {
@@ -403,10 +427,14 @@ impl Resolver {
                     && !self.structs.contains_key(name)
                     && !self.enums.contains_key(name)
                 {
-                    self.errors.push(CompileError::name_error(
+                    let mut err = CompileError::name_error(
                         format!("undeclared variable '{}'", name),
                         *span,
-                    ));
+                    );
+                    if let Some(suggestion) = self.find_similar_name(name) {
+                        err = err.with_note(format!("did you mean '{}'?", suggestion));
+                    }
+                    self.errors.push(err);
                 }
             }
             Expr::BinOp { lhs, rhs, .. } => {
@@ -878,10 +906,14 @@ impl Resolver {
         match target {
             AssignTarget::Var(name) => match self.resolve_name(name) {
                 None => {
-                    self.errors.push(CompileError::name_error(
+                    let mut err = CompileError::name_error(
                         format!("undeclared variable '{}'", name),
                         span,
-                    ));
+                    );
+                    if let Some(suggestion) = self.find_similar_name(name) {
+                        err = err.with_note(format!("did you mean '{}'?", suggestion));
+                    }
+                    self.errors.push(err);
                 }
                 Some(sym) if sym.mutability == Mutability::Immutable => {
                     let decl_span = sym.span;
@@ -890,7 +922,8 @@ impl Resolver {
                             format!("cannot assign to immutable variable '{}'", name),
                             span,
                         )
-                        .with_secondary(decl_span, "declared as immutable here".to_string()),
+                        .with_secondary(decl_span, "declared as immutable here".to_string())
+                        .with_note("use ':~' to declare a mutable variable: x :~ type = value".to_string()),
                     );
                 }
                 Some(_) => {}

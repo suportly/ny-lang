@@ -5,11 +5,20 @@ pub struct Program {
     pub items: Vec<Item>,
 }
 
+/// A generic type parameter, optionally with trait bounds.
+/// e.g. `T`, `T: Ord`, `T: Display + Debug`
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    pub name: String,
+    pub bounds: Vec<String>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub enum Item {
     FunctionDef {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         params: Vec<Param>,
         return_type: TypeAnnotation,
         body: Expr,
@@ -17,13 +26,13 @@ pub enum Item {
     },
     StructDef {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         fields: Vec<(String, TypeAnnotation)>,
         span: Span,
     },
     EnumDef {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         variants: Vec<EnumVariantDef>,
         span: Span,
     },

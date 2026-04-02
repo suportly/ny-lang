@@ -251,6 +251,38 @@ fn test_fstring() {
 }
 
 #[test]
+fn test_fstring_expr() {
+    let tmp = TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    Command::cargo_bin("ny")
+        .unwrap()
+        .args(["build", "tests/fixtures/valid/fstring_expr.ny", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let out = process::Command::new(&output).output().expect("failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("sum=42"), "stdout: {}", stdout);
+    assert!(stdout.contains("double=20"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
+}
+
+#[test]
+fn test_vec_i8() {
+    assert_eq!(compile_and_run("vec_i8.ny"), 42);
+}
+
+#[test]
+fn test_vec_bool() {
+    assert_eq!(compile_and_run("vec_bool.ny"), 23);
+}
+
+#[test]
+fn test_trait_bounds() {
+    assert_eq!(compile_and_run("trait_bounds.ny"), 42);
+}
+
+#[test]
 fn test_generic_enum_ergonomic() {
     assert_eq!(compile_and_run("generic_enum_ergonomic.ny"), 42);
 }

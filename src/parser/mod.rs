@@ -6,6 +6,22 @@ use crate::lexer::token::{Token, TokenKind};
 use ast::*;
 use precedence::{infix_bp, prefix_bp};
 
+/// Parse a single expression from a source fragment (used for f-string interpolation).
+fn parse_expression_from_source(source: &str, span: Span) -> Result<Expr, CompileError> {
+    let tokens = crate::lexer::tokenize(source).map_err(|errs| {
+        let mut e = errs.into_iter().next().unwrap();
+        e.message = format!("in f-string expression: {}", e.message);
+        e.span = span;
+        e
+    })?;
+    let mut parser = Parser::new(tokens);
+    parser.parse_expr(0).map_err(|mut e| {
+        e.message = format!("in f-string expression: {}", e.message);
+        e.span = span;
+        e
+    })
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -55,6 +71,23 @@ impl Parser {
                 self.peek_span(),
             )),
         }
+    }
+
+    /// Parse optional trait bounds after a type parameter name: `: Trait1 + Trait2`
+    fn parse_type_param_bounds(&mut self) -> Result<Vec<String>, CompileError> {
+        let mut bounds = Vec::new();
+        if *self.peek() == TokenKind::Colon {
+            self.advance(); // consume :
+            loop {
+                let (trait_name, _) = self.expect_ident()?;
+                bounds.push(trait_name);
+                if *self.peek() != TokenKind::Plus {
+                    break;
+                }
+                self.advance(); // consume +
+            }
+        }
+        Ok(bounds)
     }
 
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, CompileError> {
@@ -254,8 +287,9 @@ impl Parser {
                 if !type_params.is_empty() {
                     self.expect(&TokenKind::Comma)?;
                 }
-                let (tp, _) = self.expect_ident()?;
-                type_params.push(tp);
+                let (tp_name, tp_span) = self.expect_ident()?;
+                let bounds = self.parse_type_param_bounds()?;
+                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
             }
             self.expect(&TokenKind::Gt)?;
         }
@@ -296,8 +330,9 @@ impl Parser {
                 if !type_params.is_empty() {
                     self.expect(&TokenKind::Comma)?;
                 }
-                let (tp, _) = self.expect_ident()?;
-                type_params.push(tp);
+                let (tp_name, tp_span) = self.expect_ident()?;
+                let bounds = self.parse_type_param_bounds()?;
+                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
             }
             self.expect(&TokenKind::Gt)?;
         }
@@ -532,7 +567,7 @@ impl Parser {
         self.expect(&TokenKind::Fn)?;
         let (name, _) = self.expect_ident()?;
 
-        // Parse optional type parameters: <T, U, ...>
+        // Parse optional type parameters: <T, U, ...> or <T: Trait, U: A + B>
         let mut type_params = Vec::new();
         if *self.peek() == TokenKind::Lt {
             self.advance(); // consume <
@@ -540,8 +575,9 @@ impl Parser {
                 if !type_params.is_empty() {
                     self.expect(&TokenKind::Comma)?;
                 }
-                let (tp_name, _) = self.expect_ident()?;
-                type_params.push(tp_name);
+                let (tp_name, tp_span) = self.expect_ident()?;
+                let bounds = self.parse_type_param_bounds()?;
+                type_params.push(TypeParam { name: tp_name, bounds, span: tp_span });
             }
             self.expect(&TokenKind::Gt)?;
         }
@@ -1067,7 +1103,7 @@ impl Parser {
         })
     }
 
-    fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, CompileError> {
+    pub(crate) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, CompileError> {
         let mut lhs = self.parse_prefix()?;
 
         loop {
@@ -1438,15 +1474,14 @@ impl Parser {
                 expr_str.clear();
             } else if ch == '}' && in_expr {
                 in_expr = false;
-                // The expression inside {} is just an identifier name for simplicity
-                let expr_name = expr_str.trim().to_string();
-                // Wrap in to_str(ident)
+                let trimmed = expr_str.trim();
+                if trimmed.is_empty() {
+                    return Err(CompileError::syntax("empty expression in f-string", span));
+                }
+                let inner_expr = parse_expression_from_source(trimmed, span)?;
                 parts.push(Expr::Call {
                     callee: "to_str".to_string(),
-                    args: vec![Expr::Ident {
-                        name: expr_name,
-                        span,
-                    }],
+                    args: vec![inner_expr],
                     span,
                 });
                 expr_str.clear();

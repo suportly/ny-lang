@@ -193,9 +193,6 @@ fn emit_object_file(module: &Module, path: &Path, opt_level: u8) -> Result<(), V
 }
 
 fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<CompileError>> {
-    // Find the runtime directory (relative to the ny binary or cargo manifest)
-    let runtime_c = find_runtime_file("hashmap.c");
-
     let mut cmd = Command::new("cc");
     cmd.arg(obj_path)
         .arg("-o")
@@ -204,9 +201,11 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg("-lm")
         .arg("-lc");
 
-    // If runtime C file exists, compile and link it too
-    if let Some(rt_path) = &runtime_c {
-        cmd.arg(rt_path);
+    // Link all runtime C files (hashmap.c, arena.c, etc.)
+    for rt_name in &["hashmap.c", "arena.c"] {
+        if let Some(rt_path) = find_runtime_file(rt_name) {
+            cmd.arg(rt_path);
+        }
     }
 
     let status = cmd.status().map_err(|e| {
@@ -478,7 +477,8 @@ impl<'ctx> CodeGen<'ctx> {
                         "read_line" | "int_to_str" => NyType::Str,
                         "vec_new" => NyType::Vec(Box::new(NyType::I32)),
                         "vec_len" | "map_len" => NyType::I64,
-                        "map_new" => NyType::Pointer(Box::new(NyType::U8)),
+                        "map_new" | "arena_new" | "arena_alloc" => NyType::Pointer(Box::new(NyType::U8)),
+                        "arena_bytes_used" => NyType::I64,
                         "map_get" => NyType::I32,
                         "map_contains" => NyType::Bool,
                         _ => NyType::Unit,
@@ -1100,6 +1100,48 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     self.builder.build_unreachable().unwrap();
                     return Ok(None);
+                }
+
+                // Arena builtins — call C runtime functions
+                if callee == "arena_new" {
+                    let size_hint = self.compile_expr(&args[0], function)?.unwrap();
+                    let size_i64 = self.builder.build_int_s_extend_or_bit_cast(
+                        size_hint.into_int_value(), self.context.i64_type(), "arena_size"
+                    ).unwrap();
+                    let arena_fn = self.get_or_declare_ny_arena_new();
+                    let ptr = self.builder.build_call(arena_fn, &[size_i64.into()], "arena").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+                if callee == "arena_alloc" {
+                    let arena = self.compile_expr(&args[0], function)?.unwrap();
+                    let size = self.compile_expr(&args[1], function)?.unwrap();
+                    let size_i64 = self.builder.build_int_s_extend_or_bit_cast(
+                        size.into_int_value(), self.context.i64_type(), "alloc_size"
+                    ).unwrap();
+                    let alloc_fn = self.get_or_declare_ny_arena_alloc();
+                    let ptr = self.builder.build_call(alloc_fn, &[arena.into(), size_i64.into()], "arena_ptr").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+                if callee == "arena_free" {
+                    let arena = self.compile_expr(&args[0], function)?.unwrap();
+                    let free_fn = self.get_or_declare_ny_arena_free();
+                    self.builder.build_call(free_fn, &[arena.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "arena_reset" {
+                    let arena = self.compile_expr(&args[0], function)?.unwrap();
+                    let reset_fn = self.get_or_declare_ny_arena_reset();
+                    self.builder.build_call(reset_fn, &[arena.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "arena_bytes_used" {
+                    let arena = self.compile_expr(&args[0], function)?.unwrap();
+                    let bytes_fn = self.get_or_declare_ny_arena_bytes_used();
+                    let result = self.builder.build_call(bytes_fn, &[arena.into()], "arena_used").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
                 }
 
                 // Handle map_new() → calls ny_map_new() from runtime
@@ -4629,6 +4671,39 @@ impl<'ctx> CodeGen<'ctx> {
             .unwrap();
 
         Ok(())
+    }
+
+    fn get_or_declare_ny_arena_new(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_arena_new") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        self.module.add_function("ny_arena_new", ptr_ty.fn_type(&[i64_ty.into()], false), None)
+    }
+
+    fn get_or_declare_ny_arena_alloc(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_arena_alloc") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        self.module.add_function("ny_arena_alloc", ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false), None)
+    }
+
+    fn get_or_declare_ny_arena_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_arena_free") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_arena_free", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+    }
+
+    fn get_or_declare_ny_arena_reset(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_arena_reset") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_arena_reset", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+    }
+
+    fn get_or_declare_ny_arena_bytes_used(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_arena_bytes_used") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        self.module.add_function("ny_arena_bytes_used", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
 
     fn get_or_declare_ny_map_new(&self) -> FunctionValue<'ctx> {

@@ -554,6 +554,24 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
 
+                // Arena builtins
+                if callee == "arena_new" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "arena_alloc" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "arena_free" || callee == "arena_reset" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                if callee == "arena_bytes_used" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I64;
+                }
+
                 // Built-in map_new() -> *u8 (opaque HashMap pointer)
                 if callee == "map_new" {
                     return NyType::Pointer(Box::new(NyType::U8));

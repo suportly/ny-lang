@@ -115,6 +115,30 @@ fn test_multi_error_recovery() {
 }
 
 #[test]
+fn test_wrong_arg_count() {
+    compile_invalid("wrong_arg_count.ny")
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("expects 2 arguments, found 3"));
+}
+
+#[test]
+fn test_undefined_function() {
+    compile_invalid("undefined_function.ny")
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("undeclared function 'does_not_exist'"));
+}
+
+#[test]
+fn test_return_type_mismatch() {
+    compile_invalid("return_type_mismatch.ny")
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("expected 'i32', found 'str'"));
+}
+
+#[test]
 fn test_nonexistent_file() {
     let mut cmd = Command::cargo_bin("ny").unwrap();
     cmd.arg("build").arg("nonexistent.lnge");

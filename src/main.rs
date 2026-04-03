@@ -270,17 +270,17 @@ fn main() {
                 process::exit(0);
             }
 
+            let total_start = std::time::Instant::now();
             println!("running {} tests", test_fns.len());
 
-            // For each test function, generate a wrapper program that calls it
             let mut passed = 0;
             let mut failed = 0;
 
-            // Remove existing main function from source using simple text matching
             let source_no_main = remove_main_function(&source);
 
             for (test_name, returns_i32) in &test_fns {
-                // Build a wrapper: main() calls test_fn()
+                let test_start = std::time::Instant::now();
+
                 let wrapper_source = if *returns_i32 {
                     format!(
                         "{}\nfn main() -> i32 {{ return {}(); }}",
@@ -297,28 +297,46 @@ fn main() {
                 let tmp_src = tmp_dir.join(format!("ny_test_{}.ny", test_name));
                 let tmp_out = tmp_dir.join(format!("ny_test_{}", test_name));
 
-                // Only compile tests that have void/unit return (return 0 on success)
                 std::fs::write(&tmp_src, &wrapper_source).unwrap();
 
                 match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe") {
                     Ok(()) => {
-                        let status = process::Command::new(&tmp_out)
-                            .status()
+                        let output = process::Command::new(&tmp_out)
+                            .output()
                             .unwrap_or_else(|_| process::exit(1));
-                        if status.success() {
-                            println!("  test {} ... ok", test_name);
+                        let elapsed = test_start.elapsed();
+                        if output.status.success() {
+                            println!(
+                                "  test {} ... ok ({:.0}ms)",
+                                test_name,
+                                elapsed.as_secs_f64() * 1000.0
+                            );
                             passed += 1;
                         } else {
                             println!(
-                                "  test {} ... FAILED (exit code {})",
+                                "  test {} ... FAILED (exit code {}, {:.0}ms)",
                                 test_name,
-                                status.code().unwrap_or(-1)
+                                output.status.code().unwrap_or(-1),
+                                elapsed.as_secs_f64() * 1000.0
                             );
+                            // Show stderr if any
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            if !stderr.is_empty() {
+                                eprintln!("    {}", stderr.trim().replace('\n', "\n    "));
+                            }
                             failed += 1;
                         }
                     }
-                    Err(_errors) => {
-                        println!("  test {} ... FAILED (compile error)", test_name);
+                    Err(errors) => {
+                        let elapsed = test_start.elapsed();
+                        println!(
+                            "  test {} ... FAILED (compile error, {:.0}ms)",
+                            test_name,
+                            elapsed.as_secs_f64() * 1000.0
+                        );
+                        for err in &errors {
+                            eprintln!("    error: {}", err.message);
+                        }
                         failed += 1;
                     }
                 }
@@ -327,7 +345,13 @@ fn main() {
                 let _ = std::fs::remove_file(&tmp_out);
             }
 
-            println!("\ntest result: {} passed, {} failed", passed, failed);
+            let total_elapsed = total_start.elapsed();
+            println!(
+                "\ntest result: {} passed, {} failed ({:.0}ms)",
+                passed,
+                failed,
+                total_elapsed.as_secs_f64() * 1000.0
+            );
             if failed > 0 {
                 process::exit(1);
             }

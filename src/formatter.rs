@@ -93,9 +93,22 @@ impl<'a> Fmt<'a> {
                     out.push_str(&c.text);
                     out.push('\n');
                 }
+                // Skip non-standalone (inline) — they're handled by emit_trailing_comment
                 self.next_comment += 1;
             } else {
                 break;
+            }
+        }
+    }
+
+    /// If there's a trailing comment on `line`, append it to the output.
+    /// Must be called AFTER emitting the statement but BEFORE the newline.
+    fn emit_trailing_comment(&self, out: &mut String, line: usize) {
+        for c in &self.comments {
+            if c.line == line && !c.standalone {
+                out.push_str(" ");
+                out.push_str(&c.text);
+                return;
             }
         }
     }
@@ -354,10 +367,21 @@ fn format_expr_with_comments(out: &mut String, expr: &Expr, depth: usize, f: &mu
     {
         out.push_str("{\n");
         for stmt in stmts {
+            let stmt_line = f.line_of(stmt_span(stmt));
             if f.has_source() {
-                f.emit_comments_before(out, f.line_of(stmt_span(stmt)), depth + 1);
+                f.emit_comments_before(out, stmt_line, depth + 1);
             }
             format_stmt(out, stmt, depth + 1, f);
+            // Append trailing comment if one exists on this line
+            if f.has_source() && out.ends_with('\n') {
+                let mut trail = String::new();
+                f.emit_trailing_comment(&mut trail, stmt_line);
+                if !trail.is_empty() {
+                    out.pop(); // remove '\n'
+                    out.push_str(&trail);
+                    out.push('\n');
+                }
+            }
         }
         if let Some(te) = tail_expr {
             indent(out, depth + 1);

@@ -1510,6 +1510,12 @@ impl TypeChecker {
                 }
                 "pop" => return *elem.clone(),
                 "sort" | "reverse" | "clear" => return NyType::Unit,
+                "map" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::Vec(elem.clone());
+                }
                 "contains" => {
                     if args.len() == 1 {
                         self.check_expr(&args[0]);

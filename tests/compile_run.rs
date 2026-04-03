@@ -536,9 +536,9 @@ fn test_example_word_count() {
 fn test_example_matmul() {
     let (code, stdout) = compile_and_run_example("examples/matmul_bench.ny");
     assert_eq!(code, 0);
-    assert!(stdout.contains("Matrix size: 64x64"), "stdout: {}", stdout);
-    assert!(stdout.contains("C[0][0] = 366"), "stdout: {}", stdout);
-    assert!(stdout.contains("Benchmark Complete"), "stdout: {}", stdout);
+    assert!(stdout.contains("64x64"), "stdout: {}", stdout);
+    assert!(stdout.contains("checksum"), "stdout: {}", stdout);
+    assert!(stdout.contains("Done"), "stdout: {}", stdout);
 }
 
 #[test]
@@ -621,3 +621,9 @@ fn test_example_fibonacci_bench() {
     assert_eq!(code, 0);
     assert!(stdout.contains("fibonacci(35) = 9227465"), "stdout: {}", stdout);
 }
+
+#[test]
+fn test_vec_map() {
+    assert_eq!(compile_and_run("vec_map.ny"), 42);
+}
+

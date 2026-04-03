@@ -2615,6 +2615,231 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(done_bb);
                             return Ok(None);
                         }
+                        "map" => {
+                            // v.map(fn) -> Vec<T> — apply function to each element
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "map_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "map_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            // Get the function pointer from the argument
+                            let fn_ptr_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_pointer_value();
+
+                            // Create result Vec inline
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let initial_cap = i64_ty.const_int(8, false);
+                            let elem_sz = elem_llvm.size_of().unwrap();
+                            let alloc_sz = self
+                                .builder
+                                .build_int_mul(initial_cap, elem_sz, "map_alloc")
+                                .unwrap();
+                            let malloc_fn = self.get_or_declare_malloc();
+                            let new_data = self
+                                .builder
+                                .build_call(malloc_fn, &[alloc_sz.into()], "map_data")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let new_vec_ptr = self
+                                .builder
+                                .build_alloca(vec_struct_ty, "map_vec")
+                                .unwrap();
+                            // Init: {data, len=0, cap=8, elem_size}
+                            let dg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "mv_dg").unwrap();
+                            self.builder.build_store(dg, new_data).unwrap();
+                            let lg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "mv_lg").unwrap();
+                            self.builder.build_store(lg, zero).unwrap();
+                            let cg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "mv_cg").unwrap();
+                            self.builder.build_store(cg, initial_cap).unwrap();
+                            let eg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "mv_eg").unwrap();
+                            self.builder.build_store(eg, elem_sz).unwrap();
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "map_loop");
+                            let body_bb =
+                                self.context.append_basic_block(*function, "map_body");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "map_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "map_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "map_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[i_val], "map_ep",
+                                    )
+                                    .unwrap()
+                            };
+                            let elem_val = self
+                                .builder
+                                .build_load(elem_llvm, elem_ptr, "map_ev")
+                                .unwrap();
+
+                            // Call the function pointer with the element
+                            let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
+                            let mapped = self
+                                .builder
+                                .build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap();
+
+                            // Push to new vec (inline push: load len, store at data[len], inc len)
+                            let nv_data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "nv_dg")
+                                .unwrap();
+                            let nv_len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "nv_lg")
+                                .unwrap();
+                            let nv_cap_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "nv_cg")
+                                .unwrap();
+
+                            let nv_data = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    nv_data_gep,
+                                    "nv_d",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let nv_len = self
+                                .builder
+                                .build_load(i64_ty, nv_len_gep, "nv_l")
+                                .unwrap()
+                                .into_int_value();
+                            let nv_cap = self
+                                .builder
+                                .build_load(i64_ty, nv_cap_gep, "nv_c")
+                                .unwrap()
+                                .into_int_value();
+
+                            // Check capacity, grow if needed
+                            let needs_grow = self
+                                .builder
+                                .build_int_compare(IntPredicate::UGE, nv_len, nv_cap, "nv_grow")
+                                .unwrap();
+                            let grow_bb =
+                                self.context.append_basic_block(*function, "map_grow");
+                            let push_bb =
+                                self.context.append_basic_block(*function, "map_push");
+                            self.builder
+                                .build_conditional_branch(needs_grow, grow_bb, push_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(grow_bb);
+                            let new_cap = self
+                                .builder
+                                .build_int_mul(
+                                    nv_cap,
+                                    i64_ty.const_int(2, false),
+                                    "nv_nc",
+                                )
+                                .unwrap();
+                            let new_size = self
+                                .builder
+                                .build_int_mul(new_cap, elem_llvm.size_of().unwrap(), "nv_ns")
+                                .unwrap();
+                            let realloc_fn = self.get_or_declare_realloc();
+                            let new_data = self
+                                .builder
+                                .build_call(
+                                    realloc_fn,
+                                    &[nv_data.into(), new_size.into()],
+                                    "nv_nd",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+                            self.builder.build_store(nv_data_gep, new_data).unwrap();
+                            self.builder.build_store(nv_cap_gep, new_cap).unwrap();
+                            self.builder
+                                .build_unconditional_branch(push_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(push_bb);
+                            let cur_data = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    nv_data_gep,
+                                    "nv_cd",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let cur_len = self
+                                .builder
+                                .build_load(i64_ty, nv_len_gep, "nv_cl")
+                                .unwrap()
+                                .into_int_value();
+                            let dest = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, cur_data, &[cur_len], "nv_dp",
+                                    )
+                                    .unwrap()
+                            };
+                            self.builder.build_store(dest, mapped).unwrap();
+                            let new_len = self
+                                .builder
+                                .build_int_add(cur_len, one, "nv_nl")
+                                .unwrap();
+                            self.builder.build_store(nv_len_gep, new_len).unwrap();
+
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "map_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, push_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            let result =
+                                self.builder
+                                    .build_load(vec_struct_ty, new_vec_ptr, "map_result")
+                                    .unwrap();
+                            return Ok(Some(result));
+                        }
                         "contains" | "index_of" => {
                             // v.contains(val) -> bool / v.index_of(val) -> i32
                             let obj_val = self.compile_expr(object, function)?.unwrap();

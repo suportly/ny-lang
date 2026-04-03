@@ -154,7 +154,7 @@ impl<'ctx> CodeGen<'ctx> {
                         "get" | "pop" => *elem.clone(),
                         "contains" => NyType::Bool,
                         "index_of" => NyType::I32,
-                        "map" => NyType::Vec(elem.clone()),
+                        "map" | "filter" => NyType::Vec(elem.clone()),
                         _ => NyType::Unit,
                     },
                     NyType::Slice(_) => match method.as_str() {

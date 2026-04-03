@@ -627,3 +627,8 @@ fn test_vec_map() {
     assert_eq!(compile_and_run("vec_map.ny"), 42);
 }
 
+#[test]
+fn test_vec_filter() {
+    assert_eq!(compile_and_run("vec_filter.ny"), 42);
+}
+

@@ -1510,7 +1510,7 @@ impl TypeChecker {
                 }
                 "pop" => return *elem.clone(),
                 "sort" | "reverse" | "clear" => return NyType::Unit,
-                "map" => {
+                "map" | "filter" => {
                     if args.len() == 1 {
                         self.check_expr(&args[0]);
                     }

@@ -2840,6 +2840,136 @@ impl<'ctx> CodeGen<'ctx> {
                                     .unwrap();
                             return Ok(Some(result));
                         }
+                        "filter" => {
+                            // v.filter(predicate_fn) -> Vec<T> — keep elements where fn returns true
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "fil_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "fil_len")
+                                .unwrap()
+                                .into_int_value();
+                            let fn_ptr_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let initial_cap = i64_ty.const_int(8, false);
+                            let elem_sz = elem_llvm.size_of().unwrap();
+
+                            // Allocate result vec
+                            let alloc_sz = self
+                                .builder
+                                .build_int_mul(initial_cap, elem_sz, "fil_alloc")
+                                .unwrap();
+                            let malloc_fn = self.get_or_declare_malloc();
+                            let new_data = self
+                                .builder
+                                .build_call(malloc_fn, &[alloc_sz.into()], "fil_nd")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+                            let new_vec_ptr = self
+                                .builder
+                                .build_alloca(vec_struct_ty, "fil_vec")
+                                .unwrap();
+                            let dg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fv_dg").unwrap();
+                            self.builder.build_store(dg, new_data).unwrap();
+                            let lg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fv_lg").unwrap();
+                            self.builder.build_store(lg, zero).unwrap();
+                            let cg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fv_cg").unwrap();
+                            self.builder.build_store(cg, initial_cap).unwrap();
+                            let eg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "fv_eg").unwrap();
+                            self.builder.build_store(eg, elem_sz).unwrap();
+
+                            // Loop over source
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb = self.context.append_basic_block(*function, "fil_loop");
+                            let check_bb = self.context.append_basic_block(*function, "fil_check");
+                            let push_bb = self.context.append_basic_block(*function, "fil_push");
+                            let grow_bb = self.context.append_basic_block(*function, "fil_grow");
+                            let store_bb = self.context.append_basic_block(*function, "fil_store");
+                            let skip_bb = self.context.append_basic_block(*function, "fil_skip");
+                            let done_bb = self.context.append_basic_block(*function, "fil_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi = self.builder.build_phi(i64_ty, "fil_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self.builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "fil_cond")
+                                .unwrap();
+                            self.builder.build_conditional_branch(cond, check_bb, done_bb).unwrap();
+
+                            // Call predicate
+                            self.builder.position_at_end(check_bb);
+                            let ep = unsafe {
+                                self.builder.build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "fil_ep").unwrap()
+                            };
+                            let ev = self.builder.build_load(elem_llvm, ep, "fil_ev").unwrap();
+                            let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
+                            let keep = self.builder
+                                .build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_int_value();
+                            self.builder.build_conditional_branch(keep, push_bb, skip_bb).unwrap();
+
+                            // Push element (with grow check)
+                            self.builder.position_at_end(push_bb);
+                            let nv_len_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fpl").unwrap();
+                            let nv_cap_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fpc").unwrap();
+                            let nv_data_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fpd").unwrap();
+                            let cur_len = self.builder.build_load(i64_ty, nv_len_gep, "fcl").unwrap().into_int_value();
+                            let cur_cap = self.builder.build_load(i64_ty, nv_cap_gep, "fcc").unwrap().into_int_value();
+                            let needs_grow = self.builder
+                                .build_int_compare(IntPredicate::UGE, cur_len, cur_cap, "fng")
+                                .unwrap();
+                            self.builder.build_conditional_branch(needs_grow, grow_bb, store_bb).unwrap();
+
+                            self.builder.position_at_end(grow_bb);
+                            let nc = self.builder.build_int_mul(cur_cap, i64_ty.const_int(2, false), "fnc").unwrap();
+                            let ns = self.builder.build_int_mul(nc, elem_sz, "fns").unwrap();
+                            let realloc_fn = self.get_or_declare_realloc();
+                            let cd = self.builder.build_load(self.context.ptr_type(AddressSpace::default()), nv_data_gep, "fcd").unwrap().into_pointer_value();
+                            let nd = self.builder.build_call(realloc_fn, &[cd.into(), ns.into()], "fnd").unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+                            self.builder.build_store(nv_data_gep, nd).unwrap();
+                            self.builder.build_store(nv_cap_gep, nc).unwrap();
+                            self.builder.build_unconditional_branch(store_bb).unwrap();
+
+                            self.builder.position_at_end(store_bb);
+                            let sd = self.builder.build_load(self.context.ptr_type(AddressSpace::default()), nv_data_gep, "fsd").unwrap().into_pointer_value();
+                            let sl = self.builder.build_load(i64_ty, nv_len_gep, "fsl").unwrap().into_int_value();
+                            let dp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, sd, &[sl], "fdp").unwrap() };
+                            self.builder.build_store(dp, ev).unwrap();
+                            let nl = self.builder.build_int_add(sl, one, "fnl").unwrap();
+                            self.builder.build_store(nv_len_gep, nl).unwrap();
+                            self.builder.build_unconditional_branch(skip_bb).unwrap();
+
+                            // Skip / next iteration
+                            self.builder.position_at_end(skip_bb);
+                            let next_i = self.builder.build_int_add(i_val, one, "fil_next").unwrap();
+                            i_phi.add_incoming(&[(&next_i, skip_bb)]);
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            let result = self.builder.build_load(vec_struct_ty, new_vec_ptr, "fil_result").unwrap();
+                            return Ok(Some(result));
+                        }
                         "contains" | "index_of" => {
                             // v.contains(val) -> bool / v.index_of(val) -> i32
                             let obj_val = self.compile_expr(object, function)?.unwrap();

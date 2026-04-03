@@ -5143,8 +5143,9 @@ impl<'ctx> CodeGen<'ctx> {
                     (lambda_fn, all_param_types.clone(), ret_ty),
                 );
 
-                // Save state
+                // Save state (variables + defer stack)
                 let outer_vars = self.variables.clone();
+                let outer_defers = std::mem::take(&mut self.defer_stack);
                 self.variables.clear();
                 let current_bb = self.builder.get_insert_block().unwrap();
 
@@ -5185,8 +5186,9 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_return(None).unwrap();
                 }
 
-                // Restore state
+                // Restore state (variables + defer stack)
                 self.variables = outer_vars;
+                self.defer_stack = outer_defers;
                 self.builder.position_at_end(current_bb);
 
                 let fn_ptr = lambda_fn.as_global_value().as_pointer_value();

@@ -91,6 +91,7 @@ fn main() -> i32 {
 
     // Title storage via HashMap (id -> title mapping)
     title_map := map_new();
+    defer map_free(title_map);
 
     // Add todos
     map_insert(title_map, "0", 0);
@@ -179,6 +180,7 @@ fn main() -> i32 {
 
     json_str := "{\"app\": \"ny-todo\", \"version\": 1, \"total\": 5}";
     obj := json_parse(json_str);
+    defer json_free(obj);
 
     app := json_get_str(obj, "app");
     ver := json_get_int(obj, "version");

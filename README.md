@@ -333,14 +333,26 @@ editors/
 
 ## Performance
 
-Fibonacci(40) benchmark — recursive, no memoization, x86-64 Linux:
+Benchmarks on x86-64 Linux, median of 5 runs:
 
-| Language | Time | vs C |
-|----------|------|------|
-| C (gcc -O2) | 344 ms | 1.0x |
-| **Ny (-O2)** | **508 ms** | **1.5x** |
+### Fibonacci (recursive, fib(40))
 
-Ny compiles through the same LLVM backend as Clang. On compute-heavy code with `-O2`, performance is within 1.5x of C.
+| | Time | vs C |
+|---|------|------|
+| C (gcc -O2) | 249 ms | 1.0x |
+| **Ny -O1** | **274 ms** | **1.1x** |
+| **Ny -O2** | **432 ms** | **1.7x** |
+
+### Matrix Multiply (256x256, naive triple-loop)
+
+| | Time | vs C |
+|---|------|------|
+| C (gcc -O2) | 18 ms | 1.0x |
+| **Ny -O2** | **22 ms** | **1.2x** |
+
+Ny compiles through the same LLVM backend as Clang. Performance is **1.2x-1.7x of C** depending on workload. The matmul gap (1.2x) is primarily from Vec bounds checking.
+
+See [`benchmarks/`](benchmarks/) for full results and C equivalents.
 
 ## Design Decisions
 

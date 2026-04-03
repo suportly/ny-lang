@@ -1369,6 +1369,215 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
+                // Handle str_split_count(str, delim) -> i32
+                if callee == "str_split_count" {
+                    let str_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let delim_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+
+                    let hay_ptr = self
+                        .builder
+                        .build_extract_value(str_val, 0, "sp_hay_ptr")
+                        .unwrap();
+                    let hay_len = self
+                        .builder
+                        .build_extract_value(str_val, 1, "sp_hay_len")
+                        .unwrap();
+                    let delim_ptr = self
+                        .builder
+                        .build_extract_value(delim_val, 0, "sp_dlm_ptr")
+                        .unwrap();
+                    let delim_len = self
+                        .builder
+                        .build_extract_value(delim_val, 1, "sp_dlm_len")
+                        .unwrap();
+
+                    let i64_ty = self.context.i64_type();
+                    let count_ptr = self
+                        .builder
+                        .build_alloca(i64_ty, "sp_count")
+                        .unwrap();
+
+                    let split_fn = self.get_or_declare_ny_str_split();
+                    let _parts = self
+                        .builder
+                        .build_call(
+                            split_fn,
+                            &[
+                                hay_ptr.into(),
+                                hay_len.into(),
+                                delim_ptr.into(),
+                                delim_len.into(),
+                                count_ptr.into(),
+                            ],
+                            "sp_parts",
+                        )
+                        .unwrap();
+
+                    let count = self
+                        .builder
+                        .build_load(i64_ty, count_ptr, "sp_count_val")
+                        .unwrap()
+                        .into_int_value();
+                    let count_i32 = self
+                        .builder
+                        .build_int_truncate(count, self.context.i32_type(), "sp_count_i32")
+                        .unwrap();
+                    // Free the allocated parts array
+                    let parts_ptr = _parts
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let free_fn = self.get_or_declare_free();
+                    self.builder
+                        .build_call(free_fn, &[parts_ptr.into()], "")
+                        .unwrap();
+
+                    return Ok(Some(count_i32.into()));
+                }
+
+                // Handle str_split_get(str, delim, index) -> str
+                if callee == "str_split_get" {
+                    let str_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let delim_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let idx_val = self
+                        .compile_expr(&args[2], function)?
+                        .unwrap()
+                        .into_int_value();
+
+                    let hay_ptr = self
+                        .builder
+                        .build_extract_value(str_val, 0, "sg_hay_ptr")
+                        .unwrap();
+                    let hay_len = self
+                        .builder
+                        .build_extract_value(str_val, 1, "sg_hay_len")
+                        .unwrap();
+                    let delim_ptr = self
+                        .builder
+                        .build_extract_value(delim_val, 0, "sg_dlm_ptr")
+                        .unwrap();
+                    let delim_len = self
+                        .builder
+                        .build_extract_value(delim_val, 1, "sg_dlm_len")
+                        .unwrap();
+
+                    let i64_ty = self.context.i64_type();
+                    let count_ptr = self
+                        .builder
+                        .build_alloca(i64_ty, "sg_count")
+                        .unwrap();
+
+                    let split_fn = self.get_or_declare_ny_str_split();
+                    let parts = self
+                        .builder
+                        .build_call(
+                            split_fn,
+                            &[
+                                hay_ptr.into(),
+                                hay_len.into(),
+                                delim_ptr.into(),
+                                delim_len.into(),
+                                count_ptr.into(),
+                            ],
+                            "sg_parts",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Each NyStrSlice is {ptr: *u8, len: i64} = 16 bytes
+                    // Access parts[idx]: GEP with stride of 16 bytes
+                    let idx_i64 = self
+                        .builder
+                        .build_int_z_extend_or_bit_cast(idx_val, i64_ty, "sg_idx64")
+                        .unwrap();
+
+                    // Use i8 GEP with stride 16
+                    let sixteen = i64_ty.const_int(16, false);
+                    let byte_offset = self
+                        .builder
+                        .build_int_mul(idx_i64, sixteen, "sg_off")
+                        .unwrap();
+                    let i8_ty = self.context.i8_type();
+                    let elem_ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(i8_ty, parts, &[byte_offset], "sg_elem")
+                            .unwrap()
+                    };
+
+                    // Load ptr (first 8 bytes)
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let s_ptr = self
+                        .builder
+                        .build_load(ptr_ty, elem_ptr, "sg_s_ptr")
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Load len (next 8 bytes, offset +8)
+                    let eight = i64_ty.const_int(8, false);
+                    let len_byte_off = self
+                        .builder
+                        .build_int_add(byte_offset, eight, "sg_len_off")
+                        .unwrap();
+                    let len_ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(i8_ty, parts, &[len_byte_off], "sg_len_p")
+                            .unwrap()
+                    };
+                    let s_len = self
+                        .builder
+                        .build_load(i64_ty, len_ptr, "sg_s_len")
+                        .unwrap()
+                        .into_int_value();
+
+                    // Free parts array
+                    let free_fn = self.get_or_declare_free();
+                    self.builder
+                        .build_call(free_fn, &[parts.into()], "")
+                        .unwrap();
+
+                    // Build {ptr, len} str result
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, s_ptr, 0, "sg_rp")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, s_len, 1, "sg_rl")
+                        .unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+
+                // Handle clock_ms() — monotonic millisecond timer
+                if callee == "clock_ms" {
+                    let clock_fn = self.get_or_declare_ny_clock_ms();
+                    let result = self
+                        .builder
+                        .build_call(clock_fn, &[], "clock_ms")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
                 // Handle sizeof(Type) builtin — compile-time size
                 if callee == "sizeof" {
                     // sizeof takes 1 arg — we infer its type and return the size

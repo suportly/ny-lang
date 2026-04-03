@@ -803,6 +803,27 @@ impl TypeChecker {
                 }
 
                 // Built-in sizeof(expr) -> i64
+                // clock_ms() -> i64
+                if callee == "clock_ms" {
+                    return NyType::I64;
+                }
+
+                // str_split_count(str, delim) -> i32
+                if callee == "str_split_count" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
+                // str_split_get(str, delim, index) -> str
+                if callee == "str_split_get" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Str;
+                }
+
                 if callee == "sizeof" {
                     if args.len() != 1 {
                         self.errors.push(CompileError::type_error(

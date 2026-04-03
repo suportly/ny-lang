@@ -79,6 +79,7 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 - Void functions: `fn greet() { ... }` without -> ()
 - Pointer arithmetic: `ptr + offset`, `*(ptr + n)`
 - String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`, `.index_of()`, `.trim()`, `.to_upper()`, `.to_lower()`, `.replace()`
+- String splitting: `str_split_count(s, delim)`, `str_split_get(s, delim, i)`
 
 ## Builtin Functions
 
@@ -104,6 +105,9 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 | str_to_int | (str) -> i32 | String to int |
 | exit | (i32) -> ! | Exit process |
 | sleep_ms | (i32) -> () | Sleep milliseconds |
+| clock_ms | () -> i64 | Monotonic timer (ms) |
+| str_split_count | (str, str) -> i32 | Count split parts |
+| str_split_get | (str, str, i32) -> str | Get split part by index |
 
 ## Reserved Keywords
 

@@ -361,6 +361,29 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_clock_ms(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_clock_ms") {
+            return f;
+        }
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[], false);
+        self.module.add_function("ny_clock_ms", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_str_split(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_str_split") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // NyStrSlice *ny_str_split(ptr hay, i64 hay_len, ptr delim, i64 delim_len, ptr out_count)
+        let fn_ty = ptr_ty.fn_type(
+            &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
+        self.module.add_function("ny_str_split", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_str_replace(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_str_replace") {
             return f;

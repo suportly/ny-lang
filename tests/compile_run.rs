@@ -595,3 +595,13 @@ fn test_vec_search() {
 fn test_string_replace() {
     assert_eq!(compile_and_run("string_replace.ny"), 42);
 }
+
+#[test]
+fn test_clock_ms() {
+    assert_eq!(compile_and_run("clock_ms.ny"), 42);
+}
+
+#[test]
+fn test_str_split() {
+    assert_eq!(compile_and_run("str_split.ny"), 42);
+}

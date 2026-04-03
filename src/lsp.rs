@@ -272,9 +272,20 @@ fn handle_hover(documents: &HashMap<Url, DocumentState>, uri: &Url, pos: Positio
 
 /// Build hover info from semantic analysis results.
 fn semantic_type_info(source: &str, resolved: &ResolvedInfo, name: &str) -> String {
-    // Check functions
+    // Check functions — try to get param names from source
     if let Some((param_types, ret_type, _)) = resolved.functions.get(name) {
-        let params: Vec<String> = param_types.iter().map(|t| format!("{}", t)).collect();
+        let param_names = extract_param_names(source, name);
+        let params: Vec<String> = param_types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if let Some(pname) = param_names.get(i) {
+                    format!("{}: {}", pname, t)
+                } else {
+                    format!("{}", t)
+                }
+            })
+            .collect();
         let ret = if *ret_type == NyType::Unit {
             String::new()
         } else {
@@ -677,6 +688,27 @@ fn handle_document_symbols(
     }
 
     symbols
+}
+
+/// Extract parameter names from a function definition in source.
+fn extract_param_names(source: &str, fn_name: &str) -> Vec<String> {
+    // Find "fn name(" and extract the parameter list
+    let pattern = format!("fn {}(", fn_name);
+    if let Some(start) = source.find(&pattern) {
+        let after = &source[start + pattern.len()..];
+        if let Some(end) = after.find(')') {
+            let params_str = &after[..end];
+            return params_str
+                .split(',')
+                .filter_map(|p| {
+                    let p = p.trim();
+                    p.split(':').next().map(|n| n.trim().to_string())
+                })
+                .filter(|n| !n.is_empty())
+                .collect();
+        }
+    }
+    vec![]
 }
 
 fn find_definition(source: &str, name: &str) -> Option<usize> {

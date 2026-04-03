@@ -63,6 +63,13 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "par_map" => Some(NyType::Unit),
         "par_reduce" => Some(NyType::I32),
 
+        // Timing
+        "clock_ms" => Some(NyType::I64),
+
+        // String split
+        "str_split_count" => Some(NyType::I32),
+        "str_split_get" => Some(NyType::Str),
+
         _ => None,
     }
 }
@@ -122,4 +129,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "pool_free",
     "par_map",
     "par_reduce",
+    "clock_ms",
+    "str_split_count",
+    "str_split_get",
 ];

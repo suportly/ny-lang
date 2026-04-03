@@ -648,6 +648,29 @@ fn test_closure_functional() {
 }
 
 #[test]
+fn test_thread_compute() {
+    assert_eq!(compile_and_run("thread_compute.ny"), 42);
+}
+
+#[test]
+fn test_channel_stress() {
+    assert_eq!(compile_and_run("channel_stress.ny"), 42);
+}
+
+#[test]
+fn test_pool_stress() {
+    assert_eq!(compile_and_run("pool_stress.ny"), 42);
+}
+
+#[test]
+fn test_example_parallel_sum() {
+    let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Results match!"), "stdout: {}", stdout);
+    assert!(stdout.contains("200020000"), "stdout: {}", stdout);
+}
+
+#[test]
 fn test_example_functional() {
     let (code, stdout) = compile_and_run_example("examples/functional.ny");
     assert_eq!(code, 0);

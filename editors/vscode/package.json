@@ -1,23 +1,60 @@
 {
   "name": "ny-lang",
   "displayName": "Ny Lang",
-  "description": "Language support for Ny Lang (.ny files)",
+  "description": "Language support for Ny — native-compiled language for numerical computation and ML inference",
   "version": "0.1.0",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:ny"],
+  "publisher": "ny-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suportly/ny-lang"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ny",
+    "compiler",
+    "systems",
+    "llvm",
+    "native"
+  ],
   "main": "./extension.js",
   "contributes": {
-    "languages": [{
-      "id": "ny",
-      "aliases": ["Ny", "ny"],
-      "extensions": [".ny"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "ny",
-      "scopeName": "source.ny",
-      "path": "./syntaxes/ny.tmLanguage.json"
-    }]
+    "languages": [
+      {
+        "id": "ny",
+        "aliases": [
+          "Ny",
+          "ny"
+        ],
+        "extensions": [
+          ".ny"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ny",
+        "scopeName": "source.ny",
+        "path": "./syntaxes/ny.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Ny Lang",
+      "properties": {
+        "ny.lspPath": {
+          "type": "string",
+          "default": "ny-lsp",
+          "description": "Path to the ny-lsp binary"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
   }
 }

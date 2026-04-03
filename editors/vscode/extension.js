@@ -1,11 +1,14 @@
-const { workspace, window } = require("vscode");
+const { workspace } = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
 
 let client;
 
 function activate(context) {
+  const config = workspace.getConfiguration("ny");
+  const lspPath = config.get("lspPath", "ny-lsp");
+
   const serverOptions = {
-    command: "ny-lsp",
+    command: lspPath,
     transport: TransportKind.stdio,
   };
 

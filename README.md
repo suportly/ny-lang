@@ -1,232 +1,349 @@
 # Ny Lang
 
-A low-level compiled language for AI/ML with extreme performance. Rust compiler with LLVM 18 backend, compiling to native x86-64 executables.
+A native-compiled language for numerical computation and ML inference. Compiles to x86-64 via LLVM 18 with zero runtime overhead.
 
-## Quick Example
+**No GC. No borrow checker. No VM.** Manual memory management with `defer`, immutable by default, pattern matching, generics with monomorphization.
 
-```rust
-use "math.ny";
+## Quick Start
 
-enum Result { Ok(i32), Err(i32) }
-
-fn safe_div(a: i32, b: i32) -> Result {
-    if b == 0 { return Result::Err(0); }
-    return Result::Ok(a / b);
+```ny
+fn fibonacci(n: i32) -> i32 {
+    if n <= 1 { return n; }
+    return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
 fn main() -> i32 {
-    // Generics
-    bigger := max(42, 17);
-
-    // Tagged unions + ? operator
-    val := safe_div(100, 4)?;
-
-    // Vec + for-in
-    v :~ Vec<i32> = vec_new();
-    for i in 0..10 { v.push(i * i); }
-    println(v);  // [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
-
-    // Closures with capture
-    multiplier := 3;
-    scale := |x: i32| -> i32 { return x * multiplier; };
-    println(scale(val));
-
+    start := clock_ms();
+    result := fibonacci(35);
+    elapsed := clock_ms() - start;
+    println(f"fib(35) = {result} in {elapsed}ms");
     return 0;
 }
 ```
 
 ```bash
-ny build main.ny -O 2 -o app && ./app
+ny run fib.ny        # compile + run in one step
+ny build fib.ny -O2  # optimized binary
 ```
 
-## Features
+## Features at a Glance
 
-### Type System
-- **14 scalar types** — i8/i16/i32/i64/i128, u8/u16/u32/u64/u128, f32/f64, bool, str
-- **Arrays** — `[N]T` fixed-size with bounds checking
-- **Structs** — named fields, impl blocks, methods with `self`
-- **Enums** — tagged unions with data payloads: `enum Result { Ok(i32), Err(i32) }`
-- **Tuples** — `(i32, bool)` with destructuring
-- **Slices** — `[]T` borrowed views with `.len()` and indexing
-- **Vec** — `Vec<i32>`, `Vec<f64>` dynamic arrays with push/get/len
-- **HashMap** — `map_new()` / `map_insert()` / `map_get()` string-to-int mapping
-- **Pointers** — `*T`, address-of `&`, dereference `*`, pointer arithmetic `ptr + n`
-- **Function pointers** — `fn(i32) -> i32` as first-class values
-
-### Control Flow
-- **if/else** expressions, **while** loops, **for** ranges (`0..10`, `0..=10`)
-- **for-in** iteration over arrays, slices, and Vec
-- **loop** infinite loops with break/continue
-- **match** expressions with exhaustiveness checking
-- **if let** pattern matching: `if let Ok(v) = result { ... }`
-- **defer** for deterministic cleanup (LIFO order)
-
-### Functions & Abstractions
-- **Generic functions** — `fn max<T>(a: T, b: T) -> T` with monomorphization
-- **Impl blocks** — `impl Point { fn distance(self: Point) -> f64 { ... } }`
-- **Traits** — `trait Describable { fn describe(self: T) -> i32; }` with conformance checking
-- **Lambdas** — `|x: i32| -> i32 { x * 2 }` non-capturing function pointers
-- **Closures** — `|x: i32| -> i32 { x * n }` capturing variables from outer scope
-- **Void functions** — `fn greet(name: str) { println(name); }` without `-> ()` annotation
-- **? operator** — `val := divide(10, 0)?;` error propagation on tagged unions
-
-### Memory Management
-- **Immutable by default** — `:` immutable, `:~` mutable, `::` compile-time constant
-- **Heap allocation** — `alloc(size)`, `free(ptr)`, `sizeof(expr)`
-- **defer** — automatic cleanup on all exit paths
-- **No GC** — manual memory management with zero runtime overhead
-
-### Modules & Interop
-- **Module imports** — `use "math.ny";` multi-file programs
-- **Extern C FFI** — `extern { fn abs(x: i32) -> i32; }` call any C library
-- **C runtime linking** — HashMap backed by C implementation auto-linked
-
-### Tooling
-- **ny build** — compile to native executable with `-O0` to `-O3`
-- **ny test** — run `test_*` functions with pass/fail reporting
-- **LLVM IR output** — `--emit llvm-ir` for inspection
-- **Error diagnostics** — source locations with code snippets
-
-## Builtin Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `print` | `(any) -> ()` | Print to stdout |
-| `println` | `(any) -> ()` | Print with newline |
-| `alloc` | `(i32) -> *u8` | Heap allocation |
-| `free` | `(*u8) -> ()` | Free heap memory |
-| `sizeof` | `(any) -> i64` | Size of type in bytes |
-| `vec_new` | `() -> Vec<T>` | Create empty vector |
-| `map_new` | `() -> *u8` | Create empty hashmap |
-| `map_insert` | `(*u8, str, i32) -> ()` | Insert key-value |
-| `map_get` | `(*u8, str) -> i32` | Get value by key |
-| `map_contains` | `(*u8, str) -> bool` | Check key exists |
-| `map_len` | `(*u8) -> i64` | Number of entries |
-| `fopen` | `(str, str) -> *u8` | Open file |
-| `fclose` | `(*u8) -> i32` | Close file |
-| `fwrite_str` | `(*u8, str) -> i32` | Write string to file |
-| `fread_byte` | `(*u8) -> i32` | Read byte from file |
-| `read_line` | `() -> str` | Read line from stdin |
-| `int_to_str` | `(i32) -> str` | Integer to string |
-| `str_to_int` | `(str) -> i32` | String to integer |
-| `exit` | `(i32) -> !` | Exit process |
-| `sleep_ms` | `(i32) -> ()` | Sleep milliseconds |
-
-## Language Syntax
-
-```rust
-// Variables
-x : i32 = 5;          // immutable with type
-y :~ i32 = 10;        // mutable
-z := 42;              // type inference (immutable)
-w :~= 0;              // type inference (mutable)
-PI :: f64 = 3.14;     // compile-time constant
-
-// Functions
-fn square(x: i32) -> i32 = x * x;   // expression body
-fn greet(name: str) { println(name); }  // void function
-
-// Generics
-fn max<T>(a: T, b: T) -> T { if a > b { return a; } return b; }
-
-// Structs + impl
-struct Point { x: i32, y: i32 }
-impl Point {
-    fn distance(self: Point) -> i32 { return self.x + self.y; }
+```ny
+// Generics with monomorphization
+fn max<T>(a: T, b: T) -> T {
+    if a > b { return a; }
+    return b;
 }
 
-// Enums (tagged unions)
-enum Option { Some(i32), None }
-result := Option::Some(42);
-if let Option::Some(v) = result { println(v); }
+// Tagged unions + pattern matching
+enum Result { Ok(i32), Err(i32) }
 
-// Closures
-n := 5;
-add_n := |x: i32| -> i32 { return x + n; };
+fn divide(a: i32, b: i32) -> Result {
+    if b == 0 { return Result::Err(0); }
+    return Result::Ok(a / b);
+}
 
-// Extern FFI
-extern { fn rand() -> i32; fn abs(x: i32) -> i32; }
+// ? operator for error propagation
+val := divide(100, 4)?;
+
+// Structs with methods
+struct Point { x: i32, y: i32 }
+impl Point {
+    fn magnitude(self: Point) -> i32 {
+        return self.x * self.x + self.y * self.y;
+    }
+}
+
+// Closures with capture
+multiplier := 3;
+scale := |x: i32| -> i32 { return x * multiplier; };
+
+// Vec<T> dynamic arrays
+v :~ Vec<i32> = vec_new();
+v.push(5); v.push(3); v.push(8);
+v.sort();     // [3, 5, 8]
+v.reverse();  // [8, 5, 3]
+
+// String methods
+name := "  Hello World  ";
+println(name.trim().to_lower());     // "hello world"
+println(name.contains("World"));     // true
+idx := name.index_of("World");       // 8
+
+// f-string interpolation
+println(f"max is {max(42, 17)}");
+
+// Extern C FFI
+extern { fn abs(x: i32) -> i32; }
+
+// Modules
+use "math.ny";
 ```
-
-## Performance
-
-Fibonacci(40) benchmark on x86-64 Linux with `-O2`:
-
-| Language | Avg Time | vs C |
-|----------|----------|------|
-| C (gcc -O2) | 0.25s | 1.0x |
-| **Ny (-O2)** | **0.48s** | **1.9x** |
-| Go | 0.72s | 2.9x |
-
-Ny compiles to native LLVM IR — **33% faster than Go** on compute-heavy workloads.
 
 ## Installation
 
 ### Prerequisites
 
 - Rust 1.75+ (with cargo)
-- LLVM 18.x development libraries
-- A C compiler (`cc` / `gcc` / `clang`) for linking
+- LLVM 18 development libraries
+- A C compiler (`cc`/`gcc`/`clang`) for linking
 
 ### LLVM 18 (Ubuntu/Debian)
 
 ```bash
-wget https://apt.llvm.org/llvm.sh
-chmod +x llvm.sh
+wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh
 sudo ./llvm.sh 18
 sudo apt install llvm-18-dev libpolly-18-dev
 export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
 ```
 
-### Build from source
+### Build
 
 ```bash
 git clone https://github.com/suportly/ny-lang.git
 cd ny-lang
 cargo build --release
+# Binary at target/release/ny
 ```
 
-## Usage
+## CLI
 
 ```bash
-ny build program.ny              # Compile to executable
-ny build program.ny -o app       # Custom output path
-ny build program.ny -O 2         # Optimized build
-ny build program.ny --emit llvm-ir  # Emit LLVM IR
-ny test program.ny               # Run test_* functions
+ny build file.ny           # Compile to executable
+ny build file.ny -O 2      # With optimization (0-3)
+ny build file.ny --emit llvm-ir  # Emit LLVM IR
+ny run file.ny             # Compile and run in one step
+ny test file.ny            # Run test_* functions
+ny fmt file.ny             # Print formatted source
+ny fmt file.ny --write     # Format in-place
+ny fmt file.ny --check     # Check formatting (CI mode)
+```
+
+## Language Tour
+
+### Variables
+
+```ny
+x : i32 = 5;          // immutable, explicit type
+y :~ i32 = 10;        // mutable
+z := 42;              // immutable, type inferred
+w :~= 0;              // mutable, type inferred
+```
+
+### Types
+
+14 scalar types (`i8`-`i128`, `u8`-`u128`, `f32`, `f64`, `bool`, `str`), arrays `[N]T`, slices `[]T`, pointers `*T`, tuples `(T, U)`, function types `fn(T) -> U`.
+
+### Control Flow
+
+```ny
+// if/else expressions
+result := if x > 0 { x } else { -x };
+
+// while, for-range, for-in
+while i < 10 { i += 1; }
+for i in 0..10 { println(i); }
+for item in collection { process(item); }
+
+// match with exhaustiveness checking
+val := match result {
+    Result::Ok(v) => v,
+    Result::Err(e) => { println(e); return -1; },
+};
+
+// if let, while let
+if let Option::Some(v) = maybe { println(v); }
+```
+
+### Generics & Traits
+
+```ny
+fn max<T>(a: T, b: T) -> T {
+    if a > b { return a; }
+    return b;
+}
+
+trait Describable {
+    fn describe(self: i32) -> i32;
+}
+
+struct Circle { radius: i32 }
+impl Circle {
+    fn area_approx(self: Circle) -> i32 {
+        return 3 * self.radius * self.radius;
+    }
+}
+```
+
+### Memory Management
+
+```ny
+buf := alloc(1024);        // heap allocation
+defer free(buf);           // deterministic cleanup (LIFO)
+*buf = 42 as u8;           // pointer dereference
+
+a := arena_new(4096);      // arena allocator
+defer arena_free(a);
+ptr := arena_alloc(a, 64); // bump allocation
+arena_reset(a);            // free all at once
+```
+
+### Vec\<T\>
+
+```ny
+v :~ Vec<i32> = vec_new();
+v.push(5); v.push(3); v.push(8); v.push(1);
+
+v.sort();              // [1, 3, 5, 8]
+v.reverse();           // [8, 5, 3, 1]
+len := v.len();        // 4
+val := v.get(0);       // 8
+v.set(0, 10);          // [10, 5, 3, 1]
+last := v.pop();       // 1, vec is now [10, 5, 3]
+
+if v.contains(5) { println("found"); }
+idx := v.index_of(3);  // 2
+v.clear();             // empty
+```
+
+### String Methods
+
+```ny
+s := "Hello, World!";
+
+s.len()                    // 13
+s.char_at(0)               // 72 ('H')
+s.substr(0 as i64, 5 as i64) // "Hello"
+s.contains("World")        // true
+s.starts_with("Hello")     // true
+s.ends_with("!")            // true
+s.index_of("World")        // 7
+s.trim()                   // strips whitespace
+s.to_upper()               // "HELLO, WORLD!"
+s.to_lower()               // "hello, world!"
+s.replace("World", "Ny")   // "Hello, Ny!"
+
+// Splitting
+count := str_split_count(s, ",");    // 2
+part := str_split_get(s, ",", 0);    // "Hello"
+```
+
+### File I/O
+
+```ny
+fp := fopen("data.txt\0", "w\0");
+fwrite_str(fp, "hello\0");
+fclose(fp);
+
+fp2 := fopen("data.txt\0", "r\0");
+byte := fread_byte(fp2);  // first byte
+fclose(fp2);
+```
+
+### Concurrency
+
+```ny
+// Threads
+fn worker() -> *u8 { sleep_ms(100); return alloc(1); }
+t := thread_spawn(worker);
+thread_join(t);
+
+// Channels (bounded, blocking)
+ch := channel_new(16);
+channel_send(ch, 42);
+val := channel_recv(ch);
+channel_close(ch);
+
+// Thread pool
+pool := pool_new(4);
+pool_submit(pool, work_fn);
+pool_wait(pool);
+pool_free(pool);
+```
+
+### SIMD
+
+```ny
+a := simd_splat_f32x4(3.0);   // [3, 3, 3, 3]
+b := simd_splat_f32x4(2.0);   // [2, 2, 2, 2]
+c := a * b;                     // [6, 6, 6, 6]
+total := simd_reduce_add_f32(c); // 24.0
+```
+
+## Editor Support
+
+### VS Code
+
+The [`editors/vscode/`](editors/vscode/) directory contains a VS Code extension with:
+- Syntax highlighting (TextMate grammar)
+- Language Server Protocol (diagnostics, hover, go-to-definition, completion, document symbols)
+- Auto-closing pairs, bracket matching, indentation
+
+Install locally:
+```bash
+cd editors/vscode
+npm install
+# Then in VS Code: "Developer: Install Extension from Location..."
 ```
 
 ## Examples
 
-- [`examples/benchmark/`](examples/benchmark/) — full benchmark suite (sorting, fibonacci, generics, Vec, modules)
-- [`examples/fibonacci.ny`](examples/fibonacci.ny) — recursive Fibonacci
-- [`examples/hello.ny`](examples/hello.ny) — simplest program
+| File | What it shows |
+|------|--------------|
+| [`examples/mandelbrot.ny`](examples/mandelbrot.ny) | ASCII Mandelbrot set — math, loops, extern FFI |
+| [`examples/word_count.ny`](examples/word_count.ny) | Word counting — HashMap, File I/O, string processing |
+| [`examples/matmul_bench.ny`](examples/matmul_bench.ny) | Matrix multiply — Vec, nested loops, f-strings |
+| [`examples/benchmark/`](examples/benchmark/) | Full suite — generics, sorting, modules, enums |
 
 ## Running Tests
 
 ```bash
-cargo test    # 58 tests (47 integration + 11 error)
-cargo clippy  # Lint
+cargo test    # 95 integration + error tests
+cargo clippy  # Zero warnings
 ```
 
 ## Project Structure
 
 ```
 src/
-├── main.rs           # CLI (ny build, ny test)
-├── lib.rs            # Compiler pipeline + module resolution
-├── monomorphize.rs   # Generic function specialization
-├── lexer/            # Tokenization
-├── parser/           # Pratt parser → AST
-├── semantic/         # Name resolution + type checking
-├── codegen/          # LLVM IR generation
-├── diagnostics/      # Error reporting
-└── common/           # Types, spans, errors
+├── main.rs              # CLI (ny build/run/test/fmt)
+├── lib.rs               # Compiler pipeline + module resolution
+├── lsp.rs               # Language Server Protocol
+├── formatter.rs         # ny fmt (comment-preserving)
+├── monomorphize.rs      # Generic function specialization
+├── lexer/               # Tokenization
+├── parser/              # Pratt parser -> AST
+├── semantic/            # Name resolution + type checking
+├── codegen/             # LLVM IR generation
+├── common/              # Types, spans, errors
+└── diagnostics/         # Error reporting
 runtime/
-└── hashmap.c         # C runtime for HashMap
-specs/                # Feature specifications (001–014)
-tests/                # 58 tests
+├── hashmap.c            # HashMap implementation
+├── arena.c              # Arena allocator
+├── channel.c            # Bounded channels
+├── threadpool.c         # Thread pool + parallel iterators
+└── string.c             # String helpers (split, replace, clock)
+editors/
+└── vscode/              # VS Code extension + LSP client
 ```
+
+## Design Decisions
+
+- **No GC, no borrow checker** — manual memory with `defer` as ergonomic safety net
+- **Immutable by default** — `:=` is immutable, `:~=` is mutable
+- **Monomorphization** — generics compile to specialized code, zero runtime cost
+- **LLVM backend** — same optimizer as Clang/Rust, O0-O3 optimization levels
+- **All errors are values** — tagged unions + `?` operator, no exceptions
+- **Private by default** — `pub` keyword for exports
+
+## Roadmap
+
+See [specs/ROADMAP.md](specs/ROADMAP.md) for the full strategic roadmap. Key upcoming items:
+
+- GPU compute via LLVM NVPTX backend
+- Iterator trait (map/filter/fold)
+- Package manager (`ny pkg`)
+- WASM target
 
 ## License
 

@@ -1,0 +1,3 @@
+# Ny Lang file type detection for GitHub
+*.ny linguist-language=Rust
+*.ny linguist-detectable=true

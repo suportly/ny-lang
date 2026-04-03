@@ -605,3 +605,19 @@ fn test_clock_ms() {
 fn test_str_split() {
     assert_eq!(compile_and_run("str_split.ny"), 42);
 }
+
+#[test]
+fn test_example_csv_parser() {
+    let (code, stdout) = compile_and_run_example("examples/csv_parser.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Alice: score=95"), "stdout: {}", stdout);
+    assert!(stdout.contains("Average: 86"), "stdout: {}", stdout);
+    assert!(stdout.contains("A: 2"), "stdout: {}", stdout);
+}
+
+#[test]
+fn test_example_fibonacci_bench() {
+    let (code, stdout) = compile_and_run_example("examples/fibonacci_bench.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("fibonacci(35) = 9227465"), "stdout: {}", stdout);
+}

@@ -292,6 +292,8 @@ npm install
 |------|--------------|
 | [`examples/mandelbrot.ny`](examples/mandelbrot.ny) | ASCII Mandelbrot set — math, loops, extern FFI |
 | [`examples/word_count.ny`](examples/word_count.ny) | Word counting — HashMap, File I/O, string processing |
+| [`examples/csv_parser.ny`](examples/csv_parser.ny) | CSV parsing — string split, HashMap, f-strings |
+| [`examples/fibonacci_bench.ny`](examples/fibonacci_bench.ny) | Performance benchmark with `clock_ms()` timing |
 | [`examples/matmul_bench.ny`](examples/matmul_bench.ny) | Matrix multiply — Vec, nested loops, f-strings |
 | [`examples/benchmark/`](examples/benchmark/) | Full suite — generics, sorting, modules, enums |
 
@@ -326,6 +328,17 @@ runtime/
 editors/
 └── vscode/              # VS Code extension + LSP client
 ```
+
+## Performance
+
+Fibonacci(40) benchmark — recursive, no memoization, x86-64 Linux:
+
+| Language | Time | vs C |
+|----------|------|------|
+| C (gcc -O2) | 344 ms | 1.0x |
+| **Ny (-O2)** | **508 ms** | **1.5x** |
+
+Ny compiles through the same LLVM backend as Clang. On compute-heavy code with `-O2`, performance is within 1.5x of C.
 
 ## Design Decisions
 

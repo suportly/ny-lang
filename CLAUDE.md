@@ -39,6 +39,7 @@ ny run file.ny           # Compile and run in one step
 ny check file.ny         # Type-check without compiling (shows timing stats)
 ny test file.ny          # Run test_* functions
 ny fmt file.ny           # Print formatted source
+ny repl                  # Interactive REPL
 ny fmt file.ny --write   # Format in-place
 ny fmt file.ny --check   # Check if formatted (exit 1 if not)
 ```

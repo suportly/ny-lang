@@ -1648,6 +1648,96 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(result.into_struct_value().into()));
                 }
 
+                // JSON builtins
+                if callee == "json_parse" {
+                    let str_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
+                    let ptr = self.builder.build_extract_value(str_val, 0, "jp_p").unwrap();
+                    let len = self.builder.build_extract_value(str_val, 1, "jp_l").unwrap();
+                    let jp_fn = self.get_or_declare_ny_json_parse();
+                    let result = self.builder.build_call(jp_fn, &[ptr.into(), len.into()], "jp_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "json_type" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_val = self.get_or_declare_ny_json_type();
+                    let result = self.builder.build_call(fn_val, &[obj.into()], "jt_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "json_get_int" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "jgi_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "jgi_kl").unwrap();
+                    let fn_val = self.get_or_declare_ny_json_get_int();
+                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgi_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    // Truncate i64 to i32
+                    let i32_val = self.builder.build_int_truncate(result.into_int_value(), self.context.i32_type(), "jgi_i32").unwrap();
+                    return Ok(Some(i32_val.into()));
+                }
+                if callee == "json_get_float" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "jgf_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "jgf_kl").unwrap();
+                    let fn_val = self.get_or_declare_ny_json_get_float();
+                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgf_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "json_get_str" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "jgs_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "jgs_kl").unwrap();
+                    let i64_ty = self.context.i64_type();
+                    let out_len_ptr = self.builder.build_alloca(i64_ty, "jgs_olp").unwrap();
+                    let fn_val = self.get_or_declare_ny_json_get_str();
+                    let buf = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into(), out_len_ptr.into()], "jgs_r").unwrap()
+                        .try_as_basic_value().basic().unwrap().into_pointer_value();
+                    let out_len = self.builder.build_load(i64_ty, out_len_ptr, "jgs_len").unwrap().into_int_value();
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self.builder.build_insert_value(result, buf, 0, "jgs_sp").unwrap();
+                    let result = self.builder.build_insert_value(result, out_len, 1, "jgs_sl").unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+                if callee == "json_get_bool" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "jgb_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "jgb_kl").unwrap();
+                    let fn_val = self.get_or_declare_ny_json_get_bool();
+                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgb_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "json_len" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_val = self.get_or_declare_ny_json_len();
+                    let result = self.builder.build_call(fn_val, &[obj.into()], "jl_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    let i32_val = self.builder.build_int_truncate(result.into_int_value(), self.context.i32_type(), "jl_i32").unwrap();
+                    return Ok(Some(i32_val.into()));
+                }
+                if callee == "json_arr_get" {
+                    let arr = self.compile_expr(&args[0], function)?.unwrap();
+                    let idx = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let idx_i64 = self.builder.build_int_z_extend_or_bit_cast(idx, self.context.i64_type(), "ja_idx").unwrap();
+                    let fn_val = self.get_or_declare_ny_json_arr_get();
+                    let result = self.builder.build_call(fn_val, &[arr.into(), idx_i64.into()], "ja_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "json_free" {
+                    let obj = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_val = self.get_or_declare_ny_json_free();
+                    self.builder.build_call(fn_val, &[obj.into()], "").unwrap();
+                    return Ok(None);
+                }
+
                 // remove_file(path: str) -> i32
                 if callee == "remove_file" {
                     let path_val = self

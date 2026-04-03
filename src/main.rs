@@ -47,6 +47,8 @@ enum Commands {
         /// Path to .ny source file
         file: PathBuf,
     },
+    /// Interactive REPL — evaluate Ny expressions
+    Repl,
     /// Format a Ny source file (opinionated, zero-config)
     Fmt {
         /// Path to .ny source file
@@ -329,6 +331,111 @@ fn main() {
             if failed > 0 {
                 process::exit(1);
             }
+        }
+        Commands::Repl => {
+            eprintln!("Ny Lang REPL v0.1.0 — type expressions, :q to quit");
+            eprintln!("  Wrap in fn main() -> i32 {{ ... }} automatically.");
+            eprintln!("");
+
+            let tmp_dir = std::env::temp_dir();
+            let tmp_src = tmp_dir.join("ny_repl.ny");
+            let tmp_out = tmp_dir.join("ny_repl_bin");
+
+            // Accumulate declarations (structs, functions, etc.)
+            let mut decls = String::new();
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            loop {
+                eprint!("ny> ");
+                let mut line = String::new();
+                match stdin.lock().read_line(&mut line) {
+                    Ok(0) => break, // EOF
+                    Err(_) => break,
+                    _ => {}
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if trimmed == ":q" || trimmed == ":quit" || trimmed == "exit" {
+                    eprintln!("Goodbye!");
+                    break;
+                }
+                if trimmed == ":clear" {
+                    decls.clear();
+                    eprintln!("  (declarations cleared)");
+                    continue;
+                }
+
+                // If it's a declaration (fn, struct, enum, use, extern, trait, impl), accumulate
+                if trimmed.starts_with("fn ")
+                    || trimmed.starts_with("struct ")
+                    || trimmed.starts_with("enum ")
+                    || trimmed.starts_with("use ")
+                    || trimmed.starts_with("extern ")
+                    || trimmed.starts_with("trait ")
+                    || trimmed.starts_with("impl ")
+                {
+                    // Read multi-line block until brace count balances
+                    let mut block = line.clone();
+                    let mut depth: i32 = 0;
+                    for ch in block.chars() {
+                        if ch == '{' { depth += 1; }
+                        if ch == '}' { depth -= 1; }
+                    }
+                    while depth > 0 {
+                        eprint!("... ");
+                        let mut cont = String::new();
+                        if stdin.lock().read_line(&mut cont).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        for ch in cont.chars() {
+                            if ch == '{' { depth += 1; }
+                            if ch == '}' { depth -= 1; }
+                        }
+                        block.push_str(&cont);
+                    }
+                    decls.push_str(&block);
+                    decls.push('\n');
+                    eprintln!("  (defined)");
+                    continue;
+                }
+
+                // Otherwise, treat as expression/statement inside main
+                let source = format!(
+                    "{}\nfn main() -> i32 {{\n  {};\n  return 0;\n}}\n",
+                    decls, trimmed
+                );
+
+                std::fs::write(&tmp_src, &source).unwrap();
+
+                match ny::compile(&source, &tmp_src, &tmp_out, 0, "exe") {
+                    Ok(()) => {
+                        let output = process::Command::new(&tmp_out)
+                            .output()
+                            .unwrap_or_else(|e| {
+                                eprintln!("  error: {}", e);
+                                process::exit(1);
+                            });
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if !stdout.is_empty() {
+                            print!("{}", stdout);
+                        }
+                        let code = output.status.code().unwrap_or(0);
+                        if code != 0 {
+                            eprintln!("  (exit code: {})", code);
+                        }
+                    }
+                    Err(errors) => {
+                        for err in &errors {
+                            eprintln!("  error: {}", err.message);
+                        }
+                    }
+                }
+
+                let _ = std::fs::remove_file(&tmp_out);
+            }
+            let _ = std::fs::remove_file(&tmp_src);
         }
         Commands::Fmt { file, write, check } => {
             if !file.exists() {

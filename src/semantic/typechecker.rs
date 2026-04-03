@@ -720,6 +720,32 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
+                // JSON builtins
+                if callee == "json_parse" || callee == "json_arr_get" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "json_get_str" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
+                if callee == "json_get_int" || callee == "json_type" || callee == "json_len" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I32;
+                }
+                if callee == "json_get_float" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::F64;
+                }
+                if callee == "json_get_bool" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Bool;
+                }
+                if callee == "json_free" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+
                 if callee == "write_file" || callee == "remove_file" {
                     for arg in args {
                         self.check_expr(arg);

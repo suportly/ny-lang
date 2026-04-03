@@ -115,6 +115,7 @@ ny build file.ny --emit llvm-ir  # Emit LLVM IR
 ny run file.ny             # Compile and run in one step
 ny check file.ny           # Type-check only (no codegen, shows timing)
 ny test file.ny            # Run test_* functions
+ny repl                    # Interactive REPL
 ny fmt file.ny             # Print formatted source
 ny fmt file.ny --write     # Format in-place
 ny fmt file.ny --check     # Check formatting (CI mode)

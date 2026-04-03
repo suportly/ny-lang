@@ -75,6 +75,17 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         // Timing
         "clock_ms" => Some(NyType::I64),
 
+        // JSON
+        "json_parse" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "json_type" => Some(NyType::I32),
+        "json_get_int" => Some(NyType::I32),
+        "json_get_float" => Some(NyType::F64),
+        "json_get_str" => Some(NyType::Str),
+        "json_get_bool" => Some(NyType::Bool),
+        "json_len" => Some(NyType::I32),
+        "json_arr_get" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "json_free" => Some(NyType::Unit),
+
         // String split
         "str_split_count" => Some(NyType::I32),
         "str_split_get" => Some(NyType::Str),
@@ -155,6 +166,15 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "exp",
     "pow",
     "clock_ms",
+    "json_parse",
+    "json_type",
+    "json_get_int",
+    "json_get_float",
+    "json_get_str",
+    "json_get_bool",
+    "json_len",
+    "json_arr_get",
+    "json_free",
     "str_split_count",
     "str_split_get",
 ];

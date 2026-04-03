@@ -383,6 +383,81 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    // JSON runtime declarations
+    pub(super) fn get_or_declare_ny_json_parse(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_parse") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_json_parse", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_type(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_type") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_json_type", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_get_int(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_get_int") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_json_get_int", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_get_float(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_get_float") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let f64_ty = self.context.f64_type();
+        let i64_ty = self.context.i64_type();
+        let fn_ty = f64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_json_get_float", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_get_str(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_get_str") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // returns ptr, takes (obj, key_ptr, key_len, &out_len)
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_json_get_str", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_get_bool(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_get_bool") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_json_get_bool", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_len(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_len") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_json_len", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_arr_get(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_arr_get") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_json_arr_get", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_json_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_json_free") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_json_free", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_remove_file(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_remove_file") {
             return f;

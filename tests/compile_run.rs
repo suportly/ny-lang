@@ -678,6 +678,11 @@ fn test_float_conv() {
 }
 
 #[test]
+fn test_json_parse() {
+    assert_eq!(compile_and_run("json_parse.ny"), 42);
+}
+
+#[test]
 fn test_example_parallel_sum() {
     let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
     assert_eq!(code, 0);

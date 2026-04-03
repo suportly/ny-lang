@@ -3141,6 +3141,105 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(done_bb);
                             return Ok(None);
                         }
+                        "any" | "all" => {
+                            // v.any(pred) -> bool / v.all(pred) -> bool
+                            let is_any = method == "any";
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "qa_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "qa_len")
+                                .unwrap()
+                                .into_int_value();
+                            let fn_ptr = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let bool_ty = self.context.bool_type();
+                            let pred_ty = bool_ty.fn_type(&[elem_llvm.into()], false);
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb = self.context.append_basic_block(*function, "qa_loop");
+                            let check_bb = self.context.append_basic_block(*function, "qa_check");
+                            let inc_bb = self.context.append_basic_block(*function, "qa_inc");
+                            let early_bb = self.context.append_basic_block(*function, "qa_early");
+                            let done_bb = self.context.append_basic_block(*function, "qa_done");
+                            let merge_bb = self.context.append_basic_block(*function, "qa_merge");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi = self.builder.build_phi(i64_ty, "qa_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self.builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "qa_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, check_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(check_bb);
+                            let ep = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "qa_ep")
+                                    .unwrap()
+                            };
+                            let ev = self.builder
+                                .build_load(elem_llvm, ep, "qa_ev")
+                                .unwrap();
+                            let result = self.builder
+                                .build_indirect_call(pred_ty, fn_ptr, &[ev.into()], "qa_r")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_int_value();
+
+                            if is_any {
+                                self.builder
+                                    .build_conditional_branch(result, early_bb, inc_bb)
+                                    .unwrap();
+                            } else {
+                                self.builder
+                                    .build_conditional_branch(result, inc_bb, early_bb)
+                                    .unwrap();
+                            }
+
+                            // Increment block
+                            self.builder.position_at_end(inc_bb);
+                            let next_i = self.builder
+                                .build_int_add(i_val, one, "qa_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, inc_bb)]);
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            // Early exit: any→true, all→false
+                            self.builder.position_at_end(early_bb);
+                            let early_val = bool_ty.const_int(if is_any { 1 } else { 0 }, false);
+                            self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                            // Loop exhausted: any→false, all→true
+                            self.builder.position_at_end(done_bb);
+                            let done_val = bool_ty.const_int(if is_any { 0 } else { 1 }, false);
+                            self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                            self.builder.position_at_end(merge_bb);
+                            let phi = self.builder
+                                .build_phi(bool_ty, "qa_result")
+                                .unwrap();
+                            phi.add_incoming(&[(&early_val, early_bb), (&done_val, done_bb)]);
+                            return Ok(Some(phi.as_basic_value()));
+                        }
                         "contains" | "index_of" => {
                             // v.contains(val) -> bool / v.index_of(val) -> i32
                             let obj_val = self.compile_expr(object, function)?.unwrap();
@@ -3781,6 +3880,114 @@ impl<'ctx> CodeGen<'ctx> {
                             let result = self
                                 .builder
                                 .build_insert_value(result, result_len, 1, "rep_s_len")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
+                        }
+                        "repeat" => {
+                            // s.repeat(n) -> str — repeat string n times
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "rep_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "rep_len")
+                                .unwrap()
+                                .into_int_value();
+                            let n_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_int_value();
+                            let n_i64 = self
+                                .builder
+                                .build_int_z_extend_or_bit_cast(
+                                    n_val,
+                                    self.context.i64_type(),
+                                    "rep_n64",
+                                )
+                                .unwrap();
+
+                            let total_len = self
+                                .builder
+                                .build_int_mul(len, n_i64, "rep_total")
+                                .unwrap();
+
+                            let malloc_fn = self.get_or_declare_malloc();
+                            let buf = self
+                                .builder
+                                .build_call(malloc_fn, &[total_len.into()], "rep_buf")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let memcpy_fn = self.get_or_declare_memcpy();
+                            let i8_ty = self.context.i8_type();
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "rep_loop");
+                            let body_bb =
+                                self.context.append_basic_block(*function, "rep_body");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "rep_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "rep_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, n_i64, "rep_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let offset = self
+                                .builder
+                                .build_int_mul(i_val, len, "rep_off")
+                                .unwrap();
+                            let dst = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(i8_ty, buf, &[offset], "rep_dst")
+                                    .unwrap()
+                            };
+                            self.builder
+                                .build_call(
+                                    memcpy_fn,
+                                    &[dst.into(), ptr.into(), len.into()],
+                                    "",
+                                )
+                                .unwrap();
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "rep_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, body_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, buf, 0, "rep_sp")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, total_len, 1, "rep_sl")
                                 .unwrap();
                             return Ok(Some(result.into_struct_value().into()));
                         }

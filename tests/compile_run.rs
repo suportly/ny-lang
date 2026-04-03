@@ -638,6 +638,11 @@ fn test_vec_reduce() {
 }
 
 #[test]
+fn test_vec_any_all() {
+    assert_eq!(compile_and_run("vec_any_all.ny"), 42);
+}
+
+#[test]
 fn test_example_functional() {
     let (code, stdout) = compile_and_run_example("examples/functional.ny");
     assert_eq!(code, 0);

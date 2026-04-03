@@ -157,6 +157,7 @@ impl<'ctx> CodeGen<'ctx> {
                         "map" | "filter" => NyType::Vec(elem.clone()),
                         "reduce" => *elem.clone(),
                         "for_each" => NyType::Unit,
+                        "any" | "all" => NyType::Bool,
                         _ => NyType::Unit,
                     },
                     NyType::Slice(_) => match method.as_str() {
@@ -165,7 +166,7 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     NyType::Str => match method.as_str() {
                         "len" => NyType::I64,
-                        "substr" | "trim" | "to_upper" | "to_lower" | "replace" => NyType::Str,
+                        "substr" | "trim" | "to_upper" | "to_lower" | "replace" | "repeat" => NyType::Str,
                         "char_at" | "index_of" => NyType::I32,
                         "contains" | "starts_with" | "ends_with" => NyType::Bool,
                         _ => NyType::Unit,

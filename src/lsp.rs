@@ -522,6 +522,16 @@ fn dot_completions(doc: &DocumentState, source: &str, dot_offset: usize) -> Vec<
             ("set", "set(index, value) — write element"),
             ("len", "len() -> i64 — element count"),
             ("sort", "sort() — ascending in-place sort"),
+            ("reverse", "reverse() — reverse in-place"),
+            ("clear", "clear() — remove all elements"),
+            ("contains", "contains(value) -> bool — linear search"),
+            ("index_of", "index_of(value) -> i32 — position or -1"),
+            ("map", "map(fn) -> Vec<T> — apply fn to each element"),
+            ("filter", "filter(fn) -> Vec<T> — keep where fn is true"),
+            ("reduce", "reduce(fn, init) -> T — fold with accumulator"),
+            ("for_each", "for_each(fn) — call fn on each element"),
+            ("any", "any(fn) -> bool — true if any element matches"),
+            ("all", "all(fn) -> bool — true if all elements match"),
         ] {
             items.push(CompletionItem {
                 label: name.to_string(),
@@ -539,6 +549,11 @@ fn dot_completions(doc: &DocumentState, source: &str, dot_offset: usize) -> Vec<
             ("starts_with", "starts_with(prefix) -> bool"),
             ("ends_with", "ends_with(suffix) -> bool"),
             ("index_of", "index_of(needle) -> i32 (-1 if not found)"),
+            ("trim", "trim() -> str — strip whitespace"),
+            ("to_upper", "to_upper() -> str — uppercase"),
+            ("to_lower", "to_lower() -> str — lowercase"),
+            ("replace", "replace(old, new) -> str — replace all"),
+            ("repeat", "repeat(n) -> str — repeat n times"),
         ] {
             items.push(CompletionItem {
                 label: name.to_string(),

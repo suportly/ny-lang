@@ -1528,6 +1528,12 @@ impl TypeChecker {
                     }
                     return NyType::Unit;
                 }
+                "any" | "all" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::Bool;
+                }
                 "contains" => {
                     if args.len() == 1 {
                         self.check_expr(&args[0]);
@@ -1624,6 +1630,12 @@ impl TypeChecker {
                     return NyType::Str;
                 }
                 "to_upper" | "to_lower" => {
+                    return NyType::Str;
+                }
+                "repeat" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
                     return NyType::Str;
                 }
                 "replace" => {

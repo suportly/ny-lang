@@ -169,6 +169,10 @@ impl<'ctx> CodeGen<'ctx> {
                     self.compile_expr(defer_body, defer_fn)?;
                 }
 
+                // Pop trace stack before return
+                let trace_pop = self.get_or_declare_ny_trace_pop();
+                self.builder.build_call(trace_pop, &[], "").unwrap();
+
                 if let Some(v) = ret_val {
                     self.builder.build_return(Some(&v)).unwrap();
                 } else {
@@ -847,6 +851,10 @@ impl<'ctx> CodeGen<'ctx> {
                 "",
             )
             .unwrap();
+        // Print stack trace before exiting
+        let trace_print = self.get_or_declare_ny_trace_print();
+        self.builder.build_call(trace_print, &[], "").unwrap();
+
         let exit_fn = self.get_or_declare_exit();
         self.builder
             .build_call(

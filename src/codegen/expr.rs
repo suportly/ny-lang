@@ -362,6 +362,8 @@ impl<'ctx> CodeGen<'ctx> {
                             "",
                         )
                         .unwrap();
+                    let trace_print = self.get_or_declare_ny_trace_print();
+                    self.builder.build_call(trace_print, &[], "").unwrap();
                     let exit_fn = self.get_or_declare_exit();
                     self.builder
                         .build_call(exit_fn, &[self.context.i32_type().const_int(1, false).into()], "")

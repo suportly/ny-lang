@@ -383,6 +383,26 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    // Stack trace
+    pub(super) fn get_or_declare_ny_trace_push(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_trace_push") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_trace_push", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_trace_pop(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_trace_pop") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_trace_pop", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_trace_print(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_trace_print") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_trace_print", fn_ty, None)
+    }
+
     // JSON runtime declarations
     pub(super) fn get_or_declare_ny_json_parse(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_json_parse") { return f; }

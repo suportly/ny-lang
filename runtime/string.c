@@ -64,6 +64,30 @@ NyStrSlice *ny_str_split(const char *hay, long hay_len,
     return result;
 }
 
+// --- Call stack tracking for stack traces ---
+
+#define NY_TRACE_MAX 256
+static const char *ny_trace_stack[NY_TRACE_MAX];
+static int ny_trace_depth = 0;
+
+void ny_trace_push(const char *name) {
+    if (ny_trace_depth < NY_TRACE_MAX) {
+        ny_trace_stack[ny_trace_depth++] = name;
+    }
+}
+
+void ny_trace_pop(void) {
+    if (ny_trace_depth > 0) ny_trace_depth--;
+}
+
+void ny_trace_print(void) {
+    if (ny_trace_depth == 0) return;
+    fprintf(stderr, "stack trace:\n");
+    for (int i = ny_trace_depth - 1; i >= 0; i--) {
+        fprintf(stderr, "  %d: %s()\n", ny_trace_depth - 1 - i, ny_trace_stack[i]);
+    }
+}
+
 // Remove a file. Returns 0 on success, -1 on failure.
 int ny_remove_file(const char *path, long path_len) {
     char *cpath = (char *)malloc(path_len + 1);

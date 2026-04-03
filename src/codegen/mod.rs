@@ -574,6 +574,16 @@ impl<'ctx> CodeGen<'ctx> {
                         .insert(param.name.clone(), (alloca, ty.clone()));
                 }
 
+                // Push function name onto trace stack
+                let trace_push = self.get_or_declare_ny_trace_push();
+                let fn_name_str = self
+                    .builder
+                    .build_global_string_ptr(name, "trace_name")
+                    .unwrap();
+                self.builder
+                    .build_call(trace_push, &[fn_name_str.as_pointer_value().into()], "")
+                    .unwrap();
+
                 // Save outer defer stack and start fresh for this function
                 let outer_defers = std::mem::take(&mut self.defer_stack);
 
@@ -587,6 +597,9 @@ impl<'ctx> CodeGen<'ctx> {
                     for (defer_body, defer_fn) in &defers {
                         self.compile_expr(defer_body, defer_fn)?;
                     }
+                    // Pop trace stack before return
+                    let trace_pop = self.get_or_declare_ny_trace_pop();
+                    self.builder.build_call(trace_pop, &[], "").unwrap();
                     self.builder.build_return(None).unwrap();
                 }
 

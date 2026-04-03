@@ -164,6 +164,28 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_map_len", fn_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_map_remove(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_remove") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_map_remove", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_map_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_free") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_map_free", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_fflush(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("fflush") {
             return f;
@@ -359,6 +381,49 @@ impl<'ctx> CodeGen<'ctx> {
         // int memcmp(const void *s1, const void *s2, size_t n)
         let memcmp_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
         self.module.add_function("memcmp", memcmp_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_read_file(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_read_file") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_read_file", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_write_file(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_write_file") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let i32_ty = self.context.i32_type();
+        let fn_ty =
+            i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_write_file", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_float_to_str(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_float_to_str") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let f64_ty = self.context.f64_type();
+        let fn_ty = ptr_ty.fn_type(&[f64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_float_to_str", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_str_to_float(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_str_to_float") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let f64_ty = self.context.f64_type();
+        let i64_ty = self.context.i64_type();
+        let fn_ty = f64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_str_to_float", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_clock_ms(&self) -> FunctionValue<'ctx> {

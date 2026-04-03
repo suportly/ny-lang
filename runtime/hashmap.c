@@ -112,3 +112,32 @@ int ny_map_contains(NyHashMap *m, const char *key, int64_t key_len) {
 int64_t ny_map_len(NyHashMap *m) {
     return m->len;
 }
+
+void ny_map_remove(NyHashMap *m, const char *key, int64_t key_len) {
+    uint64_t h = hash_bytes(key, key_len) % m->cap;
+    int64_t probes = 0;
+    while (m->entries[h].occupied && probes < m->cap) {
+        if (m->entries[h].key_len == key_len &&
+            memcmp(m->entries[h].key, key, key_len) == 0) {
+            free(m->entries[h].key);
+            m->entries[h].key = NULL;
+            m->entries[h].key_len = 0;
+            m->entries[h].value = 0;
+            m->entries[h].occupied = 0;
+            m->len--;
+            return;
+        }
+        h = (h + 1) % m->cap;
+        probes++;
+    }
+}
+
+void ny_map_free(NyHashMap *m) {
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied && m->entries[i].key) {
+            free(m->entries[i].key);
+        }
+    }
+    free(m->entries);
+    free(m);
+}

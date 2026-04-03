@@ -102,11 +102,26 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 | fwrite_str | (*u8, str) -> i32 | Write string to file |
 | fread_byte | (*u8) -> i32 | Read byte |
 | read_line | () -> str | Read stdin line |
+| read_file | (str) -> str | Read entire file |
+| write_file | (str, str) -> i32 | Write string to file |
 | int_to_str | (i32) -> str | Int to string |
 | str_to_int | (str) -> i32 | String to int |
+| float_to_str | (f64) -> str | Float to string |
+| str_to_float | (str) -> f64 | String to float |
+| sqrt | (f64) -> f64 | Square root |
+| sin | (f64) -> f64 | Sine |
+| cos | (f64) -> f64 | Cosine |
+| floor | (f64) -> f64 | Floor |
+| ceil | (f64) -> f64 | Ceiling |
+| pow | (f64, f64) -> f64 | Power |
+| fabs | (f64) -> f64 | Absolute value |
+| log | (f64) -> f64 | Natural log |
+| exp | (f64) -> f64 | Exponential |
 | exit | (i32) -> ! | Exit process |
 | sleep_ms | (i32) -> () | Sleep milliseconds |
 | clock_ms | () -> i64 | Monotonic timer (ms) |
+| map_remove | (*u8, str) -> () | Remove key |
+| map_free | (*u8) -> () | Free hashmap |
 | str_split_count | (str, str) -> i32 | Count split parts |
 | str_split_get | (str, str, i32) -> str | Get split part by index |
 

@@ -663,6 +663,21 @@ fn test_pool_stress() {
 }
 
 #[test]
+fn test_math_builtins() {
+    assert_eq!(compile_and_run("math_builtins.ny"), 42);
+}
+
+#[test]
+fn test_file_rw() {
+    assert_eq!(compile_and_run("file_rw.ny"), 42);
+}
+
+#[test]
+fn test_float_conv() {
+    assert_eq!(compile_and_run("float_conv.ny"), 42);
+}
+
+#[test]
 fn test_example_parallel_sum() {
     let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
     assert_eq!(code, 0);

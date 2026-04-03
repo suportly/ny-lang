@@ -15,7 +15,8 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "alloc" | "fopen" | "arena_new" | "arena_alloc" | "map_new" => {
             Some(NyType::Pointer(Box::new(NyType::U8)))
         }
-        "free" | "arena_free" | "arena_reset" | "map_insert" | "sleep_ms" | "exit" => {
+        "free" | "arena_free" | "arena_reset" | "map_insert" | "map_remove" | "map_free"
+        | "sleep_ms" | "exit" => {
             Some(NyType::Unit)
         }
         "sizeof" | "arena_bytes_used" | "map_len" | "vec_len" => Some(NyType::I64),
@@ -25,7 +26,9 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "map_contains" => Some(NyType::Bool),
 
         // Strings
-        "read_line" | "int_to_str" => Some(NyType::Str),
+        "read_line" | "int_to_str" | "float_to_str" | "read_file" => Some(NyType::Str),
+        "str_to_float" => Some(NyType::F64),
+        "write_file" => Some(NyType::I32),
 
         // Vec
         "vec_new" => Some(NyType::Vec(Box::new(NyType::I32))),
@@ -63,6 +66,12 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "par_map" => Some(NyType::Unit),
         "par_reduce" => Some(NyType::I32),
 
+        // Math (f64)
+        "sqrt" | "sin" | "cos" | "floor" | "ceil" | "fabs" | "log" | "exp" => {
+            Some(NyType::F64)
+        }
+        "pow" => Some(NyType::F64),
+
         // Timing
         "clock_ms" => Some(NyType::I64),
 
@@ -95,6 +104,10 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "read_line",
     "str_to_int",
     "int_to_str",
+    "float_to_str",
+    "str_to_float",
+    "read_file",
+    "write_file",
     "vec_new",
     "vec_push",
     "vec_len",
@@ -103,6 +116,8 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "map_insert",
     "map_get",
     "map_contains",
+    "map_remove",
+    "map_free",
     "map_len",
     "arena_new",
     "arena_alloc",
@@ -129,6 +144,15 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "pool_free",
     "par_map",
     "par_reduce",
+    "sqrt",
+    "sin",
+    "cos",
+    "floor",
+    "ceil",
+    "fabs",
+    "log",
+    "exp",
+    "pow",
     "clock_ms",
     "str_split_count",
     "str_split_get",

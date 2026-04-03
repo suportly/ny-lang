@@ -321,8 +321,55 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap()
                         .try_as_basic_value()
                         .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Null check: if malloc returned NULL, panic
+                    let is_null = self
+                        .builder
+                        .build_is_null(ptr, "alloc_null")
                         .unwrap();
-                    return Ok(Some(ptr));
+                    let panic_bb =
+                        self.context.append_basic_block(*function, "alloc_panic");
+                    let ok_bb =
+                        self.context.append_basic_block(*function, "alloc_ok");
+                    self.builder
+                        .build_conditional_branch(is_null, panic_bb, ok_bb)
+                        .unwrap();
+
+                    self.builder.position_at_end(panic_bb);
+                    let stderr = self.get_or_declare_stderr();
+                    let stderr_ptr = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            stderr.as_pointer_value(),
+                            "stderr",
+                        )
+                        .unwrap();
+                    let fprintf_fn = self.get_or_declare_fprintf();
+                    let msg = self
+                        .builder
+                        .build_global_string_ptr(
+                            "panic: alloc failed (out of memory)\n",
+                            "oom_msg",
+                        )
+                        .unwrap();
+                    self.builder
+                        .build_call(
+                            fprintf_fn,
+                            &[stderr_ptr.into(), msg.as_pointer_value().into()],
+                            "",
+                        )
+                        .unwrap();
+                    let exit_fn = self.get_or_declare_exit();
+                    self.builder
+                        .build_call(exit_fn, &[self.context.i32_type().const_int(1, false).into()], "")
+                        .unwrap();
+                    self.builder.build_unreachable().unwrap();
+
+                    self.builder.position_at_end(ok_bb);
+                    return Ok(Some(ptr.into()));
                 }
 
                 // Handle free(ptr) builtin
@@ -648,6 +695,42 @@ impl<'ctx> CodeGen<'ctx> {
                         .basic()
                         .unwrap();
                     return Ok(Some(result));
+                }
+
+                // map_remove(m, key_str)
+                if callee == "map_remove" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let key_ptr = self
+                        .builder
+                        .build_extract_value(key_val, 0, "rm_key_ptr")
+                        .unwrap();
+                    let key_len = self
+                        .builder
+                        .build_extract_value(key_val, 1, "rm_key_len")
+                        .unwrap();
+                    let remove_fn = self.get_or_declare_ny_map_remove();
+                    self.builder
+                        .build_call(
+                            remove_fn,
+                            &[map_ptr.into(), key_ptr.into(), key_len.into()],
+                            "",
+                        )
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // map_free(m)
+                if callee == "map_free" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let free_fn = self.get_or_declare_ny_map_free();
+                    self.builder
+                        .build_call(free_fn, &[map_ptr.into()], "")
+                        .unwrap();
+                    return Ok(None);
                 }
 
                 // SIMD builtins
@@ -1563,6 +1646,203 @@ impl<'ctx> CodeGen<'ctx> {
                         .build_insert_value(result, s_len, 1, "sg_rl")
                         .unwrap();
                     return Ok(Some(result.into_struct_value().into()));
+                }
+
+                // read_file(path: str) -> str
+                if callee == "read_file" {
+                    let path_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let path_ptr = self
+                        .builder
+                        .build_extract_value(path_val, 0, "rf_pp")
+                        .unwrap();
+                    let path_len = self
+                        .builder
+                        .build_extract_value(path_val, 1, "rf_pl")
+                        .unwrap();
+                    let i64_ty = self.context.i64_type();
+                    let out_len_ptr = self.builder.build_alloca(i64_ty, "rf_olp").unwrap();
+                    let rf_fn = self.get_or_declare_ny_read_file();
+                    let buf = self
+                        .builder
+                        .build_call(
+                            rf_fn,
+                            &[path_ptr.into(), path_len.into(), out_len_ptr.into()],
+                            "rf_buf",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let out_len = self
+                        .builder
+                        .build_load(i64_ty, out_len_ptr, "rf_len")
+                        .unwrap()
+                        .into_int_value();
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, buf, 0, "rf_sp")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, out_len, 1, "rf_sl")
+                        .unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+
+                // write_file(path: str, content: str) -> i32
+                if callee == "write_file" {
+                    let path_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let data_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let pp = self.builder.build_extract_value(path_val, 0, "wf_pp").unwrap();
+                    let pl = self.builder.build_extract_value(path_val, 1, "wf_pl").unwrap();
+                    let dp = self.builder.build_extract_value(data_val, 0, "wf_dp").unwrap();
+                    let dl = self.builder.build_extract_value(data_val, 1, "wf_dl").unwrap();
+                    let wf_fn = self.get_or_declare_ny_write_file();
+                    let result = self
+                        .builder
+                        .build_call(
+                            wf_fn,
+                            &[pp.into(), pl.into(), dp.into(), dl.into()],
+                            "wf_r",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // float_to_str(f64) -> str
+                if callee == "float_to_str" {
+                    let val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_float_value();
+                    let f64_ty = self.context.f64_type();
+                    let val_f64 = if val.get_type() != f64_ty {
+                        self.builder.build_float_ext(val, f64_ty, "fts_ext").unwrap()
+                    } else {
+                        val
+                    };
+                    let i64_ty = self.context.i64_type();
+                    let out_len_ptr = self.builder.build_alloca(i64_ty, "fts_len_p").unwrap();
+                    let fts_fn = self.get_or_declare_ny_float_to_str();
+                    let buf = self
+                        .builder
+                        .build_call(fts_fn, &[val_f64.into(), out_len_ptr.into()], "fts_buf")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let out_len = self
+                        .builder
+                        .build_load(i64_ty, out_len_ptr, "fts_len")
+                        .unwrap()
+                        .into_int_value();
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self.builder.build_insert_value(result, buf, 0, "fts_p").unwrap();
+                    let result = self.builder.build_insert_value(result, out_len, 1, "fts_l").unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+
+                // str_to_float(str) -> f64
+                if callee == "str_to_float" {
+                    let str_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let ptr = self.builder.build_extract_value(str_val, 0, "stf_p").unwrap();
+                    let len = self.builder.build_extract_value(str_val, 1, "stf_l").unwrap();
+                    let stf_fn = self.get_or_declare_ny_str_to_float();
+                    let result = self
+                        .builder
+                        .build_call(stf_fn, &[ptr.into(), len.into()], "stf_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Math builtins (f64): sqrt, sin, cos, floor, ceil, fabs, log, exp, pow
+                if matches!(
+                    callee.as_str(),
+                    "sqrt" | "sin" | "cos" | "floor" | "ceil" | "fabs" | "log" | "exp"
+                ) {
+                    let arg = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_float_value();
+                    let f64_ty = self.context.f64_type();
+                    let arg_f64 = if arg.get_type() != f64_ty {
+                        self.builder
+                            .build_float_ext(arg, f64_ty, "to_f64")
+                            .unwrap()
+                    } else {
+                        arg
+                    };
+                    let fn_ty = f64_ty.fn_type(&[f64_ty.into()], false);
+                    let math_fn = self
+                        .module
+                        .get_function(callee)
+                        .unwrap_or_else(|| self.module.add_function(callee, fn_ty, None));
+                    let result = self
+                        .builder
+                        .build_call(math_fn, &[arg_f64.into()], callee)
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                if callee == "pow" {
+                    let base = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_float_value();
+                    let exp = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_float_value();
+                    let f64_ty = self.context.f64_type();
+                    let base_f64 = if base.get_type() != f64_ty {
+                        self.builder.build_float_ext(base, f64_ty, "b64").unwrap()
+                    } else {
+                        base
+                    };
+                    let exp_f64 = if exp.get_type() != f64_ty {
+                        self.builder.build_float_ext(exp, f64_ty, "e64").unwrap()
+                    } else {
+                        exp
+                    };
+                    let fn_ty = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+                    let pow_fn = self
+                        .module
+                        .get_function("pow")
+                        .unwrap_or_else(|| self.module.add_function("pow", fn_ty, None));
+                    let result = self
+                        .builder
+                        .build_call(pow_fn, &[base_f64.into(), exp_f64.into()], "pow")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
                 }
 
                 // Handle clock_ms() — monotonic millisecond timer
@@ -3519,6 +3799,11 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_extract_value(str_val, 0, "str_ptr")
                                 .unwrap()
                                 .into_pointer_value();
+                            let str_len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "sub_str_len")
+                                .unwrap()
+                                .into_int_value();
 
                             // Cast start to i64 for GEP
                             let start_i64 = self
@@ -3537,6 +3822,17 @@ impl<'ctx> CodeGen<'ctx> {
                                     "end_ext",
                                 )
                                 .unwrap();
+
+                            // Bounds check: end <= str_len (uses < with len+1)
+                            let len_plus1 = self
+                                .builder
+                                .build_int_add(
+                                    str_len,
+                                    self.context.i64_type().const_int(1, false),
+                                    "sub_lp1",
+                                )
+                                .unwrap();
+                            self.build_bounds_check(end_i64, len_plus1, function);
 
                             // new_ptr = GEP(ptr, start)
                             let i8_ty = self.context.i8_type();

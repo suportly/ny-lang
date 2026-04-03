@@ -692,6 +692,39 @@ impl TypeChecker {
                     return NyType::Str;
                 }
 
+                // float_to_str / read_file -> str
+                if callee == "float_to_str" || callee == "read_file" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::Str;
+                }
+
+                // str_to_float -> f64, write_file -> i32
+                if callee == "str_to_float" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::F64;
+                }
+                if callee == "write_file" {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::I32;
+                }
+
+                // Math builtins -> f64
+                if matches!(
+                    callee.as_str(),
+                    "sqrt" | "sin" | "cos" | "floor" | "ceil" | "fabs" | "log" | "exp" | "pow"
+                ) {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return NyType::F64;
+                }
+
                 // SIMD builtins
                 if callee == "simd_splat_f32x4" || callee == "simd_load_f32x4" {
                     for arg in args {

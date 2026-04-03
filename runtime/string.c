@@ -1,5 +1,6 @@
 // Ny Lang runtime: string helpers + utilities
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -61,6 +62,64 @@ NyStrSlice *ny_str_split(const char *hay, long hay_len,
 
     *out_count = count;
     return result;
+}
+
+// Read entire file into a string. Returns malloc'd buffer, sets *out_len.
+// Returns NULL on failure.
+char *ny_read_file(const char *path, long path_len, long *out_len) {
+    // Null-terminate path for fopen
+    char *cpath = (char *)malloc(path_len + 1);
+    memcpy(cpath, path, path_len);
+    cpath[path_len] = '\0';
+
+    FILE *f = fopen(cpath, "rb");
+    free(cpath);
+    if (!f) { *out_len = 0; return (char *)malloc(1); }
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *buf = (char *)malloc(size > 0 ? size : 1);
+    if (size > 0) fread(buf, 1, size, f);
+    fclose(f);
+
+    *out_len = size;
+    return buf;
+}
+
+// Write string to file. Returns 0 on success, -1 on failure.
+int ny_write_file(const char *path, long path_len, const char *data, long data_len) {
+    char *cpath = (char *)malloc(path_len + 1);
+    memcpy(cpath, path, path_len);
+    cpath[path_len] = '\0';
+
+    FILE *f = fopen(cpath, "wb");
+    free(cpath);
+    if (!f) return -1;
+
+    fwrite(data, 1, data_len, f);
+    fclose(f);
+    return 0;
+}
+
+// Convert f64 to string. Returns malloc'd buffer, sets *out_len.
+char *ny_float_to_str(double val, long *out_len) {
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%.6g", val);
+    char *result = (char *)malloc(n);
+    memcpy(result, buf, n);
+    *out_len = n;
+    return result;
+}
+
+// Convert string to f64.
+double ny_str_to_float(const char *ptr, long len) {
+    char buf[128];
+    long copy_len = len < 127 ? len : 127;
+    memcpy(buf, ptr, copy_len);
+    buf[copy_len] = '\0';
+    return strtod(buf, NULL);
 }
 
 // Replace all occurrences of 'old' in 'haystack' with 'new_s'.

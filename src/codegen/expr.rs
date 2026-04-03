@@ -2617,6 +2617,7 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                         "map" => {
                             // v.map(fn) -> Vec<T> — apply function to each element
+                            // Supports both named functions and capturing closures
                             let obj_val = self.compile_expr(object, function)?.unwrap();
                             let sv = obj_val.into_struct_value();
                             let data_ptr = self
@@ -2630,11 +2631,27 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap()
                                 .into_int_value();
 
-                            // Get the function pointer from the argument
+                            // Compile the function argument — may be a closure
                             let fn_ptr_val = self
                                 .compile_expr(&args[0], function)?
                                 .unwrap()
                                 .into_pointer_value();
+
+                            // Check if argument is a capturing closure
+                            // Named closure: check closure_captures by ident
+                            // Inline lambda: check if it was just registered (last entry)
+                            let closure_info = if let Expr::Ident { name, .. } = &args[0] {
+                                self.closure_captures.get(name).cloned()
+                            } else if let Expr::Lambda { .. } = &args[0] {
+                                // Find the most recently added closure capture
+                                self.closure_captures
+                                    .iter()
+                                    .filter(|(k, _)| k.starts_with("__lambda_"))
+                                    .max_by_key(|(k, _)| k.to_string())
+                                    .map(|(_, v)| v.clone())
+                            } else {
+                                None
+                            };
 
                             // Create result Vec inline
                             let i64_ty = self.context.i64_type();
@@ -2706,15 +2723,30 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_load(elem_llvm, elem_ptr, "map_ev")
                                 .unwrap();
 
-                            // Call the function pointer with the element
-                            let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
-                            let mapped = self
-                                .builder
-                                .build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r")
-                                .unwrap()
-                                .try_as_basic_value()
-                                .basic()
-                                .unwrap();
+                            // Call function — direct for closures, indirect for function ptrs
+                            let mapped = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
+                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
+                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                    for (cap_name, cap_ty) in cap_vars {
+                                        if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
+                                            let cap_llvm = ny_to_llvm(self.context, cap_ty);
+                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            call_args.push(cv.into());
+                                        }
+                                    }
+                                    call_args.push(elem_val.into());
+                                    self.builder.build_call(func, &call_args, "map_r").unwrap()
+                                        .try_as_basic_value().basic().unwrap()
+                                } else {
+                                    let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
+                                    self.builder.build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r").unwrap()
+                                        .try_as_basic_value().basic().unwrap()
+                                }
+                            } else {
+                                let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
+                                self.builder.build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r").unwrap()
+                                    .try_as_basic_value().basic().unwrap()
+                            };
 
                             // Push to new vec (inline push: load len, store at data[len], inc len)
                             let nv_data_gep = self
@@ -2858,6 +2890,17 @@ impl<'ctx> CodeGen<'ctx> {
                                 .compile_expr(&args[0], function)?
                                 .unwrap()
                                 .into_pointer_value();
+                            let closure_info = if let Expr::Ident { name, .. } = &args[0] {
+                                self.closure_captures.get(name).cloned()
+                            } else if let Expr::Lambda { .. } = &args[0] {
+                                self.closure_captures
+                                    .iter()
+                                    .filter(|(k, _)| k.starts_with("__lambda_"))
+                                    .max_by_key(|(k, _)| k.to_string())
+                                    .map(|(_, v)| v.clone())
+                            } else {
+                                None
+                            };
 
                             let i64_ty = self.context.i64_type();
                             let zero = i64_ty.const_int(0, false);
@@ -2919,14 +2962,29 @@ impl<'ctx> CodeGen<'ctx> {
                                 self.builder.build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "fil_ep").unwrap()
                             };
                             let ev = self.builder.build_load(elem_llvm, ep, "fil_ev").unwrap();
-                            let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
-                            let keep = self.builder
-                                .build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep")
-                                .unwrap()
-                                .try_as_basic_value()
-                                .basic()
-                                .unwrap()
-                                .into_int_value();
+                            let keep = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
+                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
+                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                    for (cap_name, cap_ty) in cap_vars {
+                                        if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
+                                            let cap_llvm = ny_to_llvm(self.context, cap_ty);
+                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            call_args.push(cv.into());
+                                        }
+                                    }
+                                    call_args.push(ev.into());
+                                    self.builder.build_call(func, &call_args, "fil_keep").unwrap()
+                                        .try_as_basic_value().basic().unwrap().into_int_value()
+                                } else {
+                                    let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
+                                    self.builder.build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep").unwrap()
+                                        .try_as_basic_value().basic().unwrap().into_int_value()
+                                }
+                            } else {
+                                let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
+                                self.builder.build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep").unwrap()
+                                    .try_as_basic_value().basic().unwrap().into_int_value()
+                            };
                             self.builder.build_conditional_branch(keep, push_bb, skip_bb).unwrap();
 
                             // Push element (with grow check)
@@ -2988,6 +3046,17 @@ impl<'ctx> CodeGen<'ctx> {
                                 .compile_expr(&args[0], function)?
                                 .unwrap()
                                 .into_pointer_value();
+                            let closure_info = if let Expr::Ident { name, .. } = &args[0] {
+                                self.closure_captures.get(name).cloned()
+                            } else if let Expr::Lambda { .. } = &args[0] {
+                                self.closure_captures
+                                    .iter()
+                                    .filter(|(k, _)| k.starts_with("__lambda_"))
+                                    .max_by_key(|(k, _)| k.to_string())
+                                    .map(|(_, v)| v.clone())
+                            } else {
+                                None
+                            };
                             let init_val = self
                                 .compile_expr(&args[1], function)?
                                 .unwrap();
@@ -3041,18 +3110,28 @@ impl<'ctx> CodeGen<'ctx> {
                                 .builder
                                 .build_load(elem_llvm, ep, "red_ev")
                                 .unwrap();
-                            let new_acc = self
-                                .builder
-                                .build_indirect_call(
-                                    fn_ty,
-                                    fn_ptr,
-                                    &[acc_phi.as_basic_value().into(), ev.into()],
-                                    "red_r",
-                                )
-                                .unwrap()
-                                .try_as_basic_value()
-                                .basic()
-                                .unwrap();
+                            let new_acc = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
+                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
+                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                    for (cap_name, cap_ty) in cap_vars {
+                                        if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
+                                            let cap_llvm = ny_to_llvm(self.context, cap_ty);
+                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            call_args.push(cv.into());
+                                        }
+                                    }
+                                    call_args.push(acc_phi.as_basic_value().into());
+                                    call_args.push(ev.into());
+                                    self.builder.build_call(func, &call_args, "red_r").unwrap()
+                                        .try_as_basic_value().basic().unwrap()
+                                } else {
+                                    self.builder.build_indirect_call(fn_ty, fn_ptr, &[acc_phi.as_basic_value().into(), ev.into()], "red_r").unwrap()
+                                        .try_as_basic_value().basic().unwrap()
+                                }
+                            } else {
+                                self.builder.build_indirect_call(fn_ty, fn_ptr, &[acc_phi.as_basic_value().into(), ev.into()], "red_r").unwrap()
+                                    .try_as_basic_value().basic().unwrap()
+                            };
                             let next_i = self
                                 .builder
                                 .build_int_add(i_val, one, "red_next")

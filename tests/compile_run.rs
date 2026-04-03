@@ -683,6 +683,18 @@ fn test_json_parse() {
 }
 
 #[test]
+fn test_example_todo_app() {
+    let (code, stdout) = compile_and_run_example("examples/todo_app.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("All Todos"), "stdout: {}", stdout);
+    assert!(stdout.contains("[x] #0: Build compiler"), "stdout: {}", stdout);
+    assert!(stdout.contains("Completed: 2/5"), "stdout: {}", stdout);
+    assert!(stdout.contains("ny-todo v1"), "stdout: {}", stdout);
+    assert!(stdout.contains("contains 'test'"), "stdout: {}", stdout);
+    assert!(stdout.contains("Completion: 40%"), "stdout: {}", stdout);
+}
+
+#[test]
 fn test_example_parallel_sum() {
     let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
     assert_eq!(code, 0);

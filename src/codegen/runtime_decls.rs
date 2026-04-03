@@ -361,6 +361,29 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_str_replace(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_str_replace") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // char *ny_str_replace(ptr hay, i64 hay_len, ptr old, i64 old_len,
+        //                      ptr new, i64 new_len, ptr out_len)
+        let fn_ty = ptr_ty.fn_type(
+            &[
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+            ],
+            false,
+        );
+        self.module.add_function("ny_str_replace", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_toupper(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("toupper") {
             return f;

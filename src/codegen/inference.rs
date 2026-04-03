@@ -162,7 +162,7 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     NyType::Str => match method.as_str() {
                         "len" => NyType::I64,
-                        "substr" | "trim" | "to_upper" | "to_lower" => NyType::Str,
+                        "substr" | "trim" | "to_upper" | "to_lower" | "replace" => NyType::Str,
                         "char_at" | "index_of" => NyType::I32,
                         "contains" | "starts_with" | "ends_with" => NyType::Bool,
                         _ => NyType::Unit,

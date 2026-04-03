@@ -2959,6 +2959,96 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
                             return Ok(Some(result.into_struct_value().into()));
                         }
+                        "replace" => {
+                            // s.replace(old, new) -> str — returns new heap-allocated string
+                            let ptr = self
+                                .builder
+                                .build_extract_value(str_val, 0, "rep_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(str_val, 1, "rep_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let old_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let new_val = self
+                                .compile_expr(&args[1], function)?
+                                .unwrap()
+                                .into_struct_value();
+
+                            let old_ptr = self
+                                .builder
+                                .build_extract_value(old_val, 0, "old_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let old_len = self
+                                .builder
+                                .build_extract_value(old_val, 1, "old_len")
+                                .unwrap()
+                                .into_int_value();
+                            let new_ptr = self
+                                .builder
+                                .build_extract_value(new_val, 0, "new_ptr")
+                                .unwrap()
+                                .into_pointer_value();
+                            let new_len = self
+                                .builder
+                                .build_extract_value(new_val, 1, "new_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            // Alloca for out_len
+                            let i64_ty = self.context.i64_type();
+                            let out_len_ptr = self
+                                .builder
+                                .build_alloca(i64_ty, "rep_out_len")
+                                .unwrap();
+
+                            let replace_fn = self.get_or_declare_ny_str_replace();
+                            let result_ptr = self
+                                .builder
+                                .build_call(
+                                    replace_fn,
+                                    &[
+                                        ptr.into(),
+                                        len.into(),
+                                        old_ptr.into(),
+                                        old_len.into(),
+                                        new_ptr.into(),
+                                        new_len.into(),
+                                        out_len_ptr.into(),
+                                    ],
+                                    "rep_result",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let result_len = self
+                                .builder
+                                .build_load(i64_ty, out_len_ptr, "rep_rlen")
+                                .unwrap()
+                                .into_int_value();
+
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, result_ptr, 0, "rep_s_ptr")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, result_len, 1, "rep_s_len")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
+                        }
                         "index_of" => {
                             // s.index_of(needle) -> i32 (-1 if not found)
                             let needle_val = self

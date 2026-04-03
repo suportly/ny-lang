@@ -35,6 +35,7 @@ cargo clippy             # Lint
 cargo build --release    # Release binary
 ny build file.ny         # Compile .ny to executable
 ny build file.ny -O 2    # Compile with optimization
+ny run file.ny           # Compile and run in one step
 ny test file.ny          # Run test_* functions
 ny fmt file.ny           # Print formatted source
 ny fmt file.ny --write   # Format in-place
@@ -77,7 +78,7 @@ Rust 1.75+ (2021 edition): Follow standard conventions
 - if let: `if let Option::Some(v) = expr { ... }`
 - Void functions: `fn greet() { ... }` without -> ()
 - Pointer arithmetic: `ptr + offset`, `*(ptr + n)`
-- String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`, `.index_of()`, `.trim()`, `.to_upper()`, `.to_lower()`
+- String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`, `.index_of()`, `.trim()`, `.to_upper()`, `.to_lower()`, `.replace()`
 
 ## Builtin Functions
 

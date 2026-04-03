@@ -1587,6 +1587,13 @@ impl TypeChecker {
                 "to_upper" | "to_lower" => {
                     return NyType::Str;
                 }
+                "replace" => {
+                    if args.len() == 2 {
+                        self.check_expr(&args[0]);
+                        self.check_expr(&args[1]);
+                    }
+                    return NyType::Str;
+                }
                 "char_at" => {
                     if args.len() == 1 {
                         self.check_expr(&args[0]);

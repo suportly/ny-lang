@@ -8,7 +8,7 @@
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, Notification as _};
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest};
+use lsp_types::request::{Completion, DocumentSymbolRequest, GotoDefinition, HoverRequest};
 use lsp_types::*;
 type Url = lsp_types::Uri;
 use std::collections::HashMap;
@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
             trigger_characters: Some(vec![".".to_string()]),
             ..Default::default()
         }),
+        document_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
     })?;
 
@@ -95,11 +96,23 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     continue;
                 }
 
-                if let Some((id, params)) = cast_request::<Completion>(req_clone) {
+                if let Some((id, params)) = cast_request::<Completion>(req_clone.clone()) {
                     let uri = params.text_document_position.text_document.uri;
                     let pos = params.text_document_position.position;
                     let items = handle_completion(&documents, &uri, pos);
                     let result = serde_json::to_value(CompletionResponse::Array(items))?;
+                    connection.sender.send(Message::Response(Response {
+                        id,
+                        result: Some(result),
+                        error: None,
+                    }))?;
+                    continue;
+                }
+
+                if let Some((id, params)) = cast_request::<DocumentSymbolRequest>(req_clone) {
+                    let uri = params.text_document.uri;
+                    let symbols = handle_document_symbols(&documents, &uri);
+                    let result = serde_json::to_value(DocumentSymbolResponse::Flat(symbols))?;
                     connection.sender.send(Message::Response(Response {
                         id,
                         result: Some(result),
@@ -573,6 +586,97 @@ fn infer_variable_type(source: &str, name: &str) -> String {
         }
     }
     String::new()
+}
+
+// ---------------------------------------------------------------------------
+// Document Symbols: outline of functions, structs, enums, traits
+// ---------------------------------------------------------------------------
+
+fn handle_document_symbols(
+    documents: &HashMap<Url, DocumentState>,
+    uri: &Url,
+) -> Vec<SymbolInformation> {
+    let doc = match documents.get(uri) {
+        Some(d) => d,
+        None => return vec![],
+    };
+    let source = &doc.source;
+    let resolved = match &doc.resolved {
+        Some(r) => r,
+        None => return vec![],
+    };
+
+    let mut symbols = Vec::new();
+
+    for (name, (param_types, ret_type, span)) in &resolved.functions {
+        let params: Vec<String> = param_types.iter().map(|t| format!("{}", t)).collect();
+        let ret = if *ret_type == NyType::Unit {
+            String::new()
+        } else {
+            format!(" -> {}", ret_type)
+        };
+        #[allow(deprecated)]
+        symbols.push(SymbolInformation {
+            name: name.clone(),
+            kind: SymbolKind::FUNCTION,
+            location: Location {
+                uri: uri.clone(),
+                range: span_to_range(source, *span),
+            },
+            tags: None,
+            container_name: None,
+            deprecated: None,
+        });
+        let _ = (params, ret); // used for detail if needed
+    }
+
+    for name in resolved.structs.keys() {
+        if let Some(offset) = source.find(&format!("struct {} ", name))
+            .or_else(|| source.find(&format!("struct {}{{", name)))
+        {
+            let (line, col) = byte_offset_to_line_col(source, offset);
+            #[allow(deprecated)]
+            symbols.push(SymbolInformation {
+                name: name.clone(),
+                kind: SymbolKind::STRUCT,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position { line: line as u32, character: col as u32 },
+                        end: Position { line: line as u32, character: (col + name.len()) as u32 },
+                    },
+                },
+                tags: None,
+                container_name: None,
+                deprecated: None,
+            });
+        }
+    }
+
+    for name in resolved.enums.keys() {
+        if let Some(offset) = source.find(&format!("enum {} ", name))
+            .or_else(|| source.find(&format!("enum {}{{", name)))
+        {
+            let (line, col) = byte_offset_to_line_col(source, offset);
+            #[allow(deprecated)]
+            symbols.push(SymbolInformation {
+                name: name.clone(),
+                kind: SymbolKind::ENUM,
+                location: Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position { line: line as u32, character: col as u32 },
+                        end: Position { line: line as u32, character: (col + name.len()) as u32 },
+                    },
+                },
+                tags: None,
+                container_name: None,
+                deprecated: None,
+            });
+        }
+    }
+
+    symbols
 }
 
 fn find_definition(source: &str, name: &str) -> Option<usize> {

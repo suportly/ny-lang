@@ -33,6 +33,15 @@ enum Commands {
         /// Path to .ny source file
         file: PathBuf,
     },
+    /// Compile and run a Ny source file
+    Run {
+        /// Path to .ny source file
+        file: PathBuf,
+
+        /// Optimization level (0-3)
+        #[arg(short = 'O', long = "opt-level", default_value = "0")]
+        opt_level: u8,
+    },
     /// Format a Ny source file (opinionated, zero-config)
     Fmt {
         /// Path to .ny source file
@@ -87,6 +96,44 @@ fn main() {
                 Ok(()) => process::exit(0),
                 Err(errors) => {
                     ny::diagnostics::print_errors(&file, &source, &errors);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Run { file, opt_level } => {
+            if !file.exists() {
+                eprintln!(
+                    "error: could not read file `{}`: No such file or directory",
+                    file.display()
+                );
+                process::exit(2);
+            }
+
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: could not read file `{}`: {}", file.display(), e);
+                    process::exit(2);
+                }
+            };
+
+            let tmp_dir = std::env::temp_dir();
+            let tmp_out = tmp_dir.join("ny_run_output");
+
+            match ny::compile(&source, &file, &tmp_out, opt_level, "exe") {
+                Ok(()) => {
+                    let status = process::Command::new(&tmp_out)
+                        .status()
+                        .unwrap_or_else(|e| {
+                            eprintln!("error: failed to execute: {}", e);
+                            process::exit(1);
+                        });
+                    let _ = std::fs::remove_file(&tmp_out);
+                    process::exit(status.code().unwrap_or(1));
+                }
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
+                    let _ = std::fs::remove_file(&tmp_out);
                     process::exit(1);
                 }
             }

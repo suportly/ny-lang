@@ -590,3 +590,8 @@ fn test_string_transform() {
 fn test_vec_search() {
     assert_eq!(compile_and_run("vec_search.ny"), 42);
 }
+
+#[test]
+fn test_string_replace() {
+    assert_eq!(compile_and_run("string_replace.ny"), 42);
+}

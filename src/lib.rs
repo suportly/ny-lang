@@ -44,6 +44,14 @@ pub fn compile(
     codegen::generate(&program, source_path, output_path, opt_level, emit)
 }
 
+pub fn resolve_uses_pub(
+    program: &mut Program,
+    base_dir: &Path,
+    visited: &mut HashSet<std::path::PathBuf>,
+) -> Result<(), Vec<CompileError>> {
+    resolve_uses(program, base_dir, visited)
+}
+
 fn resolve_uses(
     program: &mut Program,
     base_dir: &Path,

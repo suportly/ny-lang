@@ -42,6 +42,11 @@ enum Commands {
         #[arg(short = 'O', long = "opt-level", default_value = "0")]
         opt_level: u8,
     },
+    /// Type-check a Ny source file without compiling (fast feedback)
+    Check {
+        /// Path to .ny source file
+        file: PathBuf,
+    },
     /// Format a Ny source file (opinionated, zero-config)
     Fmt {
         /// Path to .ny source file
@@ -134,6 +139,78 @@ fn main() {
                 Err(errors) => {
                     ny::diagnostics::print_errors(&file, &source, &errors);
                     let _ = std::fs::remove_file(&tmp_out);
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Check { file } => {
+            if !file.exists() {
+                eprintln!(
+                    "error: could not read file `{}`: No such file or directory",
+                    file.display()
+                );
+                process::exit(2);
+            }
+
+            let source = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: could not read file `{}`: {}", file.display(), e);
+                    process::exit(2);
+                }
+            };
+
+            let start = std::time::Instant::now();
+
+            // Lexer
+            let tokens = match ny::lexer::tokenize(&source) {
+                Ok(t) => t,
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
+                    process::exit(1);
+                }
+            };
+            let lex_time = start.elapsed();
+
+            // Parser
+            let mut program = match ny::parser::parse(tokens) {
+                Ok(p) => p,
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
+                    process::exit(1);
+                }
+            };
+            let parse_time = start.elapsed() - lex_time;
+
+            // Module resolution
+            let base_dir = file.parent().unwrap_or(std::path::Path::new("."));
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(file.to_path_buf());
+            if let Err(errors) = ny::resolve_uses_pub(&mut program, base_dir, &mut visited) {
+                ny::diagnostics::print_errors(&file, &source, &errors);
+                process::exit(1);
+            }
+
+            // Monomorphize
+            ny::monomorphize::monomorphize(&mut program);
+
+            // Semantic analysis
+            match ny::semantic::analyze(&program) {
+                Ok(_) => {
+                    let total = start.elapsed();
+                    let lines = source.lines().count();
+                    eprintln!(
+                        "ok: {} ({} lines, {:.0}ms — lex {:.0}ms, parse {:.0}ms, check {:.0}ms)",
+                        file.display(),
+                        lines,
+                        total.as_secs_f64() * 1000.0,
+                        lex_time.as_secs_f64() * 1000.0,
+                        parse_time.as_secs_f64() * 1000.0,
+                        (total - lex_time - parse_time).as_secs_f64() * 1000.0,
+                    );
+                }
+                Err(errors) => {
+                    ny::diagnostics::print_errors(&file, &source, &errors);
                     process::exit(1);
                 }
             }

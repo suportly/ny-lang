@@ -25,11 +25,41 @@ fn parse_expression_from_source(source: &str, span: Span) -> Result<Expr, Compil
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    errors: Vec<CompileError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Skip tokens until we find a synchronization point for statement recovery.
+    fn synchronize_stmt(&mut self) {
+        loop {
+            match self.peek() {
+                TokenKind::Semi => {
+                    self.advance(); // consume the semicolon
+                    return;
+                }
+                TokenKind::RBrace | TokenKind::Eof => return,
+                // Statement-starting tokens — don't consume, let the caller retry
+                TokenKind::Return
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::If
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::Defer
+                | TokenKind::Loop => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
     }
 
     fn peek(&self) -> &TokenKind {
@@ -243,6 +273,9 @@ impl Parser {
                 }
             }
         }
+
+        // Merge item-level errors with any statement-level recovery errors
+        errors.append(&mut self.errors);
 
         if errors.is_empty() {
             Ok(Program { items })
@@ -661,43 +694,51 @@ impl Parser {
         let mut tail_expr = None;
 
         while *self.peek() != TokenKind::RBrace && *self.peek() != TokenKind::Eof {
-            match self.peek() {
-                TokenKind::Return => stmts.push(self.parse_return_stmt()?),
-                TokenKind::While => stmts.push(self.parse_while_stmt()?),
-                TokenKind::For => stmts.push(self.parse_for_stmt()?),
-                TokenKind::Break => {
-                    let span = self.advance().span;
-                    self.expect(&TokenKind::Semi)?;
-                    stmts.push(Stmt::Break { span });
-                }
-                TokenKind::Continue => {
-                    let span = self.advance().span;
-                    self.expect(&TokenKind::Semi)?;
-                    stmts.push(Stmt::Continue { span });
-                }
-                TokenKind::Defer => {
-                    stmts.push(self.parse_defer_stmt()?);
-                }
-                TokenKind::Loop => {
-                    stmts.push(self.parse_loop_stmt()?);
-                }
-                TokenKind::LParen if self.is_tuple_destructure() => {
-                    stmts.push(self.parse_tuple_destructure()?);
-                }
-                TokenKind::Ident(_) => {
-                    if self.is_var_decl_or_assign() {
-                        stmts.push(self.parse_var_decl_or_assign()?);
-                    } else {
+            let result: Result<(), CompileError> = (|| {
+                match self.peek() {
+                    TokenKind::Return => stmts.push(self.parse_return_stmt()?),
+                    TokenKind::While => stmts.push(self.parse_while_stmt()?),
+                    TokenKind::For => stmts.push(self.parse_for_stmt()?),
+                    TokenKind::Break => {
+                        let span = self.advance().span;
+                        self.expect(&TokenKind::Semi)?;
+                        stmts.push(Stmt::Break { span });
+                    }
+                    TokenKind::Continue => {
+                        let span = self.advance().span;
+                        self.expect(&TokenKind::Semi)?;
+                        stmts.push(Stmt::Continue { span });
+                    }
+                    TokenKind::Defer => {
+                        stmts.push(self.parse_defer_stmt()?);
+                    }
+                    TokenKind::Loop => {
+                        stmts.push(self.parse_loop_stmt()?);
+                    }
+                    TokenKind::LParen if self.is_tuple_destructure() => {
+                        stmts.push(self.parse_tuple_destructure()?);
+                    }
+                    TokenKind::Ident(_) => {
+                        if self.is_var_decl_or_assign() {
+                            stmts.push(self.parse_var_decl_or_assign()?);
+                        } else {
+                            self.parse_expr_or_assign_stmt(&mut stmts, &mut tail_expr)?;
+                        }
+                    }
+                    TokenKind::If => {
+                        let expr = self.parse_if_expr()?;
+                        self.handle_expr_in_block(expr, &mut stmts, &mut tail_expr)?;
+                    }
+                    _ => {
                         self.parse_expr_or_assign_stmt(&mut stmts, &mut tail_expr)?;
                     }
                 }
-                TokenKind::If => {
-                    let expr = self.parse_if_expr()?;
-                    self.handle_expr_in_block(expr, &mut stmts, &mut tail_expr)?;
-                }
-                _ => {
-                    self.parse_expr_or_assign_stmt(&mut stmts, &mut tail_expr)?;
-                }
+                Ok(())
+            })();
+
+            if let Err(e) = result {
+                self.errors.push(e);
+                self.synchronize_stmt();
             }
         }
 

@@ -104,6 +104,17 @@ fn test_fstring_empty_expr() {
 }
 
 #[test]
+fn test_multi_error_recovery() {
+    let assert = compile_invalid("multi_error.ny");
+    assert
+        .failure()
+        .code(1)
+        // Should report BOTH errors, not just the first one
+        .stderr(predicate::str::contains("10 +;").or(predicate::str::contains("line 2")))
+        .stderr(predicate::str::contains("30 *;").or(predicate::str::contains("line 4")));
+}
+
+#[test]
 fn test_nonexistent_file() {
     let mut cmd = Command::cargo_bin("ny").unwrap();
     cmd.arg("build").arg("nonexistent.lnge");

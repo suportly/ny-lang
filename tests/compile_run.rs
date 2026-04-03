@@ -637,3 +637,11 @@ fn test_vec_reduce() {
     assert_eq!(compile_and_run("vec_reduce.ny"), 42);
 }
 
+#[test]
+fn test_example_functional() {
+    let (code, stdout) = compile_and_run_example("examples/functional.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Sum of 1..10 = 55"), "stdout: {}", stdout);
+    assert!(stdout.contains("Sum of even squares = 220"), "stdout: {}", stdout);
+}
+

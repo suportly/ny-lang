@@ -65,6 +65,19 @@ impl TypeChecker {
         None
     }
 
+    /// Find the closest match from a list of candidates for "did you mean?" suggestions.
+    fn suggest_similar(name: &str, candidates: &[&str]) -> Option<String> {
+        let mut best: Option<(&str, usize)> = None;
+        let max_dist = if name.len() <= 2 { 1 } else { 2 };
+        for &c in candidates {
+            let dist = crate::common::edit_distance(name, c);
+            if dist > 0 && dist <= max_dist && best.as_ref().map_or(true, |(_, d)| dist < *d) {
+                best = Some((c, dist));
+            }
+        }
+        best.map(|(s, _)| s.to_string())
+    }
+
     /// Resolve a TypeAnnotation into a NyType, using struct definitions when needed.
     fn resolve_type_annotation(&self, ann: &TypeAnnotation) -> Option<NyType> {
         match ann {
@@ -707,7 +720,7 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
-                if callee == "write_file" {
+                if callee == "write_file" || callee == "remove_file" {
                     for arg in args {
                         self.check_expr(arg);
                     }
@@ -1085,10 +1098,19 @@ impl TypeChecker {
                                 ));
                             }
                         } else {
-                            self.errors.push(CompileError::type_error(
-                                format!("struct '{}' has no field named '{}'", name, field_name),
+                            let candidates: Vec<&str> =
+                                def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                            let mut err = CompileError::type_error(
+                                format!(
+                                    "struct '{}' has no field named '{}'",
+                                    name, field_name
+                                ),
                                 field_expr.span(),
-                            ));
+                            );
+                            if let Some(s) = Self::suggest_similar(field_name, &candidates) {
+                                err = err.with_note(format!("did you mean '{}'?", s));
+                            }
+                            self.errors.push(err);
                         }
                     }
 
@@ -1478,10 +1500,16 @@ impl TypeChecker {
                 if let Some(field_ty) = fields.iter().find(|(n, _)| n == field).map(|(_, t)| t) {
                     field_ty.clone()
                 } else {
-                    self.errors.push(CompileError::type_error(
+                    let candidates: Vec<&str> =
+                        fields.iter().map(|(n, _)| n.as_str()).collect();
+                    let mut err = CompileError::type_error(
                         format!("struct '{}' has no field '{}'", name, field),
                         span,
-                    ));
+                    );
+                    if let Some(suggestion) = Self::suggest_similar(field, &candidates) {
+                        err = err.with_note(format!("did you mean '{}'?", suggestion));
+                    }
+                    self.errors.push(err);
                     NyType::I32
                 }
             }
@@ -1583,10 +1611,19 @@ impl TypeChecker {
                     for arg in args {
                         self.check_expr(arg);
                     }
-                    self.errors.push(CompileError::type_error(
+                    let vec_methods = &[
+                        "push", "pop", "get", "set", "len", "sort", "reverse",
+                        "clear", "contains", "index_of", "map", "filter",
+                        "reduce", "for_each", "any", "all",
+                    ];
+                    let mut err = CompileError::type_error(
                         format!("no method '{}' found for Vec type", method),
                         span,
-                    ));
+                    );
+                    if let Some(s) = Self::suggest_similar(method, vec_methods) {
+                        err = err.with_note(format!("did you mean '{}'?", s));
+                    }
+                    self.errors.push(err);
                     return NyType::I32;
                 }
             }
@@ -1715,10 +1752,19 @@ impl TypeChecker {
                     for arg in args {
                         self.check_expr(arg);
                     }
-                    self.errors.push(CompileError::type_error(
+                    let str_methods = &[
+                        "len", "substr", "char_at", "contains", "starts_with",
+                        "ends_with", "index_of", "trim", "to_upper", "to_lower",
+                        "replace", "repeat",
+                    ];
+                    let mut err = CompileError::type_error(
                         format!("no method '{}' found for type 'str'", method),
                         span,
-                    ));
+                    );
+                    if let Some(s) = Self::suggest_similar(method, str_methods) {
+                        err = err.with_note(format!("did you mean '{}'?", s));
+                    }
+                    self.errors.push(err);
                     return NyType::I32;
                 }
             }

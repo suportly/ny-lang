@@ -28,7 +28,7 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         // Strings
         "read_line" | "int_to_str" | "float_to_str" | "read_file" => Some(NyType::Str),
         "str_to_float" => Some(NyType::F64),
-        "write_file" => Some(NyType::I32),
+        "write_file" | "remove_file" => Some(NyType::I32),
 
         // Vec
         "vec_new" => Some(NyType::Vec(Box::new(NyType::I32))),
@@ -108,6 +108,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "str_to_float",
     "read_file",
     "write_file",
+    "remove_file",
     "vec_new",
     "vec_push",
     "vec_len",

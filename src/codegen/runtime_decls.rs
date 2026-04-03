@@ -383,6 +383,17 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("memcmp", memcmp_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_remove_file(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_remove_file") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let i32_ty = self.context.i32_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_remove_file", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_read_file(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_read_file") {
             return f;

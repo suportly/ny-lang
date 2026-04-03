@@ -1648,6 +1648,25 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(result.into_struct_value().into()));
                 }
 
+                // remove_file(path: str) -> i32
+                if callee == "remove_file" {
+                    let path_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let pp = self.builder.build_extract_value(path_val, 0, "rmf_pp").unwrap();
+                    let pl = self.builder.build_extract_value(path_val, 1, "rmf_pl").unwrap();
+                    let rmf_fn = self.get_or_declare_ny_remove_file();
+                    let result = self
+                        .builder
+                        .build_call(rmf_fn, &[pp.into(), pl.into()], "rmf_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
                 // read_file(path: str) -> str
                 if callee == "read_file" {
                     let path_val = self

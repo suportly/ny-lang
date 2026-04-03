@@ -64,6 +64,16 @@ NyStrSlice *ny_str_split(const char *hay, long hay_len,
     return result;
 }
 
+// Remove a file. Returns 0 on success, -1 on failure.
+int ny_remove_file(const char *path, long path_len) {
+    char *cpath = (char *)malloc(path_len + 1);
+    memcpy(cpath, path, path_len);
+    cpath[path_len] = '\0';
+    int result = remove(cpath);
+    free(cpath);
+    return result == 0 ? 0 : -1;
+}
+
 // Read entire file into a string. Returns malloc'd buffer, sets *out_len.
 // Returns NULL on failure.
 char *ny_read_file(const char *path, long path_len, long *out_len) {

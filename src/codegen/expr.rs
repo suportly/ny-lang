@@ -278,6 +278,39 @@ impl<'ctx> CodeGen<'ctx> {
 
             // ---- Binary operations ----
             Expr::BinOp { op, lhs, rhs, .. } => {
+                // Check for operator overloading on struct types
+                let lhs_ty = self.infer_expr_type(lhs);
+                if let crate::common::NyType::Struct { name, .. } = &lhs_ty {
+                    let op_name = match op {
+                        BinOp::Add => "add",
+                        BinOp::Sub => "sub",
+                        BinOp::Mul => "mul",
+                        BinOp::Div => "div",
+                        BinOp::Eq => "eq",
+                        BinOp::Ne => "ne",
+                        BinOp::Lt => "lt",
+                        BinOp::Gt => "gt",
+                        BinOp::Le => "le",
+                        BinOp::Ge => "ge",
+                        _ => "",
+                    };
+                    let method = format!("{}_{}", name, op_name);
+                    if !op_name.is_empty() {
+                        if let Some((func, _, _)) = self.functions.get(&method).cloned() {
+                            let lhs_val = self.compile_expr(lhs, function)?.unwrap();
+                            let rhs_val = self.compile_expr(rhs, function)?.unwrap();
+                            let result = self
+                                .builder
+                                .build_call(func, &[lhs_val.into(), rhs_val.into()], "op_result")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap();
+                            return Ok(Some(result));
+                        }
+                    }
+                }
+
                 let lhs_val = self.compile_expr(lhs, function)?.unwrap();
                 let rhs_val = self.compile_expr(rhs, function)?.unwrap();
                 let result = self.compile_binop(*op, lhs_val, rhs_val)?;

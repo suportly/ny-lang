@@ -338,6 +338,17 @@ impl TypeChecker {
                             NyType::Str
                         } else if lhs_ty.is_pointer() && rhs_ty.is_integer() {
                             lhs_ty // pointer arithmetic: ptr + int → ptr
+                        } else if let NyType::Struct { name, .. } = &lhs_ty {
+                            // Operator overloading: check for TypeName_add function
+                            let method = format!("{}_add", name);
+                            if self.functions.contains_key(&method) {
+                                return lhs_ty;
+                            }
+                            self.errors.push(CompileError::type_error(
+                                format!("no 'add' method defined for struct '{}'", name),
+                                *span,
+                            ));
+                            lhs_ty
                         } else {
                             if !lhs_ty.is_numeric() {
                                 self.errors.push(CompileError::type_error(
@@ -368,6 +379,19 @@ impl TypeChecker {
                         // pointer - int → pointer
                         if *op == BinOp::Sub && lhs_ty.is_pointer() && rhs_ty.is_integer() {
                             return lhs_ty;
+                        }
+                        // Operator overloading for structs
+                        if let NyType::Struct { name, .. } = &lhs_ty {
+                            let op_name = match op {
+                                BinOp::Sub => "sub",
+                                BinOp::Mul => "mul",
+                                BinOp::Div => "div",
+                                _ => "mod",
+                            };
+                            let method = format!("{}_{}", name, op_name);
+                            if self.functions.contains_key(&method) {
+                                return lhs_ty;
+                            }
                         }
                         if !lhs_ty.is_numeric() {
                             self.errors.push(CompileError::type_error(

@@ -148,8 +148,49 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(str_eq.into());
                 }
                 _ => {
+                    // Try operator overloading: look for TypeName_opname function
+                    let op_method = match op {
+                        BinOp::Add => "add",
+                        BinOp::Sub => "sub",
+                        BinOp::Mul => "mul",
+                        BinOp::Div => "div",
+                        BinOp::Eq => "eq",
+                        BinOp::Ne => "ne",
+                        BinOp::Lt => "lt",
+                        BinOp::Gt => "gt",
+                        BinOp::Le => "le",
+                        BinOp::Ge => "ge",
+                        _ => {
+                            return Err(vec![CompileError::type_error(
+                                "unsupported binary operation on struct types".to_string(),
+                                Span::empty(0),
+                            )]);
+                        }
+                    };
+
+                    // Try to find operator method in registered functions
+                    // Methods are registered as TypeName_methodname
+                    for (name, (func, param_types, ret_ty)) in &self.functions {
+                        if name.ends_with(&format!("_{}", op_method)) && param_types.len() == 2 {
+                            let result = self
+                                .builder
+                                .build_call(*func, &[lhs.into(), rhs.into()], "op_result")
+                                .unwrap();
+                            if *ret_ty == crate::common::NyType::Bool {
+                                return Ok(result
+                                    .try_as_basic_value()
+                                    .basic()
+                                    .unwrap());
+                            }
+                            return Ok(result
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap());
+                        }
+                    }
+
                     return Err(vec![CompileError::type_error(
-                        "unsupported binary operation on struct/string types".to_string(),
+                        format!("no operator '{}' defined for struct type", op_method),
                         Span::empty(0),
                     )]);
                 }

@@ -49,10 +49,48 @@ pub fn monomorphize(program: &mut Program) {
     specializations.sort_by(|a, b| a.0.cmp(&b.0));
     specializations.dedup();
 
-    // Step 3: Generate monomorphized copies
+    // Step 2b: Collect trait implementations for bound checking
+    let mut trait_impls: HashMap<String, Vec<String>> = HashMap::new(); // trait_name → [type_name]
+    for item in &program.items {
+        if let Item::ImplBlock {
+            type_name,
+            trait_name: Some(tname),
+            ..
+        } = item
+        {
+            trait_impls
+                .entry(tname.clone())
+                .or_default()
+                .push(type_name.clone());
+        }
+    }
+
+    // Step 3: Generate monomorphized copies (with trait bound checking)
     let mut new_items: Vec<Item> = Vec::new();
     for (fn_name, concrete_types) in &specializations {
         if let Some(template) = generic_fns.get(fn_name) {
+            // Check trait bounds
+            if let Item::FunctionDef { type_params, .. } = template {
+                let mut bound_ok = true;
+                for (i, tp) in type_params.iter().enumerate() {
+                    if let Some(concrete) = concrete_types.get(i) {
+                        let type_name = format!("{}", concrete);
+                        for bound in &tp.bounds {
+                            let impls = trait_impls.get(bound).cloned().unwrap_or_default();
+                            if !impls.contains(&type_name) && !is_builtin_trait_satisfied(bound, concrete) {
+                                eprintln!(
+                                    "error: type '{}' does not implement trait '{}' (required by '{}' in '{}')",
+                                    type_name, bound, tp.name, fn_name
+                                );
+                                bound_ok = false;
+                            }
+                        }
+                    }
+                }
+                if !bound_ok {
+                    continue; // Skip this specialization
+                }
+            }
             if let Some(specialized) = specialize_function(template, concrete_types) {
                 new_items.push(specialized);
             }
@@ -80,6 +118,38 @@ pub fn monomorphize(program: &mut Program) {
         |item| !matches!(item, Item::FunctionDef { type_params, .. } if !type_params.is_empty()),
     );
     program.items.extend(new_items);
+}
+
+/// Check if a concrete type satisfies a builtin trait without explicit impl.
+/// Numeric types implicitly satisfy comparison/arithmetic traits.
+fn is_builtin_trait_satisfied(trait_name: &str, concrete: &NyType) -> bool {
+    match trait_name {
+        // Comparison traits — all numeric types satisfy
+        "Ord" | "Eq" | "PartialOrd" | "PartialEq" | "Comparable" => concrete.is_numeric(),
+        // Arithmetic traits — all numeric types satisfy
+        "Add" | "Sub" | "Mul" | "Div" | "Numeric" => concrete.is_numeric(),
+        // Display/Debug — all primitives satisfy
+        "Display" | "Debug" | "Printable" => {
+            matches!(
+                concrete,
+                NyType::I8
+                    | NyType::I16
+                    | NyType::I32
+                    | NyType::I64
+                    | NyType::I128
+                    | NyType::U8
+                    | NyType::U16
+                    | NyType::U32
+                    | NyType::U64
+                    | NyType::U128
+                    | NyType::F32
+                    | NyType::F64
+                    | NyType::Bool
+                    | NyType::Str
+            )
+        }
+        _ => false,
+    }
 }
 
 fn mangle_name(name: &str, types: &[NyType]) -> String {

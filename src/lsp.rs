@@ -126,7 +126,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     let params: DidOpenTextDocumentParams = serde_json::from_value(notif.params)?;
                     let uri = params.text_document.uri.clone();
                     let text = params.text_document.text.clone();
-                    let resolved = analyze_document(&text);
+                    let resolved = analyze_document(&text, &uri);
                     publish_diagnostics(&connection, &uri, &text)?;
                     documents.insert(
                         uri,
@@ -140,7 +140,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                     let uri = params.text_document.uri.clone();
                     if let Some(change) = params.content_changes.into_iter().last() {
                         let text = change.text;
-                        let resolved = analyze_document(&text);
+                        let resolved = analyze_document(&text, &uri);
                         publish_diagnostics(&connection, &uri, &text)?;
                         documents.insert(
                             uri,
@@ -158,10 +158,24 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
     Ok(())
 }
 
-/// Run lexer + parser + semantic analysis, returning ResolvedInfo if successful.
-fn analyze_document(source: &str) -> Option<ResolvedInfo> {
+/// Run lexer + parser + module resolution + monomorphize + semantic analysis.
+fn analyze_document(source: &str, uri: &Url) -> Option<ResolvedInfo> {
     let tokens = ny::lexer::tokenize(source).ok()?;
-    let program = ny::parser::parse(tokens).ok()?;
+    let mut program = ny::parser::parse(tokens).ok()?;
+
+    // Resolve module imports if we can determine the file path from URI
+    let uri_str = uri.as_str();
+    if let Some(file_path) = uri_str.strip_prefix("file://") {
+        let path = std::path::PathBuf::from(file_path);
+        let base_dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(path);
+        let _ = ny::resolve_uses_pub(&mut program, &base_dir, &mut visited);
+    }
+
+    // Monomorphize generic functions
+    ny::monomorphize::monomorphize(&mut program);
+
     ny::semantic::analyze(&program).ok()
 }
 

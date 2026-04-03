@@ -683,6 +683,11 @@ fn test_json_parse() {
 }
 
 #[test]
+fn test_operator_overload() {
+    assert_eq!(compile_and_run("operator_overload.ny"), 42);
+}
+
+#[test]
 fn test_example_todo_app() {
     let (code, stdout) = compile_and_run_example("examples/todo_app.ny");
     assert_eq!(code, 0);

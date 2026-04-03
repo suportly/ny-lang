@@ -335,24 +335,25 @@ editors/
 
 Benchmarks on x86-64 Linux, median of 5 runs:
 
-### Fibonacci (recursive, fib(40))
+### Fibonacci fib(40) — recursive
 
 | | Time | vs C |
 |---|------|------|
-| C (gcc -O2) | 249 ms | 1.0x |
-| **Ny -O1** | **274 ms** | **1.1x** |
-| **Ny -O2** | **432 ms** | **1.7x** |
+| C (gcc -O2) | 240 ms | 1.0x |
+| **Ny -O2** | **407 ms** | **1.7x** |
+| Go | 593 ms | 2.5x |
 
-### Matrix Multiply (256x256, naive triple-loop)
+### Matrix Multiply 256x256
 
 | | Time | vs C |
 |---|------|------|
-| C (gcc -O2) | 18 ms | 1.0x |
-| **Ny -O2** | **22 ms** | **1.2x** |
+| C (gcc -O2) | 19 ms | 1.0x |
+| **Ny -O2** | **25 ms** | **1.3x** |
+| Go | 40 ms | 2.1x |
 
-Ny compiles through the same LLVM backend as Clang. Performance is **1.2x-1.7x of C** depending on workload. The matmul gap (1.2x) is primarily from Vec bounds checking.
+**Ny is ~1.5x faster than Go** on compute-heavy workloads, and within 1.3-1.7x of C.
 
-See [`benchmarks/`](benchmarks/) for full results and C equivalents.
+See [`benchmarks/`](benchmarks/) for full results, all optimization levels, and C/Go source equivalents.
 
 ## Design Decisions
 

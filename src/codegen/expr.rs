@@ -2970,6 +2970,177 @@ impl<'ctx> CodeGen<'ctx> {
                             let result = self.builder.build_load(vec_struct_ty, new_vec_ptr, "fil_result").unwrap();
                             return Ok(Some(result));
                         }
+                        "reduce" => {
+                            // v.reduce(fn, init) -> T — fold all elements with binary fn
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "red_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "red_len")
+                                .unwrap()
+                                .into_int_value();
+                            let fn_ptr = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_pointer_value();
+                            let init_val = self
+                                .compile_expr(&args[1], function)?
+                                .unwrap();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+
+                            // fn(acc: T, elem: T) -> T
+                            let fn_ty = elem_llvm.fn_type(
+                                &[elem_llvm.into(), elem_llvm.into()],
+                                false,
+                            );
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "red_loop");
+                            let body_bb =
+                                self.context.append_basic_block(*function, "red_body");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "red_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "red_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let acc_phi =
+                                self.builder.build_phi(elem_llvm, "red_acc").unwrap();
+                            acc_phi.add_incoming(&[(&init_val, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "red_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let ep = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[i_val], "red_ep",
+                                    )
+                                    .unwrap()
+                            };
+                            let ev = self
+                                .builder
+                                .build_load(elem_llvm, ep, "red_ev")
+                                .unwrap();
+                            let new_acc = self
+                                .builder
+                                .build_indirect_call(
+                                    fn_ty,
+                                    fn_ptr,
+                                    &[acc_phi.as_basic_value().into(), ev.into()],
+                                    "red_r",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap();
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "red_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, body_bb)]);
+                            acc_phi.add_incoming(&[(&new_acc, body_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            return Ok(Some(acc_phi.as_basic_value()));
+                        }
+                        "for_each" => {
+                            // v.for_each(fn) — call fn on each element (side effects)
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "fe_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "fe_len")
+                                .unwrap()
+                                .into_int_value();
+                            let fn_ptr = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_pointer_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let void_ty = self.context.void_type();
+                            let fn_ty = void_ty.fn_type(&[elem_llvm.into()], false);
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb =
+                                self.context.append_basic_block(*function, "fe_loop");
+                            let body_bb =
+                                self.context.append_basic_block(*function, "fe_body");
+                            let done_bb =
+                                self.context.append_basic_block(*function, "fe_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi =
+                                self.builder.build_phi(i64_ty, "fe_i").unwrap();
+                            i_phi.add_incoming(&[(&zero, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+                            let cond = self
+                                .builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "fe_cond")
+                                .unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let ep = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        elem_llvm, data_ptr, &[i_val], "fe_ep",
+                                    )
+                                    .unwrap()
+                            };
+                            let ev = self
+                                .builder
+                                .build_load(elem_llvm, ep, "fe_ev")
+                                .unwrap();
+                            self.builder
+                                .build_indirect_call(fn_ty, fn_ptr, &[ev.into()], "")
+                                .unwrap();
+                            let next_i = self
+                                .builder
+                                .build_int_add(i_val, one, "fe_next")
+                                .unwrap();
+                            i_phi.add_incoming(&[(&next_i, body_bb)]);
+                            self.builder
+                                .build_unconditional_branch(loop_bb)
+                                .unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            return Ok(None);
+                        }
                         "contains" | "index_of" => {
                             // v.contains(val) -> bool / v.index_of(val) -> i32
                             let obj_val = self.compile_expr(object, function)?.unwrap();

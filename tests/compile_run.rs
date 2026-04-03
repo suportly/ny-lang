@@ -632,3 +632,8 @@ fn test_vec_filter() {
     assert_eq!(compile_and_run("vec_filter.ny"), 42);
 }
 
+#[test]
+fn test_vec_reduce() {
+    assert_eq!(compile_and_run("vec_reduce.ny"), 42);
+}
+

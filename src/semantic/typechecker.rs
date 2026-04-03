@@ -1516,6 +1516,18 @@ impl TypeChecker {
                     }
                     return NyType::Vec(elem.clone());
                 }
+                "reduce" => {
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
+                    return *elem.clone();
+                }
+                "for_each" => {
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::Unit;
+                }
                 "contains" => {
                     if args.len() == 1 {
                         self.check_expr(&args[0]);

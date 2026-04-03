@@ -296,6 +296,7 @@ npm install
 | [`examples/csv_parser.ny`](examples/csv_parser.ny) | CSV parsing — string split, HashMap, f-strings |
 | [`examples/fibonacci_bench.ny`](examples/fibonacci_bench.ny) | Performance benchmark with `clock_ms()` timing |
 | [`examples/matmul_bench.ny`](examples/matmul_bench.ny) | Matrix multiply — Vec, nested loops, f-strings |
+| [`examples/calculator.ny`](examples/calculator.ny) | Interactive REPL — read_line, string split, loops |
 | [`examples/benchmark/`](examples/benchmark/) | Full suite — generics, sorting, modules, enums |
 
 ## Running Tests

@@ -594,6 +594,7 @@ impl<'ctx> CodeGen<'ctx> {
                 name,
                 params,
                 return_type,
+                is_async,
                 ..
             } = item
             {
@@ -610,14 +611,37 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let param_meta: Vec<_> = llvm_param_types.iter().map(|t| (*t).into()).collect();
 
-                let fn_type = match &ret_ty {
-                    NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
-                    ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
-                };
+                if *is_async {
+                    // Async fn: public wrapper returns ptr (NyFuture*)
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let wrapper_type = ptr_ty.fn_type(&param_meta, false);
+                    let wrapper_fn = self.module.add_function(name, wrapper_type, None);
+                    self.functions.insert(
+                        name.clone(),
+                        (wrapper_fn, param_types.clone(), NyType::Future(Box::new(ret_ty.clone()))),
+                    );
 
-                let function = self.module.add_function(name, fn_type, None);
-                self.functions
-                    .insert(name.clone(), (function, param_types, ret_ty));
+                    // Also declare the body function (private)
+                    let body_name = format!("{}_body", name);
+                    let body_type = match &ret_ty {
+                        NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
+                        ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
+                    };
+                    let body_fn = self.module.add_function(&body_name, body_type, None);
+                    self.functions.insert(
+                        body_name,
+                        (body_fn, param_types, ret_ty),
+                    );
+                } else {
+                    let fn_type = match &ret_ty {
+                        NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
+                        ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
+                    };
+
+                    let function = self.module.add_function(name, fn_type, None);
+                    self.functions
+                        .insert(name.clone(), (function, param_types, ret_ty));
+                }
             }
         }
 
@@ -661,10 +685,16 @@ impl<'ctx> CodeGen<'ctx> {
         // Pass 2b: Compile function bodies
         for item in &program.items {
             if let Item::FunctionDef {
-                name, params, body, ..
+                name, params, body, is_async, ..
             } = item
             {
-                let (function, param_types, _) = self.functions[name].clone();
+                // For async functions, compile the body as _body, then emit the wrapper
+                let compile_name = if *is_async {
+                    format!("{}_body", name)
+                } else {
+                    name.clone()
+                };
+                let (function, param_types, _) = self.functions[&compile_name].clone();
                 let entry = self.context.append_basic_block(function, "entry");
                 self.builder.position_at_end(entry);
 
@@ -720,6 +750,196 @@ impl<'ctx> CodeGen<'ctx> {
                 // Restore outer scope and defers
                 self.defer_stack = outer_defers;
                 self.variables = outer_vars;
+
+                // For async functions: generate the public wrapper
+                if *is_async {
+                    let (wrapper_fn, wrapper_param_types, _) = self.functions[name].clone();
+                    let body_name = format!("{}_body", name);
+                    let (body_fn, _, body_ret_ty) = self.functions[&body_name].clone();
+
+                    let entry = self.context.append_basic_block(wrapper_fn, "async_entry");
+                    self.builder.position_at_end(entry);
+
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let i64_ty = self.context.i64_type();
+
+                    // 1. Create future
+                    let future_create = self.get_or_declare_ny_future_create();
+                    let future_ptr = self
+                        .builder
+                        .build_call(future_create, &[], "future")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // 2. Allocate arg struct: [future_ptr, param0, param1, ...]
+                    let n_params = wrapper_param_types.len();
+                    let arg_fields: Vec<BasicTypeEnum> = std::iter::once(ptr_ty.into())
+                        .chain(
+                            wrapper_param_types
+                                .iter()
+                                .map(|t| ny_to_llvm(self.context, t)),
+                        )
+                        .collect();
+                    let arg_struct_ty = self.context.struct_type(&arg_fields, false);
+                    let malloc_fn = self.get_or_declare_malloc();
+                    let arg_size = arg_struct_ty.size_of().unwrap();
+                    let arg_ptr = self
+                        .builder
+                        .build_call(malloc_fn, &[arg_size.into()], "async_args")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Store future ptr at field 0
+                    let fp_gep = self
+                        .builder
+                        .build_struct_gep(arg_struct_ty, arg_ptr, 0, "arg_fp")
+                        .unwrap();
+                    self.builder.build_store(fp_gep, future_ptr).unwrap();
+
+                    // Store each parameter
+                    for i in 0..n_params {
+                        let param_gep = self
+                            .builder
+                            .build_struct_gep(
+                                arg_struct_ty,
+                                arg_ptr,
+                                (i + 1) as u32,
+                                &format!("arg_p{}", i),
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_store(param_gep, wrapper_fn.get_nth_param(i as u32).unwrap())
+                            .unwrap();
+                    }
+
+                    // 3. Create thunk function
+                    let thunk_name = format!("{}_thunk", name);
+                    let thunk_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                    let thunk_fn = self.module.add_function(&thunk_name, thunk_type, None);
+
+                    let thunk_entry = self.context.append_basic_block(thunk_fn, "thunk_entry");
+                    self.builder.position_at_end(thunk_entry);
+
+                    let raw_arg = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
+
+                    // Load future ptr from arg[0]
+                    let tfp_gep = self
+                        .builder
+                        .build_struct_gep(arg_struct_ty, raw_arg, 0, "t_fp")
+                        .unwrap();
+                    let t_future = self
+                        .builder
+                        .build_load(ptr_ty, tfp_gep, "t_future")
+                        .unwrap()
+                        .into_pointer_value();
+
+                    // Load each parameter from arg struct
+                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                    for i in 0..n_params {
+                        let p_gep = self
+                            .builder
+                            .build_struct_gep(
+                                arg_struct_ty,
+                                raw_arg,
+                                (i + 1) as u32,
+                                &format!("t_p{}", i),
+                            )
+                            .unwrap();
+                        let p_ty = ny_to_llvm(self.context, &wrapper_param_types[i]);
+                        let p_val = self
+                            .builder
+                            .build_load(p_ty, p_gep, &format!("t_v{}", i))
+                            .unwrap();
+                        call_args.push(p_val.into());
+                    }
+
+                    // Call body function
+                    let body_result = self
+                        .builder
+                        .build_call(body_fn, &call_args, "t_result")
+                        .unwrap();
+
+                    // Signal the future with result
+                    let future_signal = self.get_or_declare_ny_future_signal();
+                    let result_i64 = if body_ret_ty == NyType::Unit {
+                        i64_ty.const_int(0, false)
+                    } else {
+                        let rv = body_result.try_as_basic_value().basic().unwrap();
+                        if rv.is_int_value() {
+                            self.builder
+                                .build_int_s_extend_or_bit_cast(
+                                    rv.into_int_value(),
+                                    i64_ty,
+                                    "t_ext",
+                                )
+                                .unwrap()
+                        } else {
+                            // For f64, bitcast to i64
+                            self.builder
+                                .build_bit_cast(rv, i64_ty, "t_bc")
+                                .unwrap()
+                                .into_int_value()
+                        }
+                    };
+                    self.builder
+                        .build_call(future_signal, &[t_future.into(), result_i64.into()], "")
+                        .unwrap();
+
+                    // Free arg struct
+                    let free_fn = self.get_or_declare_free();
+                    self.builder
+                        .build_call(free_fn, &[raw_arg.into()], "")
+                        .unwrap();
+
+                    // Return null
+                    let null = ptr_ty.const_null();
+                    self.builder.build_return(Some(&null)).unwrap();
+
+                    // 4. Back in wrapper: submit thunk to pool
+                    self.builder.position_at_end(entry);
+                    // Remove the old terminator if any (we need to add more)
+                    // Actually entry block has no terminator yet — we're building sequentially
+
+                    // Hmm, we already moved to thunk_entry. Need to go back to async_entry.
+                    // The issue: we built the thunk in the middle. Let me restructure.
+                    // Actually the thunk is a separate function, so the builder position was set to thunk_entry.
+                    // We need to go back to the wrapper's entry block to finish it.
+
+                    // Find the wrapper's entry block (it was named "async_entry")
+                    let wrapper_entry = wrapper_fn.get_first_basic_block().unwrap();
+                    self.builder.position_at_end(wrapper_entry);
+
+                    // Submit thunk to async pool
+                    let async_pool = self.get_or_declare_ny_async_pool();
+                    let pool_ptr = self
+                        .builder
+                        .build_call(async_pool, &[], "pool")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let pool_submit = self.get_or_declare_ny_pool_submit_arg();
+                    self.builder
+                        .build_call(
+                            pool_submit,
+                            &[
+                                pool_ptr.into(),
+                                thunk_fn.as_global_value().as_pointer_value().into(),
+                                arg_ptr.into(),
+                            ],
+                            "",
+                        )
+                        .unwrap();
+
+                    // Return future pointer
+                    self.builder.build_return(Some(&future_ptr)).unwrap();
+                }
             }
         }
 

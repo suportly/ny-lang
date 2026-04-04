@@ -224,11 +224,32 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
     // Async/Await runtime
+    pub(super) fn get_or_declare_ny_future_create(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_future_create") { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_future_create", ptr.fn_type(&[], false), None)
+    }
+    pub(super) fn get_or_declare_ny_future_signal(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_future_signal") { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let i64t = self.context.i64_type();
+        self.module.add_function("ny_future_signal", self.context.void_type().fn_type(&[ptr.into(), i64t.into()], false), None)
+    }
     pub(super) fn get_or_declare_ny_future_await(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_future_await") { return f; }
         let ptr = self.context.ptr_type(AddressSpace::default());
         let i64t = self.context.i64_type();
         self.module.add_function("ny_future_await", i64t.fn_type(&[ptr.into()], false), None)
+    }
+    pub(super) fn get_or_declare_ny_async_pool(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_async_pool") { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_async_pool", ptr.fn_type(&[], false), None)
+    }
+    pub(super) fn get_or_declare_ny_pool_submit_arg(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_pool_submit_arg") { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_pool_submit_arg", self.context.void_type().fn_type(&[ptr.into(), ptr.into(), ptr.into()], false), None)
     }
 
     pub(super) fn get_or_declare_ny_str_join(&self) -> FunctionValue<'ctx> {

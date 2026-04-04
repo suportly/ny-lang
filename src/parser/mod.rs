@@ -289,8 +289,22 @@ impl Parser {
         if *self.peek() == TokenKind::Pub {
             self.advance();
         }
+        // Handle `async fn`
+        let is_async = *self.peek() == TokenKind::Async;
+        if is_async {
+            self.advance();
+        }
+
         match self.peek() {
-            TokenKind::Fn => self.parse_function(),
+            TokenKind::Fn => {
+                let mut item = self.parse_function()?;
+                if is_async {
+                    if let Item::FunctionDef { ref mut is_async, .. } = item {
+                        *is_async = true;
+                    }
+                }
+                Ok(item)
+            }
             TokenKind::Struct => self.parse_struct_def(),
             TokenKind::Enum => self.parse_enum_def(),
             TokenKind::Impl => self.parse_impl_block(),

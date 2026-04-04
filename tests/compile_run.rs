@@ -658,6 +658,16 @@ fn test_tensor_ops() {
 }
 
 #[test]
+fn test_async_basic() {
+    assert_eq!(compile_and_run("async_basic.ny"), 42);
+}
+
+#[test]
+fn test_async_concurrent() {
+    assert_eq!(compile_and_run("async_concurrent.ny"), 42);
+}
+
+#[test]
 fn test_vec_join() {
     assert_eq!(compile_and_run("vec_join.ny"), 42);
 }

@@ -13,7 +13,7 @@ Thanks for your interest in contributing to Ny Lang! This document explains how 
 git clone https://github.com/suportly/ny-lang.git
 cd ny-lang
 cargo build
-cargo test   # should pass 98 tests
+cargo test   # should pass 127 tests
 ```
 
 ## Project Structure
@@ -44,10 +44,14 @@ src/
 └── diagnostics/         # Error printing with codespan-reporting
 runtime/                 # C runtime (linked with every binary)
 ├── hashmap.c            # String→int hashmap
+├── hashmap_generic.c    # Generic HashMap<K,V>
 ├── arena.c              # Bump/arena allocator
 ├── channel.c            # Bounded blocking channels
 ├── threadpool.c         # Thread pool + parallel iterators
-└── string.c             # String helpers (split, replace, clock)
+├── string.c             # String helpers + stack traces
+├── json.c               # JSON parser
+├── tensor.c             # Tensor<f64> (22 operations)
+└── future.c             # Async/await runtime
 ```
 
 ## Spec-Driven Workflow

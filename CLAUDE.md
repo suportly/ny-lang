@@ -1,47 +1,62 @@
 # lnge Development Guidelines
 
-Last updated: 2026-04-01
+Last updated: 2026-04-04
 
 ## Active Technologies
-- Rust 1.75+ (2021 edition) + inkwell (LLVM 18 via llvm18-1-force-dynamic), codespan-reporting, clap
+- Rust 1.75+ (2021 edition) + inkwell (LLVM 18 via llvm18-1-force-dynamic), codespan-reporting, clap, serde/serde_json
 
 ## Project Structure
 
 ```text
 src/
-├── main.rs              # CLI (ny build, ny test)
+├── main.rs              # CLI (ny build/run/check/test/fmt/repl + pkg)
 ├── lib.rs               # Compiler pipeline + module resolution
+├── lsp.rs               # Language Server Protocol (6 capabilities)
+├── formatter.rs         # ny fmt (comment-preserving)
 ├── monomorphize.rs      # Generic function specialization
 ├── lexer/               # Tokenization
-├── parser/              # Pratt parser → AST
+├── parser/              # Pratt parser → AST (error recovery)
 ├── semantic/            # Name resolution + type checking
 ├── codegen/             # LLVM IR generation
+├── pkg/                 # Package manager (ny pkg)
 ├── common/              # Types, spans, errors
-└── diagnostics/         # Error reporting
+└── diagnostics/         # Error reporting (codespan-reporting)
 runtime/
-└── hashmap.c            # C runtime (HashMap implementation)
-specs/                   # Feature specifications (001–014)
+├── hashmap.c            # str→i32 HashMap
+├── hashmap_generic.c    # Generic HashMap<K,V>
+├── arena.c              # Arena allocator
+├── channel.c            # Bounded blocking channels
+├── threadpool.c         # Thread pool + parallel iterators
+├── string.c             # String helpers + clock + stack traces
+├── json.c               # JSON parser
+├── tensor.c             # Tensor<f64> matrix operations
+└── future.c             # Async/await runtime (NyFuture)
+editors/
+└── vscode/              # VS Code extension + LSP client
+specs/                   # Feature specifications
 tests/
-├── compile_run.rs       # Integration tests (47)
-├── error_tests.rs       # Negative tests (11)
+├── compile_run.rs       # Integration tests (111)
+├── error_tests.rs       # Negative tests (16)
 └── fixtures/            # .ny test programs
+benchmarks/              # 7 benchmarks with C + Go equivalents
 ```
 
 ## Commands
 
 ```bash
-cargo test               # Run all tests (58 total)
+cargo test               # Run all tests (127 total)
 cargo clippy             # Lint
 cargo build --release    # Release binary
 ny build file.ny         # Compile .ny to executable
-ny build file.ny -O 2    # Compile with optimization
+ny build file.ny -O 2    # Compile with optimization (release mode: no bounds checks)
+ny build file.ny --target wasm32  # Compile to WebAssembly
 ny run file.ny           # Compile and run in one step
 ny check file.ny         # Type-check without compiling (shows timing stats)
 ny test file.ny          # Run test_* functions
 ny fmt file.ny           # Print formatted source
-ny repl                  # Interactive REPL
 ny fmt file.ny --write   # Format in-place
 ny fmt file.ny --check   # Check if formatted (exit 1 if not)
+ny repl                  # Interactive REPL
 ny pkg init              # Create ny.pkg manifest
 ny pkg add <url>         # Add git dependency
 ny pkg build             # Fetch all dependencies
@@ -49,110 +64,89 @@ ny pkg remove <name>     # Remove dependency
 ny pkg list              # List dependencies
 ```
 
-## Tensor API
+## Implemented Features
 
-| Function | Description |
-|----------|-------------|
-| tensor_zeros(rows, cols) | Create zero matrix |
-| tensor_ones(rows, cols) | Create ones matrix |
-| tensor_rand(rows, cols) | Random matrix [0,1) |
-| tensor_matmul(a, b) | Matrix multiply |
-| tensor_transpose(t) | Transpose |
-| tensor_add/sub/mul(a, b) | Element-wise ops |
-| tensor_scale(t, scalar) | Scalar multiply |
-| tensor_dot(a, b) | Dot product |
-| tensor_norm(t) | Frobenius norm |
-| tensor_sum/max/min(t) | Reductions |
-| tensor_get/set(t, r, c) | Element access |
-| tensor_clone(t) | Deep copy |
-| tensor_free(t) | Cleanup |
-
-## Code Style
-
-Rust 1.75+ (2021 edition): Follow standard conventions
-
-## Implemented Phases
-
-| Phase | Feature | Spec |
-|-------|---------|------|
-| 1 | Compiler MVP: scalars, functions, control flow | specs/001-lnge-compiler/ |
-| 2 | Arrays, structs, pointers, strings, for loops | specs/002-ny-core-features/ |
-| 3 | Compound assignment, bitwise, casting, block comments | specs/003-operators-casting/ |
-| 4 | String ops, enums, match, tuples | specs/004-strings-enums-tuples/ |
-| 5 | Heap memory: alloc/free/sizeof, defer | specs/005-heap-memory/ |
-| 6 | Tagged unions (data-carrying enums), loop keyword | specs/006-tagged-unions-loop/ |
-| 7 | Impl blocks, pub keyword | specs/007-impl-blocks/ |
-| 8 | Trait definitions, impl Trait for Type | specs/008-traits/ |
-| 9 | Slice type []T + range indexing | specs/009-slices/ |
-| 10 | File I/O: fopen/fclose/fwrite_str/fread_byte, exit | specs/010-file-io/ |
-| 11 | Unsafe pointers, pointer arithmetic | specs/011-unsafe-pointers/ |
-| 12 | Concurrency foundation: sleep_ms | specs/012-concurrency-foundation/ |
-| 13 | SIMD infrastructure (prepared) | specs/013-simd-infrastructure/ |
-| 14 | Test framework: ny test | specs/014-test-framework/ |
-
-## Additional Features (beyond original phases)
-
-- Generic functions with monomorphization: `fn max<T>(a: T, b: T) -> T`
+### Language Core
+- 14 scalar types (i8-i128, u8-u128, f32, f64, bool, str)
+- Arrays [N]T, Slices []T, Tuples (T, U)
+- Structs + impl blocks + methods
+- Enums (tagged unions) + pattern matching (match, if let, while let)
+- Generics with monomorphization: `fn max<T>(a: T, b: T) -> T`
+- Trait definitions + impl Trait for Type + trait bounds enforcement
+- Operator overloading: `impl Vec2 { fn add(self, other) -> Vec2 }` → `a + b`
+- Closures (capturing): `|x: i32| -> i32 { x * n }`
+- Async/await: `async fn compute() -> i32 { ... }` + `await future`
+- ? operator: `val := divide(10, 0)?;`
 - Module system: `use "module.ny";`
 - Extern C FFI: `extern { fn abs(x: i32) -> i32; }`
-- Vec<T> dynamic arrays: push/pop/get/set/len/sort/reverse/clear/contains/index_of/map/filter/reduce/for_each/any/all with auto-grow
-- HashMap (str->i32): C runtime backed
-- Capturing closures: `|x: i32| -> i32 { x * n }`
-- for-in iteration: `for item in collection { ... }`
-- ? operator: `val := divide(10, 0)?;`
-- if let: `if let Option::Some(v) = expr { ... }`
-- Void functions: `fn greet() { ... }` without -> ()
-- Pointer arithmetic: `ptr + offset`, `*(ptr + n)`
-- String methods: `.len()`, `.substr()`, `.char_at()`, `.contains()`, `.starts_with()`, `.ends_with()`, `.index_of()`, `.trim()`, `.to_upper()`, `.to_lower()`, `.replace()`, `.repeat()`
-- String splitting: `str_split_count(s, delim)`, `str_split_get(s, delim, i)`
+- f-string interpolation: `f"value is {expr}"`
 
-## Builtin Functions
+### Vec<T> (20 methods)
+push, pop, get, set, len, sort, reverse, clear, contains, index_of,
+map, filter, reduce, for_each, any, all, sum, join
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| print | (any...) -> () | Print to stdout |
-| println | (any...) -> () | Print with newline |
-| alloc | (i32) -> *u8 | Heap allocation |
-| free | (*u8) -> () | Free heap memory |
-| sizeof | (any) -> i64 | Size in bytes |
-| vec_new | () -> Vec<T> | Create empty vector |
-| map_new | () -> *u8 | Create empty hashmap |
-| map_insert | (*u8, str, i32) -> () | Insert key-value |
-| map_get | (*u8, str) -> i32 | Get by key |
-| map_contains | (*u8, str) -> bool | Check key exists |
-| map_len | (*u8) -> i64 | Map size |
-| fopen | (str, str) -> *u8 | Open file |
-| fclose | (*u8) -> i32 | Close file |
-| fwrite_str | (*u8, str) -> i32 | Write string to file |
-| fread_byte | (*u8) -> i32 | Read byte |
-| read_line | () -> str | Read stdin line |
-| read_file | (str) -> str | Read entire file |
-| write_file | (str, str) -> i32 | Write string to file |
-| int_to_str | (i32) -> str | Int to string |
-| str_to_int | (str) -> i32 | String to int |
-| float_to_str | (f64) -> str | Float to string |
-| str_to_float | (str) -> f64 | String to float |
-| sqrt | (f64) -> f64 | Square root |
-| sin | (f64) -> f64 | Sine |
-| cos | (f64) -> f64 | Cosine |
-| floor | (f64) -> f64 | Floor |
-| ceil | (f64) -> f64 | Ceiling |
-| pow | (f64, f64) -> f64 | Power |
-| fabs | (f64) -> f64 | Absolute value |
-| log | (f64) -> f64 | Natural log |
-| exp | (f64) -> f64 | Exponential |
-| exit | (i32) -> ! | Exit process |
-| sleep_ms | (i32) -> () | Sleep milliseconds |
-| clock_ms | () -> i64 | Monotonic timer (ms) |
-| map_remove | (*u8, str) -> () | Remove key |
-| map_free | (*u8) -> () | Free hashmap |
-| str_split_count | (str, str) -> i32 | Count split parts |
-| str_split_get | (str, str, i32) -> str | Get split part by index |
+### String (13 methods)
+len, substr, char_at, contains, starts_with, ends_with, index_of,
+trim, to_upper, to_lower, replace, repeat
++ split via str_split_count/str_split_get
+
+### HashMap
+- `map_*` builtins: str→i32 (insert, get, contains, remove, free, len, key_at)
+- `smap_*` builtins: str→str
+- Generic `HashMap<K,V>`: str→i32, str→str, str→f64 via hmap_new + methods
+
+### Memory Management
+- alloc/free with OOM panic + null check
+- defer (LIFO, function-scoped)
+- Arena allocator (arena_new/alloc/free/reset)
+- No GC — manual memory + defer
+
+### Concurrency
+- Threads: thread_spawn/thread_join (pthreads)
+- Channels: channel_new/send/recv/close (bounded blocking, i32)
+- Thread pool: pool_new/submit/wait/free
+- **Async/await**: async fn dispatched to global thread pool, await blocks on condvar
+
+### Tensor API (22 operations)
+tensor_zeros, tensor_ones, tensor_fill, tensor_rand, tensor_clone,
+tensor_get, tensor_set, tensor_rows, tensor_cols,
+tensor_add, tensor_sub, tensor_mul, tensor_scale,
+tensor_matmul, tensor_transpose, tensor_dot, tensor_norm,
+tensor_sum, tensor_max, tensor_min, tensor_print, tensor_free
+
+### Builtins (90+)
+print/println, alloc/free/sizeof, math (sqrt/sin/cos/floor/ceil/pow/fabs/log/exp),
+file I/O (read_file/write_file/remove_file/fopen/fclose/fread_byte),
+conversion (int_to_str/str_to_int/float_to_str/str_to_float),
+JSON (json_parse/get_str/get_int/get_float/get_bool/len/arr_get/free),
+timing (clock_ms/sleep_ms), exit
+
+### Tooling
+- **ny fmt**: Comment-preserving formatter (standalone + trailing) + compound assign reconstruction
+- **ny test**: Per-test timing, compile error printing
+- **ny check**: Type-check without codegen, timing per phase
+- **ny repl**: Interactive with persistent definitions
+- **ny-lsp**: Diagnostics, hover (semantic + param names), goto-def, completion, document symbols
+- **ny pkg**: Git-based package manager with SHA pinning
+- **VS Code extension**: Syntax highlighting + LSP client
+
+### Error Handling
+- codespan-reporting with line/col/arrows
+- "Did you mean?" for variables, functions, struct fields, Vec/str methods
+- Parser error recovery (multiple errors reported)
+- Runtime stack traces on panic (debug builds)
+- Exhaustiveness checking for match expressions
+
+### Performance
+- LLVM -O0 to -O3 optimization
+- Release mode (-O2+): no bounds checks, no stack traces
+- Ny wins or ties Go in ALL 7 benchmarks
+- WASM target: ny build --target wasm32
 
 ## Reserved Keywords
 
 fn, if, else, while, for, in, return, struct, break, continue, as, enum, match,
-defer, pub, use, mod, trait, impl, loop, unsafe, extern, let
+defer, pub, use, mod, trait, impl, loop, unsafe, extern, let, async, await
 
 ## Roadmap
 

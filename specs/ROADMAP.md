@@ -61,6 +61,7 @@
 | 22 | WASM Target (ny build --target wasm32) | **COMPLETE** |
 | 23 | Release Mode (-O2+ skips bounds checks + traces) | **COMPLETE** |
 | 24 | Vec.join(sep) for string building | **COMPLETE** |
+| 25 | Async/Await (async fn + await + thread pool dispatch) | **COMPLETE** |
 
 ---
 
@@ -122,9 +123,9 @@ Ny wins or ties Go in ALL 7 benchmarks (at -O2, median of 3 runs):
 
 | Metric | Value |
 |--------|-------|
-| Tests | 125+ |
-| Lines of Rust | ~30,000 |
-| Runtime C files | 8 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor) |
+| Tests | 127 |
+| Lines of Rust | ~32,000 |
+| Runtime C files | 9 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor, future) |
 | Builtins | 90+ |
 | Vec\<T\> methods | 20 (push/pop/get/set/len/sort/reverse/clear/contains/index_of/map/filter/reduce/for_each/any/all/sum/join) |
 | String methods | 13 |

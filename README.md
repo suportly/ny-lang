@@ -268,6 +268,39 @@ pool_wait(pool);
 pool_free(pool);
 ```
 
+### Async/Await
+
+```ny
+async fn fetch_data(id: i32) -> i32 {
+    // Runs on thread pool automatically
+    return compute_heavy(id);
+}
+
+fn main() -> i32 {
+    // Spawn concurrent tasks
+    f1 := fetch_data(1);
+    f2 := fetch_data(2);
+
+    // Await results
+    a := await f1;
+    b := await f2;
+    return a + b;
+}
+```
+
+### Tensor Operations
+
+```ny
+a := tensor_zeros(3, 3);
+tensor_set(a, 0, 0, 1.0);
+b := tensor_ones(3, 3);
+
+c := tensor_matmul(a, b);     // matrix multiply
+d := tensor_transpose(c);     // transpose
+sum := tensor_sum(d);          // sum all elements
+norm := tensor_norm(a);        // Frobenius norm
+```
+
 ### SIMD
 
 ```ny
@@ -276,6 +309,17 @@ b := simd_splat_f32x4(2.0);   // [2, 2, 2, 2]
 c := a * b;                     // [6, 6, 6, 6]
 total := simd_reduce_add_f32(c); // 24.0
 ```
+
+### Package Manager
+
+```bash
+ny pkg init                    # Create ny.pkg manifest
+ny pkg add https://github.com/user/math-extra.git
+ny pkg build                   # Fetch dependencies
+ny pkg list                    # Show installed packages
+```
+
+Packages are git repos with `ny.pkg` at root. Dependencies stored in `.ny_deps/` and auto-discovered by `ny build`.
 
 ## Editor Support
 
@@ -309,7 +353,7 @@ npm install
 ## Running Tests
 
 ```bash
-cargo test    # 95 integration + error tests
+cargo test    # 127 tests (111 integration + 16 error)
 cargo clippy  # Zero warnings
 ```
 
@@ -317,25 +361,31 @@ cargo clippy  # Zero warnings
 
 ```
 src/
-├── main.rs              # CLI (ny build/run/test/fmt)
+├── main.rs              # CLI (build/run/check/test/fmt/repl + pkg)
 ├── lib.rs               # Compiler pipeline + module resolution
-├── lsp.rs               # Language Server Protocol
+├── lsp.rs               # Language Server Protocol (6 capabilities)
 ├── formatter.rs         # ny fmt (comment-preserving)
 ├── monomorphize.rs      # Generic function specialization
 ├── lexer/               # Tokenization
-├── parser/              # Pratt parser -> AST
+├── parser/              # Pratt parser → AST (error recovery)
 ├── semantic/            # Name resolution + type checking
-├── codegen/             # LLVM IR generation
+├── codegen/             # LLVM IR (native x86-64 + wasm32)
+├── pkg/                 # Package manager
 ├── common/              # Types, spans, errors
 └── diagnostics/         # Error reporting
 runtime/
-├── hashmap.c            # HashMap implementation
+├── hashmap.c            # str→i32 HashMap + str→str (smap)
+├── hashmap_generic.c    # Generic HashMap<K,V>
 ├── arena.c              # Arena allocator
 ├── channel.c            # Bounded channels
 ├── threadpool.c         # Thread pool + parallel iterators
-└── string.c             # String helpers (split, replace, clock)
+├── string.c             # String helpers + stack traces
+├── json.c               # JSON parser
+├── tensor.c             # Tensor<f64> (22 operations)
+└── future.c             # Async/await runtime
 editors/
 └── vscode/              # VS Code extension + LSP client
+benchmarks/              # 7 benchmarks (Ny + C + Go)
 ```
 
 ## Performance

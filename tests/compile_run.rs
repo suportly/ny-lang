@@ -653,6 +653,11 @@ fn test_hashmap_generic() {
 }
 
 #[test]
+fn test_tensor_ops() {
+    assert_eq!(compile_and_run("tensor_ops.ny"), 42);
+}
+
+#[test]
 fn test_smap() {
     assert_eq!(compile_and_run("smap_test.ny"), 42);
 }

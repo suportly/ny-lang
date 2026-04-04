@@ -771,6 +771,19 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
+                // Tensor builtins
+                if callee.starts_with("tensor_") {
+                    for arg in args { self.check_expr(arg); }
+                    return match callee.as_str() {
+                        "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_add"
+                        | "tensor_sub" | "tensor_mul" | "tensor_scale" | "tensor_matmul"
+                        | "tensor_transpose" => NyType::Pointer(Box::new(NyType::U8)),
+                        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min" => NyType::F64,
+                        "tensor_rows" | "tensor_cols" => NyType::I64,
+                        _ => NyType::Unit,
+                    };
+                }
+
                 // hmap_new() → HashMap<str, i32> (annotation overrides)
                 if callee == "hmap_new" {
                     return NyType::HashMap(Box::new(NyType::Str), Box::new(NyType::I32));

@@ -223,6 +223,30 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_ty = self.context.i64_type();
         self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
+    // Tensor<f64>
+    pub(super) fn get_or_declare_tensor_fn(&self, name: &str) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function(name) { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let i64t = self.context.i64_type();
+        let f64t = self.context.f64_type();
+        let void = self.context.void_type();
+        let fn_ty = match name {
+            "ny_tensor_zeros" | "ny_tensor_ones" => ptr.fn_type(&[i64t.into(), i64t.into()], false),
+            "ny_tensor_fill" => ptr.fn_type(&[i64t.into(), i64t.into(), f64t.into()], false),
+            "ny_tensor_free" | "ny_tensor_print" => void.fn_type(&[ptr.into()], false),
+            "ny_tensor_rows" | "ny_tensor_cols" => i64t.fn_type(&[ptr.into()], false),
+            "ny_tensor_get" => f64t.fn_type(&[ptr.into(), i64t.into(), i64t.into()], false),
+            "ny_tensor_set" => void.fn_type(&[ptr.into(), i64t.into(), i64t.into(), f64t.into()], false),
+            "ny_tensor_add" | "ny_tensor_sub" | "ny_tensor_mul" | "ny_tensor_matmul" =>
+                ptr.fn_type(&[ptr.into(), ptr.into()], false),
+            "ny_tensor_scale" => ptr.fn_type(&[ptr.into(), f64t.into()], false),
+            "ny_tensor_transpose" => ptr.fn_type(&[ptr.into()], false),
+            "ny_tensor_sum" | "ny_tensor_max" | "ny_tensor_min" => f64t.fn_type(&[ptr.into()], false),
+            _ => void.fn_type(&[], false),
+        };
+        self.module.add_function(name, fn_ty, None)
+    }
+
     // Generic HashMap<K,V>
     pub(super) fn get_or_declare_ny_hmap_new(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_hmap_new") { return f; }

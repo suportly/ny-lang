@@ -758,6 +758,35 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
+                // Tensor builtins
+                if callee.starts_with("tensor_") {
+                    let c_name = format!("ny_{}", callee);
+                    let fn_val = self.get_or_declare_tensor_fn(&c_name);
+                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                    for arg in args {
+                        let val = self.compile_expr(arg, function)?.unwrap();
+                        // Extend i32 to i64 for tensor API (expects i64)
+                        if val.is_int_value() {
+                            let iv = val.into_int_value();
+                            if iv.get_type().get_bit_width() < 64 {
+                                let ext = self.builder.build_int_s_extend(
+                                    iv, self.context.i64_type(), "t_ext"
+                                ).unwrap();
+                                call_args.push(ext.into());
+                            } else {
+                                call_args.push(iv.into());
+                            }
+                        } else {
+                            call_args.push(val.into());
+                        }
+                    }
+                    let result = self.builder.build_call(fn_val, &call_args, "t_r").unwrap();
+                    match result.try_as_basic_value().basic() {
+                        Some(v) => return Ok(Some(v)),
+                        None => return Ok(None),
+                    }
+                }
+
                 // hmap_new() — create generic HashMap
                 if callee == "hmap_new" {
                     // Use 16 bytes as default val_size (covers str {ptr,len}, i64, f64)

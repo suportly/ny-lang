@@ -152,7 +152,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg("-lpthread");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
-    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c"] {
+    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c", "tensor.c"] {
         if let Some(rt_path) = find_runtime_file(rt_name) {
             cmd.arg(rt_path);
         }

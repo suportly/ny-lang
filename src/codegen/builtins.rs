@@ -98,6 +98,15 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "json_arr_get" => Some(NyType::Pointer(Box::new(NyType::U8))),
         "json_free" => Some(NyType::Unit),
 
+        // Tensor
+        "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_add" | "tensor_sub"
+        | "tensor_mul" | "tensor_scale" | "tensor_matmul" | "tensor_transpose" => {
+            Some(NyType::Pointer(Box::new(NyType::U8)))
+        }
+        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min" => Some(NyType::F64),
+        "tensor_set" | "tensor_free" | "tensor_print" => Some(NyType::Unit),
+        "tensor_rows" | "tensor_cols" => Some(NyType::I64),
+
         // String split
         "str_split_count" => Some(NyType::I32),
         "str_split_get" => Some(NyType::Str),
@@ -150,6 +159,24 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "smap_len",
     "smap_free",
     "hmap_new",
+    "tensor_zeros",
+    "tensor_ones",
+    "tensor_fill",
+    "tensor_free",
+    "tensor_rows",
+    "tensor_cols",
+    "tensor_get",
+    "tensor_set",
+    "tensor_add",
+    "tensor_sub",
+    "tensor_mul",
+    "tensor_scale",
+    "tensor_matmul",
+    "tensor_transpose",
+    "tensor_sum",
+    "tensor_max",
+    "tensor_min",
+    "tensor_print",
     "map_len",
     "arena_new",
     "arena_alloc",

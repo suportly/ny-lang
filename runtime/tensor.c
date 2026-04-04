@@ -32,6 +32,41 @@ NyTensor *ny_tensor_fill(int64_t rows, int64_t cols, double val) {
     return t;
 }
 
+NyTensor *ny_tensor_rand(int64_t rows, int64_t cols) {
+    NyTensor *t = ny_tensor_zeros(rows, cols);
+    for (int64_t i = 0; i < rows * cols; i++)
+        t->data[i] = (double)rand() / RAND_MAX;
+    return t;
+}
+
+NyTensor *ny_tensor_clone(NyTensor *src) {
+    NyTensor *t = ny_tensor_zeros(src->rows, src->cols);
+    memcpy(t->data, src->data, src->rows * src->cols * sizeof(double));
+    return t;
+}
+
+// Apply function element-wise (useful for activation functions)
+void ny_tensor_apply(NyTensor *t, double (*fn)(double)) {
+    int64_t n = t->rows * t->cols;
+    for (int64_t i = 0; i < n; i++) t->data[i] = fn(t->data[i]);
+}
+
+// Dot product of two vectors (1D tensors stored as 1×N)
+double ny_tensor_dot(NyTensor *a, NyTensor *b) {
+    int64_t n = a->rows * a->cols;
+    double sum = 0.0;
+    for (int64_t i = 0; i < n; i++) sum += a->data[i] * b->data[i];
+    return sum;
+}
+
+// Frobenius norm (sqrt of sum of squares)
+double ny_tensor_norm(NyTensor *t) {
+    double sum = 0.0;
+    int64_t n = t->rows * t->cols;
+    for (int64_t i = 0; i < n; i++) sum += t->data[i] * t->data[i];
+    return sqrt(sum);
+}
+
 void ny_tensor_free(NyTensor *t) {
     if (t) { free(t->data); free(t); }
 }

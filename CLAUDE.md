@@ -49,6 +49,24 @@ ny pkg remove <name>     # Remove dependency
 ny pkg list              # List dependencies
 ```
 
+## Tensor API
+
+| Function | Description |
+|----------|-------------|
+| tensor_zeros(rows, cols) | Create zero matrix |
+| tensor_ones(rows, cols) | Create ones matrix |
+| tensor_rand(rows, cols) | Random matrix [0,1) |
+| tensor_matmul(a, b) | Matrix multiply |
+| tensor_transpose(t) | Transpose |
+| tensor_add/sub/mul(a, b) | Element-wise ops |
+| tensor_scale(t, scalar) | Scalar multiply |
+| tensor_dot(a, b) | Dot product |
+| tensor_norm(t) | Frobenius norm |
+| tensor_sum/max/min(t) | Reductions |
+| tensor_get/set(t, r, c) | Element access |
+| tensor_clone(t) | Deep copy |
+| tensor_free(t) | Cleanup |
+
 ## Code Style
 
 Rust 1.75+ (2021 edition): Follow standard conventions

@@ -231,17 +231,19 @@ impl<'ctx> CodeGen<'ctx> {
         let f64t = self.context.f64_type();
         let void = self.context.void_type();
         let fn_ty = match name {
-            "ny_tensor_zeros" | "ny_tensor_ones" => ptr.fn_type(&[i64t.into(), i64t.into()], false),
+            "ny_tensor_zeros" | "ny_tensor_ones" | "ny_tensor_rand" => ptr.fn_type(&[i64t.into(), i64t.into()], false),
             "ny_tensor_fill" => ptr.fn_type(&[i64t.into(), i64t.into(), f64t.into()], false),
+            "ny_tensor_clone" | "ny_tensor_transpose" => ptr.fn_type(&[ptr.into()], false),
             "ny_tensor_free" | "ny_tensor_print" => void.fn_type(&[ptr.into()], false),
+            "ny_tensor_apply" => void.fn_type(&[ptr.into(), ptr.into()], false),
             "ny_tensor_rows" | "ny_tensor_cols" => i64t.fn_type(&[ptr.into()], false),
             "ny_tensor_get" => f64t.fn_type(&[ptr.into(), i64t.into(), i64t.into()], false),
             "ny_tensor_set" => void.fn_type(&[ptr.into(), i64t.into(), i64t.into(), f64t.into()], false),
             "ny_tensor_add" | "ny_tensor_sub" | "ny_tensor_mul" | "ny_tensor_matmul" =>
                 ptr.fn_type(&[ptr.into(), ptr.into()], false),
             "ny_tensor_scale" => ptr.fn_type(&[ptr.into(), f64t.into()], false),
-            "ny_tensor_transpose" => ptr.fn_type(&[ptr.into()], false),
-            "ny_tensor_sum" | "ny_tensor_max" | "ny_tensor_min" => f64t.fn_type(&[ptr.into()], false),
+            "ny_tensor_sum" | "ny_tensor_max" | "ny_tensor_min" | "ny_tensor_norm" => f64t.fn_type(&[ptr.into()], false),
+            "ny_tensor_dot" => f64t.fn_type(&[ptr.into(), ptr.into()], false),
             _ => void.fn_type(&[], false),
         };
         self.module.add_function(name, fn_ty, None)

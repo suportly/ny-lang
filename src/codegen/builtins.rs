@@ -99,12 +99,14 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "json_free" => Some(NyType::Unit),
 
         // Tensor
-        "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_add" | "tensor_sub"
-        | "tensor_mul" | "tensor_scale" | "tensor_matmul" | "tensor_transpose" => {
+        "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_rand" | "tensor_clone"
+        | "tensor_add" | "tensor_sub" | "tensor_mul" | "tensor_scale"
+        | "tensor_matmul" | "tensor_transpose" => {
             Some(NyType::Pointer(Box::new(NyType::U8)))
         }
-        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min" => Some(NyType::F64),
-        "tensor_set" | "tensor_free" | "tensor_print" => Some(NyType::Unit),
+        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min"
+        | "tensor_dot" | "tensor_norm" => Some(NyType::F64),
+        "tensor_set" | "tensor_free" | "tensor_print" | "tensor_apply" => Some(NyType::Unit),
         "tensor_rows" | "tensor_cols" => Some(NyType::I64),
 
         // String split
@@ -162,6 +164,8 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "tensor_zeros",
     "tensor_ones",
     "tensor_fill",
+    "tensor_rand",
+    "tensor_clone",
     "tensor_free",
     "tensor_rows",
     "tensor_cols",
@@ -177,6 +181,9 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "tensor_max",
     "tensor_min",
     "tensor_print",
+    "tensor_dot",
+    "tensor_norm",
+    "tensor_apply",
     "map_len",
     "arena_new",
     "arena_alloc",

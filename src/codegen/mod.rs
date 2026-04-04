@@ -146,10 +146,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
     cmd.arg(obj_path)
         .arg("-o")
         .arg(output_path)
-        .arg("-no-pie")
-        .arg("-lm")
-        .arg("-lc")
-        .arg("-lpthread");
+        .arg("-no-pie");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
     for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c", "tensor.c"] {
@@ -157,6 +154,9 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
             cmd.arg(rt_path);
         }
     }
+
+    // Libraries MUST come after source files for the linker to resolve symbols
+    cmd.arg("-lm").arg("-lc").arg("-lpthread");
 
     let status = cmd.status().map_err(|e| {
         vec![CompileError::syntax(

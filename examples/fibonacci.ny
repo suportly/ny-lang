@@ -5,7 +5,6 @@
 //   ny build fibonacci.ny -O 2 -o fib
 //   ./fib
 //   echo $?  # prints 55
-
 fn fibonacci(n: i32) -> i32 {
     if n <= 1 {
         return n;

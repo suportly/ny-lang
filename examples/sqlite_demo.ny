@@ -5,7 +5,6 @@
 // To actually link SQLite, compile the .o and link manually:
 //   ny build sqlite_demo.ny --emit obj -o sqlite_demo.o
 //   cc sqlite_demo.o runtime/*.c -lsqlite3 -lm -lpthread -o sqlite_demo
-
 extern {
     fn sqlite3_open(filename: *u8, db: *u8) -> i32;
     fn sqlite3_close(db: *u8) -> i32;

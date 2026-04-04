@@ -762,6 +762,15 @@ fn test_example_todo_app() {
 }
 
 #[test]
+fn test_example_job_queue() {
+    let (code, stdout) = compile_and_run_example("examples/job_queue.ny");
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Job Queue Demo"), "stdout: {}", stdout);
+    assert!(stdout.contains("Results"), "stdout: {}", stdout);
+    assert!(stdout.contains("Done"), "stdout: {}", stdout);
+}
+
+#[test]
 fn test_example_parallel_sum() {
     let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
     assert_eq!(code, 0);

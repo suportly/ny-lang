@@ -51,6 +51,7 @@ pub fn generate(
         loop_stack: Vec::new(),
         defer_stack: Vec::new(),
         closure_captures: HashMap::new(),
+        opt_level,
     };
 
     codegen.compile_program(program)?;
@@ -224,9 +225,9 @@ pub(crate) struct CodeGen<'ctx> {
     /// Stack of deferred expressions per function scope
     pub(super) defer_stack: Vec<(Expr, FunctionValue<'ctx>)>,
     /// Closure captures: closure_var_name → (lambda_fn_name, capture_alloca_names)
-    /// Each capture has a dedicated alloca "closure_{id}_cap_{name}" that holds
-    /// the value at lambda creation time (capture-by-value semantics).
     pub(super) closure_captures: HashMap<String, (String, Vec<(String, NyType)>)>,
+    /// Optimization level (0-3). At O2+, skip bounds checks and stack traces.
+    pub(super) opt_level: u8,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -589,15 +590,17 @@ impl<'ctx> CodeGen<'ctx> {
                         .insert(param.name.clone(), (alloca, ty.clone()));
                 }
 
-                // Push function name onto trace stack
-                let trace_push = self.get_or_declare_ny_trace_push();
-                let fn_name_str = self
-                    .builder
-                    .build_global_string_ptr(name, "trace_name")
-                    .unwrap();
-                self.builder
-                    .build_call(trace_push, &[fn_name_str.as_pointer_value().into()], "")
-                    .unwrap();
+                // Push function name onto trace stack (debug only, skipped at -O2+)
+                if self.opt_level < 2 {
+                    let trace_push = self.get_or_declare_ny_trace_push();
+                    let fn_name_str = self
+                        .builder
+                        .build_global_string_ptr(name, "trace_name")
+                        .unwrap();
+                    self.builder
+                        .build_call(trace_push, &[fn_name_str.as_pointer_value().into()], "")
+                        .unwrap();
+                }
 
                 // Save outer defer stack and start fresh for this function
                 let outer_defers = std::mem::take(&mut self.defer_stack);
@@ -612,9 +615,11 @@ impl<'ctx> CodeGen<'ctx> {
                     for (defer_body, defer_fn) in &defers {
                         self.compile_expr(defer_body, defer_fn)?;
                     }
-                    // Pop trace stack before return
-                    let trace_pop = self.get_or_declare_ny_trace_pop();
-                    self.builder.build_call(trace_pop, &[], "").unwrap();
+                    // Pop trace stack before return (debug only)
+                    if self.opt_level < 2 {
+                        let trace_pop = self.get_or_declare_ny_trace_pop();
+                        self.builder.build_call(trace_pop, &[], "").unwrap();
+                    }
                     self.builder.build_return(None).unwrap();
                 }
 

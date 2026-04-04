@@ -169,9 +169,11 @@ impl<'ctx> CodeGen<'ctx> {
                     self.compile_expr(defer_body, defer_fn)?;
                 }
 
-                // Pop trace stack before return
-                let trace_pop = self.get_or_declare_ny_trace_pop();
-                self.builder.build_call(trace_pop, &[], "").unwrap();
+                // Pop trace stack before return (debug only)
+                if self.opt_level < 2 {
+                    let trace_pop = self.get_or_declare_ny_trace_pop();
+                    self.builder.build_call(trace_pop, &[], "").unwrap();
+                }
 
                 if let Some(v) = ret_val {
                     self.builder.build_return(Some(&v)).unwrap();
@@ -799,6 +801,11 @@ impl<'ctx> CodeGen<'ctx> {
         length: inkwell::values::IntValue<'ctx>,
         function: &FunctionValue<'ctx>,
     ) {
+        // Skip bounds checking at -O2+ for performance (release mode)
+        if self.opt_level >= 2 {
+            return;
+        }
+
         let in_bounds = self
             .builder
             .build_int_compare(IntPredicate::ULT, index, length, "bounds_check")

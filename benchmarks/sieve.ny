@@ -1,22 +1,22 @@
 // Sieve of Eratosthenes — count primes up to N
+// Uses Vec<i8> (1 byte per flag) for cache-friendly performance
 
 fn sieve(n: i32) -> i32 {
-    // Use Vec<i32> as boolean flags (0=composite, 1=prime)
-    flags :~ Vec<i32> = vec_new();
+    flags :~ Vec<i8> = vec_new();
     i :~ i32 = 0;
     while i <= n {
-        flags.push(1);
+        flags.push(1 as i8);
         i += 1;
     }
-    flags.set(0, 0);
-    flags.set(1, 0);
+    flags.set(0, 0 as i8);
+    flags.set(1, 0 as i8);
 
     i = 2;
     while i * i <= n {
-        if flags.get(i) == 1 {
+        if flags.get(i) == 1 as i8 {
             j :~ i32 = i * i;
             while j <= n {
-                flags.set(j, 0);
+                flags.set(j, 0 as i8);
                 j += i;
             }
         }
@@ -26,7 +26,7 @@ fn sieve(n: i32) -> i32 {
     count :~ i32 = 0;
     i = 2;
     while i <= n {
-        if flags.get(i) == 1 {
+        if flags.get(i) == 1 as i8 {
             count += 1;
         }
         i += 1;

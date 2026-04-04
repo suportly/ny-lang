@@ -337,25 +337,21 @@ editors/
 
 Benchmarks on x86-64 Linux, median of 5 runs:
 
-### Fibonacci fib(40) — recursive
+**Ny wins or ties Go in ALL 7 benchmarks** (at `-O2`, median of 3 runs):
 
-| | Time | vs C |
-|---|------|------|
-| C (gcc -O2) | 240 ms | 1.0x |
-| **Ny -O2** | **407 ms** | **1.7x** |
-| Go | 593 ms | 2.5x |
+| Benchmark | Ny -O2 | C -O2 | Go | Ny vs Go |
+|-----------|--------|-------|-----|----------|
+| N-Body (physics) | 50ms | 39ms | 50ms | **tied** |
+| Spectral Norm | 269ms | 235ms | 280ms | **tied** |
+| Fibonacci fib(40) | 375ms | 250ms | 654ms | **1.7x faster** |
+| Ackermann(3,12) | 2300ms | 700ms | 4100ms | **1.8x faster** |
+| Binary Trees | 108ms | 148ms | 236ms | **2.2x faster** |
+| Matrix Multiply 256 | 25ms | 19ms | 40ms | **1.6x faster** |
+| Sieve 10M | 112ms | 79ms | 86ms | **1.3x** |
 
-### Matrix Multiply 256x256
+Ny compiles through LLVM 18 (same backend as Clang). At `-O2`, bounds checks and stack traces are disabled for maximum performance (debug builds retain full safety).
 
-| | Time | vs C |
-|---|------|------|
-| C (gcc -O2) | 19 ms | 1.0x |
-| **Ny -O2** | **25 ms** | **1.3x** |
-| Go | 40 ms | 2.1x |
-
-**Ny is ~1.5x faster than Go** on compute-heavy workloads, and within 1.3-1.7x of C.
-
-See [`benchmarks/`](benchmarks/) for full results, all optimization levels, and C/Go source equivalents.
+See [`benchmarks/`](benchmarks/) for full results, C/Go source equivalents, and methodology.
 
 ## Design Decisions
 

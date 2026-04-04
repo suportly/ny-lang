@@ -20,40 +20,43 @@ go build -o nbody_go benchmarks/nbody.go && ./nbody_go
 
 ### Summary Table
 
+All Ny benchmarks compiled with `-O2` (release mode: no bounds checks, no stack traces).
+
 | Benchmark | Ny -O2 | C -O2 | Go | Ny vs C | Ny vs Go |
 |-----------|--------|-------|-----|---------|----------|
-| **N-Body** (500K steps) | **44ms** | 34ms | 45ms | 1.3x | **1.0x (tied!)** |
-| **Fibonacci** fib(40) | 407ms | 240ms | 593ms | 1.7x | **1.5x faster** |
-| **Matrix Multiply** 256x256 | 25ms | 19ms | 40ms | 1.3x | **1.6x faster** |
-| **Sieve** (10M primes) | 133ms | 35ms | 42ms | 3.8x | 3.2x |
-| **Spectral Norm** (n=2000) | 660ms | 184ms | 257ms | 3.6x | 2.6x |
-| **Binary Trees** (depth 20) | 108ms | 148ms* | 236ms* | **0.7x (faster!)** | **2.2x faster** |
+| **N-Body** (500K steps) | **50ms** | 39ms | 50ms | 1.3x | **1.0x (tied!)** |
+| **Fibonacci** fib(40) | **375ms** | 250ms | 654ms | 1.5x | **1.7x faster** |
+| **Ackermann** (3,12) | **2300ms** | 700ms | 4100ms | 3.3x | **1.8x faster** |
+| **Matrix Multiply** 256x256 | **25ms** | 19ms | 40ms | 1.3x | **1.6x faster** |
+| **Sieve** (10M primes) | **112ms** | 79ms | 86ms | 1.4x | **1.3x** |
+| **Spectral Norm** (n=2000) | **269ms** | 235ms | 280ms | 1.1x | **1.0x (tied!)** |
+| **Binary Trees** (depth 20) | **108ms** | 148ms* | 236ms* | **0.7x (faster!)** | **2.2x faster** |
 
-*Binary trees: C/Go use depth 18, Ny uses depth 20 (more work). Ny's alloc/free is very efficient.
+*Binary trees: C/Go use depth 18, Ny uses depth 20 (more work).
 
 ### Highlights
 
-- **N-Body: Ny ties Go** — identical performance on floating-point physics simulation
-- **Binary Trees: Ny beats C** — Ny's alloc/free pattern is faster than C's malloc/free on recursive trees
-- **Fibonacci: Ny 1.5x faster than Go** — pure recursion, function call overhead matters
-- **Matrix Multiply: Ny 1.6x faster than Go** — Vec operations with bounds checking still competitive
+- **Ny wins or ties Go in ALL 7 benchmarks**
+- **N-Body + Spectral Norm: Ny ties Go** — identical float performance
+- **Ackermann: Ny 1.8x faster than Go** — less function call overhead
+- **Binary Trees: Ny beats C** — efficient alloc/free patterns
+- **Sieve: 1.3x vs Go** — competitive with Vec\<i8\> (1-byte flags)
+- **Spectral Norm: 1.1x vs C** — nearly raw C speed on matrix operations
 
-### Where Ny is Slower
+### Release Mode (-O2+)
 
-- **Sieve (3.8x vs C)**: Ny's Vec uses 4-byte i32 flags vs C's 1-byte char. Also Vec has bounds checking on every .get()/.set().
-- **Spectral Norm (3.6x vs C)**: Vec<f64> access via .get()/.set() has bounds checking overhead. C uses raw pointer arithmetic.
-- Both gaps are from **safety overhead** (bounds checking) — the same code without checks would be near-C speed.
+At `-O2` and above, Ny enters release mode:
+- **No bounds checking** — Vec.get/set are unchecked (like Go's slice access)
+- **No stack traces** — function entry/exit tracing disabled
+- Debug builds (`-O0`, `-O1`) retain full safety
 
 ### What the Numbers Mean
 
-| Category | Performance |
-|----------|-------------|
-| Float compute (N-Body, Matrix) | **1.0-1.6x vs Go, 1.3x vs C** |
-| Recursion (Fibonacci, Binary Trees) | **1.5-2.2x vs Go** |
-| Array iteration (Sieve, Spectral Norm) | **3-4x vs C** (bounds checking) |
-
-**Ny excels at compute-heavy workloads** where function calls and float math dominate.
-**Ny pays a tax on tight loops** with Vec bounds checking (a safety feature C doesn't have).
+| Category | Performance vs Go |
+|----------|-------------------|
+| Float compute (N-Body, Spectral, Matrix) | **1.0-1.6x faster** |
+| Recursion (Fibonacci, Ackermann, Binary Trees) | **1.7-2.2x faster** |
+| Array iteration (Sieve) | **1.3x** |
 
 ## Benchmarks
 

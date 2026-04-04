@@ -29,6 +29,7 @@ pub fn compile(
     opt_level: u8,
     emit: &str,
     target: &str,
+    extra_libs: &[String],
 ) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::tokenize(source)?;
     let mut program = parser::parse(tokens)?;
@@ -44,7 +45,15 @@ pub fn compile(
     monomorphize::monomorphize(&mut program);
 
     let _resolved = semantic::analyze(&program)?;
-    codegen::generate(&program, source_path, output_path, opt_level, emit, target)
+    codegen::generate(
+        &program,
+        source_path,
+        output_path,
+        opt_level,
+        emit,
+        target,
+        extra_libs,
+    )
 }
 
 pub fn resolve_uses_pub(

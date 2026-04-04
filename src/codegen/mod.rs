@@ -35,6 +35,7 @@ pub fn generate(
     opt_level: u8,
     emit: &str,
     target: &str,
+    extra_libs: &[String],
 ) -> Result<(), Vec<CompileError>> {
     let context = Context::create();
 
@@ -101,7 +102,7 @@ pub fn generate(
         _ => {
             let obj_path = output_path.with_extension("o");
             emit_object_file(&module, &obj_path, opt_level)?;
-            link_executable(&obj_path, output_path)?;
+            link_executable(&obj_path, output_path, extra_libs)?;
             let _ = std::fs::remove_file(&obj_path);
             Ok(())
         }
@@ -233,7 +234,11 @@ fn emit_object_file(module: &Module, path: &Path, opt_level: u8) -> Result<(), V
         })
 }
 
-fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<CompileError>> {
+fn link_executable(
+    obj_path: &Path,
+    output_path: &Path,
+    extra_libs: &[String],
+) -> Result<(), Vec<CompileError>> {
     let mut cmd = Command::new("cc");
     cmd.arg(obj_path).arg("-o").arg(output_path).arg("-no-pie");
 
@@ -259,6 +264,11 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
 
     // Libraries MUST come after source files for the linker to resolve symbols
     cmd.arg("-lm").arg("-lc").arg("-lpthread");
+
+    // Extra libraries from -l flags (e.g. -l pulse -l curl)
+    for lib in extra_libs {
+        cmd.arg(format!("-l{}", lib));
+    }
 
     let status = cmd.status().map_err(|e| {
         vec![CompileError::syntax(

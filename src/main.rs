@@ -31,6 +31,10 @@ enum Commands {
         /// Target: native (default) or wasm32
         #[arg(long, default_value = "native")]
         target: String,
+
+        /// Extra libraries to link (e.g. -l pulse -l curl)
+        #[arg(short = 'l', long = "link")]
+        libs: Vec<String>,
     },
     /// Run all test_* functions in a Ny source file
     Test {
@@ -116,6 +120,7 @@ fn main() {
             emit,
             opt_level,
             target,
+            libs,
         } => {
             if !file.exists() {
                 eprintln!(
@@ -148,6 +153,7 @@ fn main() {
                 opt_level,
                 emit_to_str(&emit),
                 &target,
+                &libs,
             ) {
                 Ok(()) => process::exit(0),
                 Err(errors) => {
@@ -176,7 +182,7 @@ fn main() {
             let tmp_dir = std::env::temp_dir();
             let tmp_out = tmp_dir.join("ny_run_output");
 
-            match ny::compile(&source, &file, &tmp_out, opt_level, "exe", "native") {
+            match ny::compile(&source, &file, &tmp_out, opt_level, "exe", "native", &[]) {
                 Ok(()) => {
                     let status = process::Command::new(&tmp_out)
                         .status()
@@ -348,7 +354,7 @@ fn main() {
 
                 std::fs::write(&tmp_src, &wrapper_source).unwrap();
 
-                match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe", "native") {
+                match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe", "native", &[]) {
                     Ok(()) => {
                         let output = process::Command::new(&tmp_out)
                             .output()
@@ -490,7 +496,7 @@ fn main() {
 
                 std::fs::write(&tmp_src, &source).unwrap();
 
-                match ny::compile(&source, &tmp_src, &tmp_out, 0, "exe", "native") {
+                match ny::compile(&source, &tmp_src, &tmp_out, 0, "exe", "native", &[]) {
                     Ok(()) => {
                         let output = process::Command::new(&tmp_out)
                             .output()

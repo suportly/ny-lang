@@ -40,10 +40,8 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
                 let mut field_types: Vec<BasicTypeEnum> = vec![context.i32_type().into()];
                 for i in 0..max_fields {
-                    let candidates: Vec<&NyType> = variants
-                        .iter()
-                        .filter_map(|(_, p)| p.get(i))
-                        .collect();
+                    let candidates: Vec<&NyType> =
+                        variants.iter().filter_map(|(_, p)| p.get(i)).collect();
                     if candidates.is_empty() {
                         field_types.push(context.i32_type().into());
                     } else {
@@ -110,10 +108,7 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 // For value types: { bool, T }
                 let inner_llvm = ny_to_llvm(context, inner);
                 context
-                    .struct_type(
-                        &[context.bool_type().into(), inner_llvm],
-                        false,
-                    )
+                    .struct_type(&[context.bool_type().into(), inner_llvm], false)
                     .into()
             }
         }
@@ -136,7 +131,10 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
 }
 
 /// Pick the LLVM type with the largest store size among candidates.
-pub fn largest_llvm_type<'ctx>(context: &'ctx Context, candidates: &[&NyType]) -> BasicTypeEnum<'ctx> {
+pub fn largest_llvm_type<'ctx>(
+    context: &'ctx Context,
+    candidates: &[&NyType],
+) -> BasicTypeEnum<'ctx> {
     let mut best_ty = ny_to_llvm(context, candidates[0]);
     let mut best_size = llvm_type_size(context, candidates[0]);
     for &ty in &candidates[1..] {
@@ -159,10 +157,13 @@ fn llvm_type_size(_context: &Context, ty: &NyType) -> u64 {
         NyType::I128 | NyType::U128 => 16,
         NyType::Str | NyType::Slice(_) => 16, // {ptr, i64}
         NyType::Pointer(_) => 8,
-        NyType::Struct { fields, .. } => fields.iter().map(|(_, t)| llvm_type_size(_context, t)).sum(),
+        NyType::Struct { fields, .. } => fields
+            .iter()
+            .map(|(_, t)| llvm_type_size(_context, t))
+            .sum(),
         NyType::Tuple(elems) => elems.iter().map(|t| llvm_type_size(_context, t)).sum(),
         NyType::Vec(_) => 32, // {ptr, i64, i64, i64}
-        _ => 8, // default pointer-sized
+        _ => 8,               // default pointer-sized
     }
 }
 

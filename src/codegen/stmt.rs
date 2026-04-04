@@ -41,16 +41,28 @@ impl<'ctx> CodeGen<'ctx> {
                     let vtable_key = format!("{}_for_{}", trait_name, type_name);
                     if let Some((vtable_ptr, _)) = self.vtables.get(&vtable_key) {
                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let fat_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+                        let fat_ty = self
+                            .context
+                            .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
                         let fat_alloca = self.builder.build_alloca(fat_ty, "dyn_fat").unwrap();
                         // Store data pointer
-                        let data_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 0, "dyn_data").unwrap();
-                        self.builder.build_store(data_gep, val.into_pointer_value()).unwrap();
+                        let data_gep = self
+                            .builder
+                            .build_struct_gep(fat_ty, fat_alloca, 0, "dyn_data")
+                            .unwrap();
+                        self.builder
+                            .build_store(data_gep, val.into_pointer_value())
+                            .unwrap();
                         // Store vtable pointer
-                        let vtable_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 1, "dyn_vtable").unwrap();
+                        let vtable_gep = self
+                            .builder
+                            .build_struct_gep(fat_ty, fat_alloca, 1, "dyn_vtable")
+                            .unwrap();
                         self.builder.build_store(vtable_gep, *vtable_ptr).unwrap();
                         // Load the fat pointer struct
-                        self.builder.build_load(fat_ty, fat_alloca, "dyn_val").unwrap()
+                        self.builder
+                            .build_load(fat_ty, fat_alloca, "dyn_val")
+                            .unwrap()
                     } else {
                         val
                     }
@@ -224,13 +236,25 @@ impl<'ctx> CodeGen<'ctx> {
                         let vtable_key = format!("{}_for_{}", trait_name, type_name);
                         if let Some((vtable_ptr, _)) = self.vtables.get(&vtable_key) {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let fat_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+                            let fat_ty = self
+                                .context
+                                .struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
                             let fat_alloca = self.builder.build_alloca(fat_ty, "ret_dyn").unwrap();
-                            let data_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 0, "ret_data").unwrap();
-                            self.builder.build_store(data_gep, v.into_pointer_value()).unwrap();
-                            let vtable_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 1, "ret_vtbl").unwrap();
+                            let data_gep = self
+                                .builder
+                                .build_struct_gep(fat_ty, fat_alloca, 0, "ret_data")
+                                .unwrap();
+                            self.builder
+                                .build_store(data_gep, v.into_pointer_value())
+                                .unwrap();
+                            let vtable_gep = self
+                                .builder
+                                .build_struct_gep(fat_ty, fat_alloca, 1, "ret_vtbl")
+                                .unwrap();
                             self.builder.build_store(vtable_gep, *vtable_ptr).unwrap();
-                            self.builder.build_load(fat_ty, fat_alloca, "ret_fat").unwrap()
+                            self.builder
+                                .build_load(fat_ty, fat_alloca, "ret_fat")
+                                .unwrap()
                         } else {
                             v
                         }
@@ -663,7 +687,9 @@ impl<'ctx> CodeGen<'ctx> {
                     let else_bb = self.context.append_basic_block(*function, "iflet_none");
                     let merge_bb = self.context.append_basic_block(*function, "iflet_merge");
 
-                    self.builder.build_conditional_branch(is_null, else_bb, then_bb).unwrap();
+                    self.builder
+                        .build_conditional_branch(is_null, else_bb, then_bb)
+                        .unwrap();
 
                     // Then: bind unwrapped value
                     self.builder.position_at_end(then_bb);
@@ -674,7 +700,13 @@ impl<'ctx> CodeGen<'ctx> {
                     self.variables.insert(name.clone(), (alloca, inner_ty));
                     self.compile_expr(then_body, function)?;
                     self.variables = outer_vars;
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    if self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_terminator()
+                        .is_none()
+                    {
                         self.builder.build_unconditional_branch(merge_bb).unwrap();
                     }
 
@@ -683,7 +715,13 @@ impl<'ctx> CodeGen<'ctx> {
                     if let Some(eb) = else_body {
                         self.compile_expr(eb, function)?;
                     }
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    if self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_terminator()
+                        .is_none()
+                    {
                         self.builder.build_unconditional_branch(merge_bb).unwrap();
                     }
 
@@ -747,7 +785,13 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
 
-            Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+            Stmt::ForMap {
+                key_var,
+                val_var,
+                map_expr,
+                body,
+                ..
+            } => {
                 let map_ptr = self.compile_expr(map_expr, function)?.unwrap();
                 let i32_ty = self.context.i32_type();
                 let i64_ty = self.context.i64_type();
@@ -755,15 +799,32 @@ impl<'ctx> CodeGen<'ctx> {
                 // Get map length
                 let map_len_fn = self.get_or_declare_c_fn(
                     "ny_map_len",
-                    i64_ty.fn_type(&[self.context.ptr_type(inkwell::AddressSpace::default()).into()], false),
+                    i64_ty.fn_type(
+                        &[self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into()],
+                        false,
+                    ),
                 );
-                let len = self.builder.build_call(map_len_fn, &[map_ptr.into()], "map_len")
-                    .unwrap().try_as_basic_value().basic().unwrap().into_int_value();
-                let len_i32 = self.builder.build_int_truncate(len, i32_ty, "len32").unwrap();
+                let len = self
+                    .builder
+                    .build_call(map_len_fn, &[map_ptr.into()], "map_len")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap()
+                    .into_int_value();
+                let len_i32 = self
+                    .builder
+                    .build_int_truncate(len, i32_ty, "len32")
+                    .unwrap();
 
                 // Index variable
                 let idx_alloca = self.builder.build_alloca(i32_ty, "map_idx").unwrap();
-                self.builder.build_store(idx_alloca, i32_ty.const_int(0, false)).unwrap();
+                self.builder
+                    .build_store(idx_alloca, i32_ty.const_int(0, false))
+                    .unwrap();
 
                 let cond_bb = self.context.append_basic_block(*function, "formap_cond");
                 let body_bb = self.context.append_basic_block(*function, "formap_body");
@@ -772,14 +833,26 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
                 self.builder.position_at_end(cond_bb);
 
-                let idx = self.builder.build_load(i32_ty, idx_alloca, "idx").unwrap().into_int_value();
-                let cmp = self.builder.build_int_compare(IntPredicate::SLT, idx, len_i32, "cmp").unwrap();
-                self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
+                let idx = self
+                    .builder
+                    .build_load(i32_ty, idx_alloca, "idx")
+                    .unwrap()
+                    .into_int_value();
+                let cmp = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLT, idx, len_i32, "cmp")
+                    .unwrap();
+                self.builder
+                    .build_conditional_branch(cmp, body_bb, exit_bb)
+                    .unwrap();
 
                 self.builder.position_at_end(body_bb);
 
                 let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                let idx_i64 = self.builder.build_int_z_extend(idx, i64_ty, "idx64").unwrap();
+                let idx_i64 = self
+                    .builder
+                    .build_int_z_extend(idx, i64_ty, "idx64")
+                    .unwrap();
 
                 // ny_map_key_at(map, index, &out_len) -> *u8
                 let out_len_alloca = self.builder.build_alloca(i64_ty, "key_len").unwrap();
@@ -787,49 +860,90 @@ impl<'ctx> CodeGen<'ctx> {
                     "ny_map_key_at",
                     ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false),
                 );
-                let key_ptr = self.builder.build_call(
-                    map_key_at_fn,
-                    &[map_ptr.into(), idx_i64.into(), out_len_alloca.into()],
-                    "key_ptr",
-                ).unwrap().try_as_basic_value().basic().unwrap();
-                let key_len = self.builder.build_load(i64_ty, out_len_alloca, "key_len_v").unwrap();
+                let key_ptr = self
+                    .builder
+                    .build_call(
+                        map_key_at_fn,
+                        &[map_ptr.into(), idx_i64.into(), out_len_alloca.into()],
+                        "key_ptr",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap();
+                let key_len = self
+                    .builder
+                    .build_load(i64_ty, out_len_alloca, "key_len_v")
+                    .unwrap();
 
                 // Build str struct {ptr, len}
                 let str_struct_ty = ny_to_llvm(self.context, &NyType::Str).into_struct_type();
-                let key_s0 = self.builder.build_insert_value(str_struct_ty.get_undef(), key_ptr, 0, "ks_p").unwrap();
-                let key_val = self.builder.build_insert_value(key_s0.into_struct_value(), key_len, 1, "ks_l").unwrap();
+                let key_s0 = self
+                    .builder
+                    .build_insert_value(str_struct_ty.get_undef(), key_ptr, 0, "ks_p")
+                    .unwrap();
+                let key_val = self
+                    .builder
+                    .build_insert_value(key_s0.into_struct_value(), key_len, 1, "ks_l")
+                    .unwrap();
 
                 // ny_map_get(map, key_ptr, key_len) -> i64 (value)
                 let map_get_fn = self.get_or_declare_c_fn(
                     "ny_map_get",
                     i64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
                 );
-                let val_i64 = self.builder.build_call(
-                    map_get_fn,
-                    &[map_ptr.into(), key_ptr.into(), key_len.into()],
-                    "val_i64",
-                ).unwrap().try_as_basic_value().basic().unwrap().into_int_value();
-                let val_val = self.builder.build_int_truncate(val_i64, i32_ty, "val_i32").unwrap();
+                let val_i64 = self
+                    .builder
+                    .build_call(
+                        map_get_fn,
+                        &[map_ptr.into(), key_ptr.into(), key_len.into()],
+                        "val_i64",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap()
+                    .into_int_value();
+                let val_val = self
+                    .builder
+                    .build_int_truncate(val_i64, i32_ty, "val_i32")
+                    .unwrap();
 
                 // Declare key and value variables
                 let outer_vars = self.variables.clone();
                 let str_llvm_ty = ny_to_llvm(self.context, &NyType::Str);
                 let key_alloca = self.builder.build_alloca(str_llvm_ty, key_var).unwrap();
-                self.builder.build_store(key_alloca, key_val.into_struct_value()).unwrap();
-                self.variables.insert(key_var.clone(), (key_alloca, NyType::Str));
+                self.builder
+                    .build_store(key_alloca, key_val.into_struct_value())
+                    .unwrap();
+                self.variables
+                    .insert(key_var.clone(), (key_alloca, NyType::Str));
 
                 let val_alloca = self.builder.build_alloca(i32_ty, val_var).unwrap();
                 self.builder.build_store(val_alloca, val_val).unwrap();
-                self.variables.insert(val_var.clone(), (val_alloca, NyType::I32));
+                self.variables
+                    .insert(val_var.clone(), (val_alloca, NyType::I32));
 
-                self.loop_stack.push(LoopFrame { break_bb: exit_bb, continue_bb: cond_bb });
+                self.loop_stack.push(LoopFrame {
+                    break_bb: exit_bb,
+                    continue_bb: cond_bb,
+                });
                 self.compile_expr(body, function)?;
                 self.loop_stack.pop();
                 self.variables = outer_vars;
 
                 // Increment index
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    let next_idx = self.builder.build_int_add(idx, i32_ty.const_int(1, false), "next").unwrap();
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    let next_idx = self
+                        .builder
+                        .build_int_add(idx, i32_ty.const_int(1, false), "next")
+                        .unwrap();
                     self.builder.build_store(idx_alloca, next_idx).unwrap();
                     self.builder.build_unconditional_branch(cond_bb).unwrap();
                 }
@@ -864,10 +978,8 @@ impl<'ctx> CodeGen<'ctx> {
                 // Allocate receive buffer (8 bytes fits i32/i64/f64/ptr)
                 let recv_buf = self.builder.build_alloca(i64_ty, "sel_buf").unwrap();
                 let try_recv_fn = self.get_or_declare_ny_chan_try_recv();
-                let sleep_fn = self.get_or_declare_c_fn(
-                    "usleep",
-                    i32_ty.fn_type(&[i32_ty.into()], false),
-                );
+                let sleep_fn =
+                    self.get_or_declare_c_fn("usleep", i32_ty.fn_type(&[i32_ty.into()], false));
 
                 let poll_bb = self.context.append_basic_block(*function, "sel_poll");
                 let merge_bb = self.context.append_basic_block(*function, "sel_merge");
@@ -883,31 +995,60 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.position_at_end(prev_fail_bb);
                     }
 
-                    let got = self.builder.build_call(
-                        try_recv_fn,
-                        &[ch_ptrs[i].into(), recv_buf.into()],
-                        &format!("got_{}", i),
-                    ).unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+                    let got = self
+                        .builder
+                        .build_call(
+                            try_recv_fn,
+                            &[ch_ptrs[i].into(), recv_buf.into()],
+                            &format!("got_{}", i),
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_int_value();
 
-                    let is_ready = self.builder.build_int_compare(
-                        IntPredicate::NE, got, i32_ty.const_int(0, false), &format!("rdy_{}", i),
-                    ).unwrap();
+                    let is_ready = self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::NE,
+                            got,
+                            i32_ty.const_int(0, false),
+                            &format!("rdy_{}", i),
+                        )
+                        .unwrap();
 
-                    let arm_bb = self.context.append_basic_block(*function, &format!("sel_arm_{}", i));
-                    let fail_bb = self.context.append_basic_block(*function, &format!("sel_fail_{}", i));
-                    self.builder.build_conditional_branch(is_ready, arm_bb, fail_bb).unwrap();
+                    let arm_bb = self
+                        .context
+                        .append_basic_block(*function, &format!("sel_arm_{}", i));
+                    let fail_bb = self
+                        .context
+                        .append_basic_block(*function, &format!("sel_fail_{}", i));
+                    self.builder
+                        .build_conditional_branch(is_ready, arm_bb, fail_bb)
+                        .unwrap();
 
                     // Compile arm body
                     self.builder.position_at_end(arm_bb);
                     let elem_llvm = ny_to_llvm(self.context, &elem_types[i]);
-                    let recv_val = self.builder.build_load(elem_llvm, recv_buf, &format!("val_{}", i)).unwrap();
+                    let recv_val = self
+                        .builder
+                        .build_load(elem_llvm, recv_buf, &format!("val_{}", i))
+                        .unwrap();
                     let var_alloca = self.builder.build_alloca(elem_llvm, &arm.var).unwrap();
                     self.builder.build_store(var_alloca, recv_val).unwrap();
                     let outer_vars = self.variables.clone();
-                    self.variables.insert(arm.var.clone(), (var_alloca, elem_types[i].clone()));
+                    self.variables
+                        .insert(arm.var.clone(), (var_alloca, elem_types[i].clone()));
                     self.compile_expr(&arm.body, function)?;
                     self.variables = outer_vars;
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    if self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_terminator()
+                        .is_none()
+                    {
                         self.builder.build_unconditional_branch(merge_bb).unwrap();
                     }
 
@@ -916,7 +1057,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // All channels empty: sleep 1ms, then retry
                 self.builder.position_at_end(prev_fail_bb);
-                self.builder.build_call(sleep_fn, &[i32_ty.const_int(1000, false).into()], "").unwrap();
+                self.builder
+                    .build_call(sleep_fn, &[i32_ty.const_int(1000, false).into()], "")
+                    .unwrap();
                 self.builder.build_unconditional_branch(poll_bb).unwrap();
 
                 self.builder.position_at_end(merge_bb);

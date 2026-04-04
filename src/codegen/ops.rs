@@ -177,15 +177,9 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_call(*func, &[lhs.into(), rhs.into()], "op_result")
                                 .unwrap();
                             if *ret_ty == crate::common::NyType::Bool {
-                                return Ok(result
-                                    .try_as_basic_value()
-                                    .basic()
-                                    .unwrap());
+                                return Ok(result.try_as_basic_value().basic().unwrap());
                             }
-                            return Ok(result
-                                .try_as_basic_value()
-                                .basic()
-                                .unwrap());
+                            return Ok(result.try_as_basic_value().basic().unwrap());
                         }
                     }
 
@@ -246,18 +240,32 @@ impl<'ctx> CodeGen<'ctx> {
             let l = lhs.into_pointer_value();
             let r = rhs.into_pointer_value();
             let result = match op {
-                BinOp::Eq => self.builder.build_int_compare(
-                    IntPredicate::EQ,
-                    self.builder.build_ptr_to_int(l, self.context.i64_type(), "l_int").unwrap(),
-                    self.builder.build_ptr_to_int(r, self.context.i64_type(), "r_int").unwrap(),
-                    "ptr_eq",
-                ).unwrap(),
-                BinOp::Ne => self.builder.build_int_compare(
-                    IntPredicate::NE,
-                    self.builder.build_ptr_to_int(l, self.context.i64_type(), "l_int").unwrap(),
-                    self.builder.build_ptr_to_int(r, self.context.i64_type(), "r_int").unwrap(),
-                    "ptr_ne",
-                ).unwrap(),
+                BinOp::Eq => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        self.builder
+                            .build_ptr_to_int(l, self.context.i64_type(), "l_int")
+                            .unwrap(),
+                        self.builder
+                            .build_ptr_to_int(r, self.context.i64_type(), "r_int")
+                            .unwrap(),
+                        "ptr_eq",
+                    )
+                    .unwrap(),
+                BinOp::Ne => self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        self.builder
+                            .build_ptr_to_int(l, self.context.i64_type(), "l_int")
+                            .unwrap(),
+                        self.builder
+                            .build_ptr_to_int(r, self.context.i64_type(), "r_int")
+                            .unwrap(),
+                        "ptr_ne",
+                    )
+                    .unwrap(),
                 _ => {
                     return Err(vec![CompileError::type_error(
                         "only == and != are supported for pointer comparison".to_string(),

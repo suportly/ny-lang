@@ -5,10 +5,9 @@ use super::{Dependency, PkgError};
 
 /// Check that git is available.
 pub fn check_git() -> Result<(), PkgError> {
-    Command::new("git")
-        .arg("--version")
-        .output()
-        .map_err(|_| PkgError::GitFailed("git not found — install git to use ny pkg".to_string()))?;
+    Command::new("git").arg("--version").output().map_err(|_| {
+        PkgError::GitFailed("git not found — install git to use ny pkg".to_string())
+    })?;
     Ok(())
 }
 

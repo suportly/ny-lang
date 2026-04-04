@@ -162,7 +162,9 @@ impl<'ctx> CodeGen<'ctx> {
                 match &obj_ty {
                     NyType::DynTrait(trait_name) => {
                         if let Some(methods) = self.trait_defs.get(trait_name) {
-                            if let Some((_, _, ret_ty)) = methods.iter().find(|(n, _, _)| n == method) {
+                            if let Some((_, _, ret_ty)) =
+                                methods.iter().find(|(n, _, _)| n == method)
+                            {
                                 return ret_ty.clone();
                             }
                         }
@@ -197,7 +199,9 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     NyType::Str => match method.as_str() {
                         "len" => NyType::I64,
-                        "substr" | "trim" | "to_upper" | "to_lower" | "replace" | "repeat" => NyType::Str,
+                        "substr" | "trim" | "to_upper" | "to_lower" | "replace" | "repeat" => {
+                            NyType::Str
+                        }
                         "char_at" | "index_of" => NyType::I32,
                         "contains" | "starts_with" | "ends_with" => NyType::Bool,
                         _ => NyType::Unit,

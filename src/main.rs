@@ -141,7 +141,14 @@ fn main() {
                 }
             });
 
-            match ny::compile(&source, &file, &output_path, opt_level, emit_to_str(&emit), &target) {
+            match ny::compile(
+                &source,
+                &file,
+                &output_path,
+                opt_level,
+                emit_to_str(&emit),
+                &target,
+            ) {
                 Ok(()) => process::exit(0),
                 Err(errors) => {
                     ny::diagnostics::print_errors(&file, &source, &errors);
@@ -446,8 +453,12 @@ fn main() {
                     let mut block = line.clone();
                     let mut depth: i32 = 0;
                     for ch in block.chars() {
-                        if ch == '{' { depth += 1; }
-                        if ch == '}' { depth -= 1; }
+                        if ch == '{' {
+                            depth += 1;
+                        }
+                        if ch == '}' {
+                            depth -= 1;
+                        }
                     }
                     while depth > 0 {
                         eprint!("... ");
@@ -456,8 +467,12 @@ fn main() {
                             break;
                         }
                         for ch in cont.chars() {
-                            if ch == '{' { depth += 1; }
-                            if ch == '}' { depth -= 1; }
+                            if ch == '{' {
+                                depth += 1;
+                            }
+                            if ch == '}' {
+                                depth -= 1;
+                            }
                         }
                         block.push_str(&cont);
                     }

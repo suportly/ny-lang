@@ -107,7 +107,10 @@ impl TypeChecker {
                     }
                 }
                 // Check HashMap<K,V>
-                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(inner) = name
+                    .strip_prefix("HashMap<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
                     if let Some(comma) = inner.find(',') {
                         let k_str = inner[..comma].trim();
                         let v_str = inner[comma + 1..].trim();
@@ -256,7 +259,9 @@ impl TypeChecker {
                 ..
             } => {
                 if *is_async {
-                    eprintln!("warning: 'async fn' is deprecated — use 'go fn()' + channels instead");
+                    eprintln!(
+                        "warning: 'async fn' is deprecated — use 'go fn()' + channels instead"
+                    );
                 }
                 let ret_ty = self
                     .resolve_type_annotation(return_type)
@@ -316,7 +321,9 @@ impl TypeChecker {
                 }
                 // Warn about operator overloading on non-numeric types
                 if trait_name.is_none() {
-                    let op_names = ["add", "sub", "mul", "div", "eq", "ne", "lt", "gt", "le", "ge"];
+                    let op_names = [
+                        "add", "sub", "mul", "div", "eq", "ne", "lt", "gt", "le", "ge",
+                    ];
                     for method in methods.iter() {
                         if let Item::FunctionDef { name, .. } = method {
                             if op_names.contains(&name.as_str()) {
@@ -478,11 +485,26 @@ impl TypeChecker {
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                         let nil_cmp = (lhs_ty.is_pointer() && rhs_ty.is_pointer())
-                            || matches!((&lhs_ty, &rhs_ty), (NyType::DynTrait(_), NyType::Pointer(_)))
-                            || matches!((&lhs_ty, &rhs_ty), (NyType::Pointer(_), NyType::DynTrait(_)))
-                            || matches!((&lhs_ty, &rhs_ty), (NyType::Optional(_), NyType::Pointer(_)))
-                            || matches!((&lhs_ty, &rhs_ty), (NyType::Pointer(_), NyType::Optional(_)));
-                        if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) && !nil_cmp {
+                            || matches!(
+                                (&lhs_ty, &rhs_ty),
+                                (NyType::DynTrait(_), NyType::Pointer(_))
+                            )
+                            || matches!(
+                                (&lhs_ty, &rhs_ty),
+                                (NyType::Pointer(_), NyType::DynTrait(_))
+                            )
+                            || matches!(
+                                (&lhs_ty, &rhs_ty),
+                                (NyType::Optional(_), NyType::Pointer(_))
+                            )
+                            || matches!(
+                                (&lhs_ty, &rhs_ty),
+                                (NyType::Pointer(_), NyType::Optional(_))
+                            );
+                        if lhs_ty != rhs_ty
+                            && !(lhs_ty.is_numeric() && rhs_ty.is_numeric())
+                            && !nil_cmp
+                        {
                             self.errors.push(CompileError::type_error(
                                 format!("cannot compare '{}' with '{}'", lhs_ty, rhs_ty),
                                 *span,
@@ -660,19 +682,25 @@ impl TypeChecker {
 
                 // Built-in error_new(message) -> i32 (error code)
                 if callee == "error_new" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I32;
                 }
 
                 // Built-in error_message(code) -> str
                 if callee == "error_message" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
 
                 // Built-in error_trace(code) -> str
                 if callee == "error_trace" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
 
@@ -874,7 +902,9 @@ impl TypeChecker {
                 }
                 // Tensor builtins
                 if callee.starts_with("tensor_") {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return match callee.as_str() {
                         "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_rand"
                         | "tensor_clone" | "tensor_add" | "tensor_sub" | "tensor_mul"
@@ -898,49 +928,71 @@ impl TypeChecker {
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "smap_insert" || callee == "smap_free" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 if callee == "smap_get" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
                 if callee == "smap_contains" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Bool;
                 }
                 if callee == "smap_len" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I64;
                 }
                 // map_key_at(m, index) -> str
                 if callee == "map_key_at" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
                 // JSON builtins
                 if callee == "json_parse" || callee == "json_arr_get" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Pointer(Box::new(NyType::U8));
                 }
                 if callee == "json_get_str" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Str;
                 }
                 if callee == "json_get_int" || callee == "json_type" || callee == "json_len" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::I32;
                 }
                 if callee == "json_get_float" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::F64;
                 }
                 if callee == "json_get_bool" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Bool;
                 }
                 if callee == "json_free" {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
 
@@ -1325,10 +1377,7 @@ impl TypeChecker {
                             let candidates: Vec<&str> =
                                 def_fields.iter().map(|(n, _)| n.as_str()).collect();
                             let mut err = CompileError::type_error(
-                                format!(
-                                    "struct '{}' has no field named '{}'",
-                                    name, field_name
-                                ),
+                                format!("struct '{}' has no field named '{}'", name, field_name),
                                 field_expr.span(),
                             );
                             if let Some(s) = Self::suggest_similar(field_name, &candidates) {
@@ -1804,8 +1853,7 @@ impl TypeChecker {
                 if let Some(field_ty) = fields.iter().find(|(n, _)| n == field).map(|(_, t)| t) {
                     field_ty.clone()
                 } else {
-                    let candidates: Vec<&str> =
-                        fields.iter().map(|(n, _)| n.as_str()).collect();
+                    let candidates: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
                     let mut err = CompileError::type_error(
                         format!("struct '{}' has no field '{}'", name, field),
                         span,
@@ -1851,7 +1899,9 @@ impl TypeChecker {
     ) -> NyType {
         // chan<T> method calls
         if let NyType::Chan(elem_ty) = receiver_ty {
-            for arg in args { self.check_expr(arg); }
+            for arg in args {
+                self.check_expr(arg);
+            }
             match method {
                 "send" => return NyType::Unit,
                 "recv" => return *elem_ty.clone(),
@@ -1868,7 +1918,9 @@ impl TypeChecker {
 
         // dyn Trait method calls — look up return type from trait definition
         if let NyType::DynTrait(trait_name) = receiver_ty {
-            for arg in args { self.check_expr(arg); }
+            for arg in args {
+                self.check_expr(arg);
+            }
             if let Some((sigs, _)) = self.traits.get(trait_name) {
                 if let Some((_, _, ret_ty)) = sigs.iter().find(|(n, _, _)| n == method) {
                     return ret_ty.clone();
@@ -1886,24 +1938,34 @@ impl TypeChecker {
         if let NyType::HashMap(_key_ty, val_ty) = receiver_ty {
             match method {
                 "insert" => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 "get" => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return *val_ty.clone();
                 }
                 "contains" => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Bool;
                 }
                 "len" => return NyType::I64,
                 "remove" | "free" => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     return NyType::Unit;
                 }
                 _ => {
-                    for arg in args { self.check_expr(arg); }
+                    for arg in args {
+                        self.check_expr(arg);
+                    }
                     self.errors.push(CompileError::type_error(
                         format!("no method '{}' found for HashMap type", method),
                         span,
@@ -1949,7 +2011,9 @@ impl TypeChecker {
                 }
                 "pop" | "sum" => return *elem.clone(),
                 "join" => {
-                    if args.len() == 1 { self.check_expr(&args[0]); }
+                    if args.len() == 1 {
+                        self.check_expr(&args[0]);
+                    }
                     return NyType::Str;
                 }
                 "sort" | "reverse" | "clear" => return NyType::Unit,
@@ -1994,9 +2058,8 @@ impl TypeChecker {
                         self.check_expr(arg);
                     }
                     let vec_methods = &[
-                        "push", "pop", "get", "set", "len", "sort", "reverse",
-                        "clear", "contains", "index_of", "map", "filter",
-                        "reduce", "for_each", "any", "all",
+                        "push", "pop", "get", "set", "len", "sort", "reverse", "clear", "contains",
+                        "index_of", "map", "filter", "reduce", "for_each", "any", "all",
                     ];
                     let mut err = CompileError::type_error(
                         format!("no method '{}' found for Vec type", method),
@@ -2120,10 +2183,7 @@ impl TypeChecker {
                         let arg_ty = self.check_expr(&args[0]);
                         if arg_ty != NyType::Str {
                             self.errors.push(CompileError::type_error(
-                                format!(
-                                    "'index_of' expects str argument, found '{}'",
-                                    arg_ty
-                                ),
+                                format!("'index_of' expects str argument, found '{}'", arg_ty),
                                 args[0].span(),
                             ));
                         }
@@ -2135,9 +2195,18 @@ impl TypeChecker {
                         self.check_expr(arg);
                     }
                     let str_methods = &[
-                        "len", "substr", "char_at", "contains", "starts_with",
-                        "ends_with", "index_of", "trim", "to_upper", "to_lower",
-                        "replace", "repeat",
+                        "len",
+                        "substr",
+                        "char_at",
+                        "contains",
+                        "starts_with",
+                        "ends_with",
+                        "index_of",
+                        "trim",
+                        "to_upper",
+                        "to_lower",
+                        "replace",
+                        "repeat",
                     ];
                     let mut err = CompileError::type_error(
                         format!("no method '{}' found for type 'str'", method),
@@ -2242,7 +2311,10 @@ impl TypeChecker {
                             || (init_ty.is_hashmap() && declared_ty.is_hashmap())
                             || (init_ty.is_numeric() && declared_ty.is_numeric())
                             || matches!(&declared_ty, NyType::DynTrait(_))
-                            || matches!((&init_ty, &declared_ty), (NyType::Chan(_), NyType::Chan(_)))
+                            || matches!(
+                                (&init_ty, &declared_ty),
+                                (NyType::Chan(_), NyType::Chan(_))
+                            )
                             || optional_compat;
                         if !compatible {
                             self.errors.push(CompileError::type_error(
@@ -2629,7 +2701,13 @@ impl TypeChecker {
                 self.loop_depth -= 1;
             }
 
-            Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+            Stmt::ForMap {
+                key_var,
+                val_var,
+                map_expr,
+                body,
+                ..
+            } => {
                 let map_ty = self.check_expr(map_expr);
                 let (key_ty, val_ty) = match &map_ty {
                     NyType::HashMap(k, v) => (*k.clone(), *v.clone()),

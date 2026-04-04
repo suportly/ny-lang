@@ -77,7 +77,9 @@ pub fn monomorphize(program: &mut Program) {
                         let type_name = format!("{}", concrete);
                         for bound in &tp.bounds {
                             let impls = trait_impls.get(bound).cloned().unwrap_or_default();
-                            if !impls.contains(&type_name) && !is_builtin_trait_satisfied(bound, concrete) {
+                            if !impls.contains(&type_name)
+                                && !is_builtin_trait_satisfied(bound, concrete)
+                            {
                                 eprintln!(
                                     "error: type '{}' does not implement trait '{}' (required by '{}' in '{}')",
                                     type_name, bound, tp.name, fn_name

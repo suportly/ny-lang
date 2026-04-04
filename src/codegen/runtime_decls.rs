@@ -190,27 +190,47 @@ impl<'ctx> CodeGen<'ctx> {
 
     // String→String Map
     pub(super) fn get_or_declare_ny_smap_new(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_new") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_new") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_smap_new", ptr_ty.fn_type(&[], false), None)
+        self.module
+            .add_function("ny_smap_new", ptr_ty.fn_type(&[], false), None)
     }
     pub(super) fn get_or_declare_ny_smap_insert(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_insert") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_insert") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = self.context.void_type().fn_type(
-            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+            &[
+                ptr_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+            ],
+            false,
+        );
         self.module.add_function("ny_smap_insert", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_smap_get(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_get") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_get") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        let fn_ty = ptr_ty.fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("ny_smap_get", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_smap_contains(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_contains") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_contains") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let i32_ty = self.context.i32_type();
@@ -218,46 +238,82 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_smap_contains", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_smap_len(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_len") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_len") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
+        self.module
+            .add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
     // Async/Await runtime
     pub(super) fn get_or_declare_ny_future_create(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_future_create") { return f; }
+        if let Some(f) = self.module.get_function("ny_future_create") {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_future_create", ptr.fn_type(&[], false), None)
+        self.module
+            .add_function("ny_future_create", ptr.fn_type(&[], false), None)
     }
     pub(super) fn get_or_declare_ny_future_signal(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_future_signal") { return f; }
+        if let Some(f) = self.module.get_function("ny_future_signal") {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
         let i64t = self.context.i64_type();
-        self.module.add_function("ny_future_signal", self.context.void_type().fn_type(&[ptr.into(), i64t.into()], false), None)
+        self.module.add_function(
+            "ny_future_signal",
+            self.context
+                .void_type()
+                .fn_type(&[ptr.into(), i64t.into()], false),
+            None,
+        )
     }
     pub(super) fn get_or_declare_ny_future_await(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_future_await") { return f; }
+        if let Some(f) = self.module.get_function("ny_future_await") {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
         let i64t = self.context.i64_type();
-        self.module.add_function("ny_future_await", i64t.fn_type(&[ptr.into()], false), None)
+        self.module
+            .add_function("ny_future_await", i64t.fn_type(&[ptr.into()], false), None)
     }
     pub(super) fn get_or_declare_ny_async_pool(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_async_pool") { return f; }
+        if let Some(f) = self.module.get_function("ny_async_pool") {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_async_pool", ptr.fn_type(&[], false), None)
+        self.module
+            .add_function("ny_async_pool", ptr.fn_type(&[], false), None)
     }
     pub(super) fn get_or_declare_ny_pool_submit_arg(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_pool_submit_arg") { return f; }
+        if let Some(f) = self.module.get_function("ny_pool_submit_arg") {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_pool_submit_arg", self.context.void_type().fn_type(&[ptr.into(), ptr.into(), ptr.into()], false), None)
+        self.module.add_function(
+            "ny_pool_submit_arg",
+            self.context
+                .void_type()
+                .fn_type(&[ptr.into(), ptr.into(), ptr.into()], false),
+            None,
+        )
     }
 
     pub(super) fn get_or_declare_ny_str_join(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_str_join") { return f; }
+        if let Some(f) = self.module.get_function("ny_str_join") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = ptr_ty.fn_type(
-            &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            &[
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+            ],
             false,
         );
         self.module.add_function("ny_str_join", fn_ty, None)
@@ -265,24 +321,33 @@ impl<'ctx> CodeGen<'ctx> {
 
     // Tensor<f64>
     pub(super) fn get_or_declare_tensor_fn(&self, name: &str) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function(name) { return f; }
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
         let ptr = self.context.ptr_type(AddressSpace::default());
         let i64t = self.context.i64_type();
         let f64t = self.context.f64_type();
         let void = self.context.void_type();
         let fn_ty = match name {
-            "ny_tensor_zeros" | "ny_tensor_ones" | "ny_tensor_rand" => ptr.fn_type(&[i64t.into(), i64t.into()], false),
+            "ny_tensor_zeros" | "ny_tensor_ones" | "ny_tensor_rand" => {
+                ptr.fn_type(&[i64t.into(), i64t.into()], false)
+            }
             "ny_tensor_fill" => ptr.fn_type(&[i64t.into(), i64t.into(), f64t.into()], false),
             "ny_tensor_clone" | "ny_tensor_transpose" => ptr.fn_type(&[ptr.into()], false),
             "ny_tensor_free" | "ny_tensor_print" => void.fn_type(&[ptr.into()], false),
             "ny_tensor_apply" => void.fn_type(&[ptr.into(), ptr.into()], false),
             "ny_tensor_rows" | "ny_tensor_cols" => i64t.fn_type(&[ptr.into()], false),
             "ny_tensor_get" => f64t.fn_type(&[ptr.into(), i64t.into(), i64t.into()], false),
-            "ny_tensor_set" => void.fn_type(&[ptr.into(), i64t.into(), i64t.into(), f64t.into()], false),
-            "ny_tensor_add" | "ny_tensor_sub" | "ny_tensor_mul" | "ny_tensor_matmul" =>
-                ptr.fn_type(&[ptr.into(), ptr.into()], false),
+            "ny_tensor_set" => {
+                void.fn_type(&[ptr.into(), i64t.into(), i64t.into(), f64t.into()], false)
+            }
+            "ny_tensor_add" | "ny_tensor_sub" | "ny_tensor_mul" | "ny_tensor_matmul" => {
+                ptr.fn_type(&[ptr.into(), ptr.into()], false)
+            }
             "ny_tensor_scale" => ptr.fn_type(&[ptr.into(), f64t.into()], false),
-            "ny_tensor_sum" | "ny_tensor_max" | "ny_tensor_min" | "ny_tensor_norm" => f64t.fn_type(&[ptr.into()], false),
+            "ny_tensor_sum" | "ny_tensor_max" | "ny_tensor_min" | "ny_tensor_norm" => {
+                f64t.fn_type(&[ptr.into()], false)
+            }
             "ny_tensor_dot" => f64t.fn_type(&[ptr.into(), ptr.into()], false),
             _ => void.fn_type(&[], false),
         };
@@ -291,29 +356,43 @@ impl<'ctx> CodeGen<'ctx> {
 
     // Generic HashMap<K,V>
     pub(super) fn get_or_declare_ny_hmap_new(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_new") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_new") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_hmap_new", ptr_ty.fn_type(&[i64_ty.into()], false), None)
+        self.module
+            .add_function("ny_hmap_new", ptr_ty.fn_type(&[i64_ty.into()], false), None)
     }
     pub(super) fn get_or_declare_ny_hmap_insert(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_insert") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_insert") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = self.context.void_type().fn_type(
-            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("ny_hmap_insert", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_hmap_get(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_get") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_get") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let i32_ty = self.context.i32_type();
-        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        let fn_ty = i32_ty.fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("ny_hmap_get", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_hmap_contains(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_contains") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_contains") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let i32_ty = self.context.i32_type();
@@ -321,28 +400,48 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_hmap_contains", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_hmap_len(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_len") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_len") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        self.module.add_function("ny_hmap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
+        self.module
+            .add_function("ny_hmap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
     pub(super) fn get_or_declare_ny_hmap_remove(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_remove") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_remove") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
-        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
         self.module.add_function("ny_hmap_remove", fn_ty, None)
     }
     pub(super) fn get_or_declare_ny_hmap_free(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_hmap_free") { return f; }
+        if let Some(f) = self.module.get_function("ny_hmap_free") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_hmap_free", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+        self.module.add_function(
+            "ny_hmap_free",
+            self.context.void_type().fn_type(&[ptr_ty.into()], false),
+            None,
+        )
     }
 
     pub(super) fn get_or_declare_ny_smap_free(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_smap_free") { return f; }
+        if let Some(f) = self.module.get_function("ny_smap_free") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.module.add_function("ny_smap_free", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+        self.module.add_function(
+            "ny_smap_free",
+            self.context.void_type().fn_type(&[ptr_ty.into()], false),
+            None,
+        )
     }
 
     pub(super) fn get_or_declare_ny_map_free(&self) -> FunctionValue<'ctx> {
@@ -553,27 +652,35 @@ impl<'ctx> CodeGen<'ctx> {
 
     // Stack trace
     pub(super) fn get_or_declare_ny_trace_push(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_trace_push") { return f; }
+        if let Some(f) = self.module.get_function("ny_trace_push") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
         self.module.add_function("ny_trace_push", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_trace_pop(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_trace_pop") { return f; }
+        if let Some(f) = self.module.get_function("ny_trace_pop") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_trace_pop", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_trace_print(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_trace_print") { return f; }
+        if let Some(f) = self.module.get_function("ny_trace_print") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_trace_print", fn_ty, None)
     }
 
     // JSON runtime declarations
     pub(super) fn get_or_declare_ny_json_parse(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_parse") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_parse") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
@@ -581,7 +688,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_type(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_type") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_type") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         let fn_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
@@ -589,7 +698,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_get_int(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_get_int") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_get_int") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = i64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
@@ -597,7 +708,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_get_float(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_get_float") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_get_float") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let f64_ty = self.context.f64_type();
         let i64_ty = self.context.i64_type();
@@ -606,16 +719,23 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_get_str(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_get_str") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_get_str") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         // returns ptr, takes (obj, key_ptr, key_len, &out_len)
-        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        let fn_ty = ptr_ty.fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
         self.module.add_function("ny_json_get_str", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_json_get_bool(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_get_bool") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_get_bool") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         let i64_ty = self.context.i64_type();
@@ -624,7 +744,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_len(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_len") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_len") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = i64_ty.fn_type(&[ptr_ty.into()], false);
@@ -632,7 +754,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_arr_get(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_arr_get") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_arr_get") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
@@ -640,7 +764,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_json_free(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_json_free") { return f; }
+        if let Some(f) = self.module.get_function("ny_json_free") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
         self.module.add_function("ny_json_free", fn_ty, None)
@@ -674,8 +800,10 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let i32_ty = self.context.i32_type();
-        let fn_ty =
-            i32_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        let fn_ty = i32_ty.fn_type(
+            &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into()],
+            false,
+        );
         self.module.add_function("ny_write_file", fn_ty, None)
     }
 
@@ -717,7 +845,13 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_ty = self.context.i64_type();
         // NyStrSlice *ny_str_split(ptr hay, i64 hay_len, ptr delim, i64 delim_len, ptr out_count)
         let fn_ty = ptr_ty.fn_type(
-            &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            &[
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+                i64_ty.into(),
+                ptr_ty.into(),
+            ],
             false,
         );
         self.module.add_function("ny_str_split", fn_ty, None)
@@ -783,7 +917,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_atexit(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("atexit") { return f; }
+        if let Some(f) = self.module.get_function("atexit") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         // int atexit(void (*func)(void))
@@ -796,13 +932,17 @@ impl<'ctx> CodeGen<'ctx> {
     // -----------------------------------------------------------------------
 
     pub(super) fn get_or_declare_ny_gc_init(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_init") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_init") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_gc_init", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_alloc(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_alloc") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_alloc") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i64_ty = self.context.i64_type();
         let i8_ty = self.context.i8_type();
@@ -811,49 +951,65 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_gc_collect(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_collect") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_collect") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_gc_collect", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_root_push(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_root_push") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_root_push") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
         self.module.add_function("ny_gc_root_push", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_root_pop(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_root_pop") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_root_pop") {
+            return f;
+        }
         let i64_ty = self.context.i64_type();
         let fn_ty = self.context.void_type().fn_type(&[i64_ty.into()], false);
         self.module.add_function("ny_gc_root_pop", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_stats(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_stats") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_stats") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_gc_stats", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_shutdown(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_shutdown") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_shutdown") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
         self.module.add_function("ny_gc_shutdown", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_bytes_allocated(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_bytes_allocated") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_bytes_allocated") {
+            return f;
+        }
         let i64_ty = self.context.i64_type();
         let fn_ty = i64_ty.fn_type(&[], false);
-        self.module.add_function("ny_gc_bytes_allocated", fn_ty, None)
+        self.module
+            .add_function("ny_gc_bytes_allocated", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_gc_collection_count(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_collection_count") { return f; }
+        if let Some(f) = self.module.get_function("ny_gc_collection_count") {
+            return f;
+        }
         let i64_ty = self.context.i64_type();
         let fn_ty = i64_ty.fn_type(&[], false);
-        self.module.add_function("ny_gc_collection_count", fn_ty, None)
+        self.module
+            .add_function("ny_gc_collection_count", fn_ty, None)
     }
 
     // -----------------------------------------------------------------------
@@ -861,7 +1017,9 @@ impl<'ctx> CodeGen<'ctx> {
     // -----------------------------------------------------------------------
 
     pub(super) fn get_or_declare_ny_chan_new(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_chan_new") { return f; }
+        if let Some(f) = self.module.get_function("ny_chan_new") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         let i64_ty = self.context.i64_type();
@@ -871,29 +1029,44 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_chan_send(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_chan_send") { return f; }
+        if let Some(f) = self.module.get_function("ny_chan_send") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         // void ny_chan_send(NyChan *ch, const void *value_ptr)
-        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
         self.module.add_function("ny_chan_send", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_chan_recv(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_chan_recv") { return f; }
+        if let Some(f) = self.module.get_function("ny_chan_recv") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         // void ny_chan_recv(NyChan *ch, void *out_ptr)
-        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
         self.module.add_function("ny_chan_recv", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_async_pool_shutdown(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_async_pool_shutdown") { return f; }
+        if let Some(f) = self.module.get_function("ny_async_pool_shutdown") {
+            return f;
+        }
         let fn_ty = self.context.void_type().fn_type(&[], false);
-        self.module.add_function("ny_async_pool_shutdown", fn_ty, None)
+        self.module
+            .add_function("ny_async_pool_shutdown", fn_ty, None)
     }
 
     pub(super) fn get_or_declare_ny_chan_try_recv(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_chan_try_recv") { return f; }
+        if let Some(f) = self.module.get_function("ny_chan_try_recv") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         // int32_t ny_chan_try_recv(NyChan *ch, void *out_ptr)
@@ -902,7 +1075,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(super) fn get_or_declare_ny_chan_close(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_chan_close") { return f; }
+        if let Some(f) = self.module.get_function("ny_chan_close") {
+            return f;
+        }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
         self.module.add_function("ny_chan_close", fn_ty, None)

@@ -16,9 +16,7 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
             Some(NyType::Pointer(Box::new(NyType::U8)))
         }
         "free" | "arena_free" | "arena_reset" | "map_insert" | "map_remove" | "map_free"
-        | "sleep_ms" | "exit" => {
-            Some(NyType::Unit)
-        }
+        | "sleep_ms" | "exit" => Some(NyType::Unit),
         "sizeof" | "arena_bytes_used" | "map_len" | "vec_len" => Some(NyType::I64),
 
         // File I/O
@@ -26,7 +24,10 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "map_contains" => Some(NyType::Bool),
 
         // Generic HashMap
-        "hmap_new" => Some(NyType::HashMap(Box::new(NyType::Str), Box::new(NyType::I32))),
+        "hmap_new" => Some(NyType::HashMap(
+            Box::new(NyType::Str),
+            Box::new(NyType::I32),
+        )),
 
         // String→String Map
         "smap_new" => Some(NyType::Pointer(Box::new(NyType::U8))),
@@ -79,9 +80,7 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "par_reduce" => Some(NyType::I32),
 
         // Math (f64)
-        "sqrt" | "sin" | "cos" | "floor" | "ceil" | "fabs" | "log" | "exp" => {
-            Some(NyType::F64)
-        }
+        "sqrt" | "sin" | "cos" | "floor" | "ceil" | "fabs" | "log" | "exp" => Some(NyType::F64),
         "pow" => Some(NyType::F64),
 
         // Timing
@@ -100,12 +99,10 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
 
         // Tensor
         "tensor_zeros" | "tensor_ones" | "tensor_fill" | "tensor_rand" | "tensor_clone"
-        | "tensor_add" | "tensor_sub" | "tensor_mul" | "tensor_scale"
-        | "tensor_matmul" | "tensor_transpose" => {
-            Some(NyType::Pointer(Box::new(NyType::U8)))
-        }
-        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min"
-        | "tensor_dot" | "tensor_norm" => Some(NyType::F64),
+        | "tensor_add" | "tensor_sub" | "tensor_mul" | "tensor_scale" | "tensor_matmul"
+        | "tensor_transpose" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "tensor_get" | "tensor_sum" | "tensor_max" | "tensor_min" | "tensor_dot"
+        | "tensor_norm" => Some(NyType::F64),
         "tensor_set" | "tensor_free" | "tensor_print" | "tensor_apply" => Some(NyType::Unit),
         "tensor_rows" | "tensor_cols" => Some(NyType::I64),
 

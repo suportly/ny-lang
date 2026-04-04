@@ -167,7 +167,10 @@ fn analyze_document(source: &str, uri: &Url) -> Option<ResolvedInfo> {
     let uri_str = uri.as_str();
     if let Some(file_path) = uri_str.strip_prefix("file://") {
         let path = std::path::PathBuf::from(file_path);
-        let base_dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let base_dir = path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
         let mut visited = std::collections::HashSet::new();
         visited.insert(path);
         let _ = ny::resolve_uses_pub(&mut program, &base_dir, &mut visited);
@@ -248,7 +251,11 @@ fn error_to_diagnostic(source: &str, error: &ny::common::CompileError) -> Diagno
 // Hover: semantic type info from ResolvedInfo
 // ---------------------------------------------------------------------------
 
-fn handle_hover(documents: &HashMap<Url, DocumentState>, uri: &Url, pos: Position) -> Option<Hover> {
+fn handle_hover(
+    documents: &HashMap<Url, DocumentState>,
+    uri: &Url,
+    pos: Position,
+) -> Option<Hover> {
     let doc = documents.get(uri)?;
     let source = &doc.source;
     let offset = line_col_to_byte_offset(source, pos.line as usize, pos.character as usize)?;
@@ -314,7 +321,11 @@ fn semantic_type_info(source: &str, resolved: &ResolvedInfo, name: &str) -> Stri
             .iter()
             .map(|(fname, ftype)| format!("    {}: {}", fname, ftype))
             .collect();
-        return format!("```ny\nstruct {} {{\n{}\n}}\n```", name, field_lines.join(",\n"));
+        return format!(
+            "```ny\nstruct {} {{\n{}\n}}\n```",
+            name,
+            field_lines.join(",\n")
+        );
     }
 
     // Check enums
@@ -330,7 +341,11 @@ fn semantic_type_info(source: &str, resolved: &ResolvedInfo, name: &str) -> Stri
                 }
             })
             .collect();
-        return format!("```ny\nenum {} {{\n{}\n}}\n```", name, var_lines.join(",\n"));
+        return format!(
+            "```ny\nenum {} {{\n{}\n}}\n```",
+            name,
+            var_lines.join(",\n")
+        );
     }
 
     // Fall back to source-level heuristic for local variables
@@ -491,9 +506,9 @@ fn handle_completion(
 
     // Keywords
     for kw in &[
-        "fn", "if", "else", "while", "for", "in", "return", "struct", "enum", "match",
-        "break", "continue", "defer", "pub", "use", "trait", "impl", "loop", "unsafe",
-        "extern", "let", "true", "false", "as",
+        "fn", "if", "else", "while", "for", "in", "return", "struct", "enum", "match", "break",
+        "continue", "defer", "pub", "use", "trait", "impl", "loop", "unsafe", "extern", "let",
+        "true", "false", "as",
     ] {
         items.push(CompletionItem {
             label: kw.to_string(),
@@ -671,7 +686,8 @@ fn handle_document_symbols(
     }
 
     for name in resolved.structs.keys() {
-        if let Some(offset) = source.find(&format!("struct {} ", name))
+        if let Some(offset) = source
+            .find(&format!("struct {} ", name))
             .or_else(|| source.find(&format!("struct {}{{", name)))
         {
             let (line, col) = byte_offset_to_line_col(source, offset);
@@ -682,8 +698,14 @@ fn handle_document_symbols(
                 location: Location {
                     uri: uri.clone(),
                     range: Range {
-                        start: Position { line: line as u32, character: col as u32 },
-                        end: Position { line: line as u32, character: (col + name.len()) as u32 },
+                        start: Position {
+                            line: line as u32,
+                            character: col as u32,
+                        },
+                        end: Position {
+                            line: line as u32,
+                            character: (col + name.len()) as u32,
+                        },
                     },
                 },
                 tags: None,
@@ -694,7 +716,8 @@ fn handle_document_symbols(
     }
 
     for name in resolved.enums.keys() {
-        if let Some(offset) = source.find(&format!("enum {} ", name))
+        if let Some(offset) = source
+            .find(&format!("enum {} ", name))
             .or_else(|| source.find(&format!("enum {}{{", name)))
         {
             let (line, col) = byte_offset_to_line_col(source, offset);
@@ -705,8 +728,14 @@ fn handle_document_symbols(
                 location: Location {
                     uri: uri.clone(),
                     range: Range {
-                        start: Position { line: line as u32, character: col as u32 },
-                        end: Position { line: line as u32, character: (col + name.len()) as u32 },
+                        start: Position {
+                            line: line as u32,
+                            character: col as u32,
+                        },
+                        end: Position {
+                            line: line as u32,
+                            character: (col + name.len()) as u32,
+                        },
                     },
                 },
                 tags: None,

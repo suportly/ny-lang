@@ -178,9 +178,14 @@ fn emit_wasm(module: &Module, output_path: &Path, opt_level: u8) -> Result<(), V
                 "note: wasm-ld not found. Object file saved as {}",
                 obj_path.display()
             );
-            eprintln!("  To link: wasm-ld {} -o {} --no-entry --export-all --allow-undefined",
-                obj_path.display(), output_path.display());
-            eprintln!("  Install: apt install lld-18 && ln -s /usr/bin/wasm-ld-18 /usr/local/bin/wasm-ld");
+            eprintln!(
+                "  To link: wasm-ld {} -o {} --no-entry --export-all --allow-undefined",
+                obj_path.display(),
+                output_path.display()
+            );
+            eprintln!(
+                "  Install: apt install lld-18 && ln -s /usr/bin/wasm-ld-18 /usr/local/bin/wasm-ld"
+            );
             Ok(())
         }
     }
@@ -230,13 +235,23 @@ fn emit_object_file(module: &Module, path: &Path, opt_level: u8) -> Result<(), V
 
 fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<CompileError>> {
     let mut cmd = Command::new("cc");
-    cmd.arg(obj_path)
-        .arg("-o")
-        .arg(output_path)
-        .arg("-no-pie");
+    cmd.arg(obj_path).arg("-o").arg(output_path).arg("-no-pie");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
-    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c", "tensor.c", "future.c", "gc.c", "chan.c", "error.c"] {
+    for rt_name in &[
+        "hashmap.c",
+        "hashmap_generic.c",
+        "arena.c",
+        "channel.c",
+        "threadpool.c",
+        "string.c",
+        "json.c",
+        "tensor.c",
+        "future.c",
+        "gc.c",
+        "chan.c",
+        "error.c",
+    ] {
         if let Some(rt_path) = find_runtime_file(rt_name) {
             cmd.arg(rt_path);
         }
@@ -355,7 +370,10 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
                 // Check HashMap<K,V> pattern
-                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(inner) = name
+                    .strip_prefix("HashMap<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
                     if let Some(comma) = inner.find(',') {
                         let k_str = inner[..comma].trim();
                         let v_str = inner[comma + 1..].trim();
@@ -418,9 +436,7 @@ impl<'ctx> CodeGen<'ctx> {
                     ret: Box::new(ret_ty),
                 }
             }
-            TypeAnnotation::DynTrait { trait_name, .. } => {
-                NyType::DynTrait(trait_name.clone())
-            }
+            TypeAnnotation::DynTrait { trait_name, .. } => NyType::DynTrait(trait_name.clone()),
             TypeAnnotation::Optional { inner, .. } => {
                 let inner_ty = self.resolve_type_annotation(inner);
                 NyType::Optional(Box::new(inner_ty))
@@ -475,10 +491,7 @@ impl<'ctx> CodeGen<'ctx> {
         let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
         let mut field_types: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()]; // tag
         for i in 0..max_fields {
-            let candidates: Vec<&NyType> = variants
-                .iter()
-                .filter_map(|(_, p)| p.get(i))
-                .collect();
+            let candidates: Vec<&NyType> = variants.iter().filter_map(|(_, p)| p.get(i)).collect();
             if candidates.is_empty() {
                 field_types.push(self.context.i32_type().into());
             } else {
@@ -605,14 +618,22 @@ impl<'ctx> CodeGen<'ctx> {
                     } = method
                     {
                         let qualified_name = format!("{}_{}", type_name, name);
-                        impl_methods.push((qualified_name.clone(), params, return_type, body, *span));
+                        impl_methods.push((
+                            qualified_name.clone(),
+                            params,
+                            return_type,
+                            body,
+                            *span,
+                        ));
                         method_names.push((name.clone(), qualified_name));
                     }
                 }
                 // Track trait implementations for vtable generation
                 if let Some(tname) = trait_name {
-                    let qualified_names: Vec<String> = method_names.iter().map(|(_, q)| q.clone()).collect();
-                    self.trait_impls.insert((tname.clone(), type_name.clone()), qualified_names);
+                    let qualified_names: Vec<String> =
+                        method_names.iter().map(|(_, q)| q.clone()).collect();
+                    self.trait_impls
+                        .insert((tname.clone(), type_name.clone()), qualified_names);
                 }
             }
         }
@@ -671,7 +692,11 @@ impl<'ctx> CodeGen<'ctx> {
                     let wrapper_fn = self.module.add_function(name, wrapper_type, None);
                     self.functions.insert(
                         name.clone(),
-                        (wrapper_fn, param_types.clone(), NyType::Future(Box::new(ret_ty.clone()))),
+                        (
+                            wrapper_fn,
+                            param_types.clone(),
+                            NyType::Future(Box::new(ret_ty.clone())),
+                        ),
                     );
 
                     // Also declare the body function (private)
@@ -681,10 +706,8 @@ impl<'ctx> CodeGen<'ctx> {
                         ty => ny_to_llvm(self.context, ty).fn_type(&param_meta, false),
                     };
                     let body_fn = self.module.add_function(&body_name, body_type, None);
-                    self.functions.insert(
-                        body_name,
-                        (body_fn, param_types, ret_ty),
-                    );
+                    self.functions
+                        .insert(body_name, (body_fn, param_types, ret_ty));
                 } else {
                     let fn_type = match &ret_ty {
                         NyType::Unit => self.context.void_type().fn_type(&param_meta, false),
@@ -707,7 +730,11 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // For each method, create a thunk that takes (*u8, args...) -> ret
                 // and loads the concrete struct before forwarding to the real method
-                let struct_fields = self.struct_types.get(type_name).cloned().unwrap_or_default();
+                let struct_fields = self
+                    .struct_types
+                    .get(type_name)
+                    .cloned()
+                    .unwrap_or_default();
                 let struct_ty = self.get_or_create_llvm_struct_type(type_name, &struct_fields);
 
                 let mut thunk_ptrs: Vec<inkwell::values::PointerValue> = Vec::new();
@@ -717,7 +744,8 @@ impl<'ctx> CodeGen<'ctx> {
                     let qualified = format!("{}_{}", type_name, method_name);
                     if let Some((real_fn, _, _)) = self.functions.get(&qualified).cloned() {
                         // Build thunk signature: (*u8, non-self params...) -> ret
-                        let mut thunk_params: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_ty.into()];
+                        let mut thunk_params: Vec<inkwell::types::BasicMetadataTypeEnum> =
+                            vec![ptr_ty.into()];
                         for pt in param_types.iter().skip(1) {
                             thunk_params.push(ny_to_llvm(self.context, pt).into());
                         }
@@ -734,15 +762,22 @@ impl<'ctx> CodeGen<'ctx> {
 
                         // Load concrete struct from data pointer
                         let data_ptr = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
-                        let struct_val = self.builder.build_load(struct_ty, data_ptr, "self_val").unwrap();
+                        let struct_val = self
+                            .builder
+                            .build_load(struct_ty, data_ptr, "self_val")
+                            .unwrap();
 
                         // Build call args: loaded struct + forwarded params
-                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = vec![struct_val.into()];
+                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                            vec![struct_val.into()];
                         for i in 1..thunk_fn.count_params() {
                             call_args.push(thunk_fn.get_nth_param(i).unwrap().into());
                         }
 
-                        let call = self.builder.build_call(real_fn, &call_args, "thunk_call").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(real_fn, &call_args, "thunk_call")
+                            .unwrap();
                         if *ret_ty == NyType::Unit {
                             self.builder.build_return(None).unwrap();
                         } else {
@@ -812,7 +847,11 @@ impl<'ctx> CodeGen<'ctx> {
         // Pass 2b: Compile function bodies
         for item in &program.items {
             if let Item::FunctionDef {
-                name, params, body, is_async, ..
+                name,
+                params,
+                body,
+                is_async,
+                ..
             } = item
             {
                 // For async functions, compile the body as _body, then emit the wrapper
@@ -849,13 +888,21 @@ impl<'ctx> CodeGen<'ctx> {
                     let atexit = self.get_or_declare_atexit();
                     let gc_shutdown = self.get_or_declare_ny_gc_shutdown();
                     self.builder
-                        .build_call(atexit, &[gc_shutdown.as_global_value().as_pointer_value().into()], "")
+                        .build_call(
+                            atexit,
+                            &[gc_shutdown.as_global_value().as_pointer_value().into()],
+                            "",
+                        )
                         .unwrap();
                     // Register async pool shutdown (waits for goroutines before GC runs)
                     // atexit is LIFO: registered after gc_shutdown → runs before gc_shutdown
                     let async_shutdown = self.get_or_declare_ny_async_pool_shutdown();
                     self.builder
-                        .build_call(atexit, &[async_shutdown.as_global_value().as_pointer_value().into()], "")
+                        .build_call(
+                            atexit,
+                            &[async_shutdown.as_global_value().as_pointer_value().into()],
+                            "",
+                        )
                         .unwrap();
                 }
 

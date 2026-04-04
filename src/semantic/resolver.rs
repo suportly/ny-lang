@@ -126,7 +126,10 @@ impl Resolver {
                     }
                 }
                 // Check HashMap<K,V>
-                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(inner) = name
+                    .strip_prefix("HashMap<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
                     if let Some(comma) = inner.find(',') {
                         let k_str = inner[..comma].trim();
                         let v_str = inner[comma + 1..].trim();
@@ -664,7 +667,9 @@ impl Resolver {
                                 continue; // skip the resolve_expr below
                             }
                         }
-                        Pattern::IntLit(_, _) | Pattern::Wildcard(_) | Pattern::OptionalBind { .. } => {
+                        Pattern::IntLit(_, _)
+                        | Pattern::Wildcard(_)
+                        | Pattern::OptionalBind { .. } => {
                             // Nothing to resolve in match context
                         }
                     }
@@ -923,12 +928,15 @@ impl Resolver {
                     self.pop_scope();
                 } else if let Pattern::OptionalBind { name, span: pspan } = pattern {
                     self.push_scope();
-                    self.declare(name, Symbol {
-                        name: name.clone(),
-                        ty: NyType::Pointer(Box::new(NyType::U8)),
-                        mutability: Mutability::Immutable,
-                        span: *pspan,
-                    });
+                    self.declare(
+                        name,
+                        Symbol {
+                            name: name.clone(),
+                            ty: NyType::Pointer(Box::new(NyType::U8)),
+                            mutability: Mutability::Immutable,
+                            span: *pspan,
+                        },
+                    );
                     self.resolve_expr(then_body);
                     self.pop_scope();
                 } else {
@@ -948,11 +956,34 @@ impl Resolver {
                 self.resolve_expr(body);
                 self.loop_depth -= 1;
             }
-            Stmt::ForMap { key_var, val_var, map_expr, body, span, .. } => {
+            Stmt::ForMap {
+                key_var,
+                val_var,
+                map_expr,
+                body,
+                span,
+                ..
+            } => {
                 self.resolve_expr(map_expr);
                 self.push_scope();
-                self.declare(key_var, Symbol { name: key_var.clone(), ty: NyType::Str, mutability: Mutability::Immutable, span: *span });
-                self.declare(val_var, Symbol { name: val_var.clone(), ty: NyType::I32, mutability: Mutability::Immutable, span: *span });
+                self.declare(
+                    key_var,
+                    Symbol {
+                        name: key_var.clone(),
+                        ty: NyType::Str,
+                        mutability: Mutability::Immutable,
+                        span: *span,
+                    },
+                );
+                self.declare(
+                    val_var,
+                    Symbol {
+                        name: val_var.clone(),
+                        ty: NyType::I32,
+                        mutability: Mutability::Immutable,
+                        span: *span,
+                    },
+                );
                 self.resolve_expr(body);
                 self.pop_scope();
             }
@@ -960,7 +991,15 @@ impl Resolver {
                 for arm in arms {
                     self.resolve_expr(&arm.channel);
                     self.push_scope();
-                    self.declare(&arm.var, Symbol { name: arm.var.clone(), ty: NyType::I32, mutability: Mutability::Immutable, span: arm.span });
+                    self.declare(
+                        &arm.var,
+                        Symbol {
+                            name: arm.var.clone(),
+                            ty: NyType::I32,
+                            mutability: Mutability::Immutable,
+                            span: arm.span,
+                        },
+                    );
                     self.resolve_expr(&arm.body);
                     self.pop_scope();
                 }

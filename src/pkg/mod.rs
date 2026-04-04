@@ -84,8 +84,8 @@ impl Manifest {
 
     pub fn save(&self, project_root: &Path) -> Result<(), PkgError> {
         let path = project_root.join(MANIFEST_FILE);
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| PkgError::ParseError(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| PkgError::ParseError(e.to_string()))?;
         std::fs::write(&path, format!("{}\n", json))?;
         Ok(())
     }

@@ -268,7 +268,11 @@ fn format_item(out: &mut String, item: &Item, depth: usize, f: &mut Fmt) {
         }
         Item::TypeAlias { name, target, .. } => {
             indent(out, depth);
-            out.push_str(&format!("type {} = {};\n", name, format_type_annotation(target)));
+            out.push_str(&format!(
+                "type {} = {};\n",
+                name,
+                format_type_annotation(target)
+            ));
         }
         Item::ImplBlock {
             type_name,
@@ -361,7 +365,11 @@ fn format_type_annotation(ty: &TypeAnnotation) -> String {
         TypeAnnotation::Slice { elem, .. } => format!("[]{}", format_type_annotation(elem)),
         TypeAnnotation::Function { params, ret, .. } => {
             let ptypes: Vec<String> = params.iter().map(|p| format_type_annotation(p)).collect();
-            format!("fn({}) -> {}", ptypes.join(", "), format_type_annotation(ret))
+            format!(
+                "fn({}) -> {}",
+                ptypes.join(", "),
+                format_type_annotation(ret)
+            )
         }
         TypeAnnotation::DynTrait { trait_name, .. } => format!("dyn {}", trait_name),
         TypeAnnotation::Optional { inner, .. } => format!("?{}", format_type_annotation(inner)),
@@ -814,7 +822,13 @@ fn format_stmt_inner(out: &mut String, stmt: &Stmt, depth: usize, f: Option<&mut
             format_expr(out, body, depth);
             out.push('\n');
         }
-        Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+        Stmt::ForMap {
+            key_var,
+            val_var,
+            map_expr,
+            body,
+            ..
+        } => {
             indent(out, depth);
             out.push_str(&format!("for {}, {} in ", key_var, val_var));
             format_expr(out, map_expr, depth);
@@ -883,7 +897,10 @@ fn format_assign_target(out: &mut String, target: &AssignTarget, depth: usize) {
 }
 
 /// Detect compound assignment: `x = x op expr` → returns (op_str, expr)
-fn detect_compound_assign<'a>(target: &AssignTarget, value: &'a Expr) -> Option<(&'static str, &'a Expr)> {
+fn detect_compound_assign<'a>(
+    target: &AssignTarget,
+    value: &'a Expr,
+) -> Option<(&'static str, &'a Expr)> {
     let target_name = match target {
         AssignTarget::Var(name) => name.as_str(),
         _ => return None,

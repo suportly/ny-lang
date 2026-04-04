@@ -323,7 +323,10 @@ impl Parser {
             TokenKind::Fn => {
                 let mut item = self.parse_function()?;
                 if is_async {
-                    if let Item::FunctionDef { ref mut is_async, .. } = item {
+                    if let Item::FunctionDef {
+                        ref mut is_async, ..
+                    } = item
+                    {
                         *is_async = true;
                     }
                 }
@@ -340,7 +343,11 @@ impl Parser {
                 let target = self.parse_type_annotation()?;
                 let end = self.peek_span();
                 self.expect(&TokenKind::Semi)?;
-                Ok(Item::TypeAlias { name, target, span: start.merge(end) })
+                Ok(Item::TypeAlias {
+                    name,
+                    target,
+                    span: start.merge(end),
+                })
             }
             TokenKind::Use => self.parse_use_decl(),
             TokenKind::Extern => self.parse_extern_block(),
@@ -1814,7 +1821,9 @@ impl Parser {
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 // Lookahead: if NOT followed by ::, this is an OptionalBind
-                if self.pos + 1 < self.tokens.len() && self.tokens[self.pos + 1].kind != TokenKind::ColonColon {
+                if self.pos + 1 < self.tokens.len()
+                    && self.tokens[self.pos + 1].kind != TokenKind::ColonColon
+                {
                     let span = self.advance().span;
                     return Ok(Pattern::OptionalBind { name, span });
                 }

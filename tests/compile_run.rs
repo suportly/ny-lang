@@ -529,7 +529,11 @@ fn test_example_word_count() {
     assert_eq!(code, 0);
     assert!(stdout.contains("Lines: 3"), "stdout: {}", stdout);
     assert!(stdout.contains("Words: 25"), "stdout: {}", stdout);
-    assert!(stdout.contains("Word length distribution:"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("Word length distribution:"),
+        "stdout: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -619,7 +623,11 @@ fn test_example_csv_parser() {
 fn test_example_fibonacci_bench() {
     let (code, stdout) = compile_and_run_example("examples/fibonacci_bench.ny");
     assert_eq!(code, 0);
-    assert!(stdout.contains("fibonacci(35) = 9227465"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("fibonacci(35) = 9227465"),
+        "stdout: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -742,7 +750,11 @@ fn test_example_todo_app() {
     let (code, stdout) = compile_and_run_example("examples/todo_app.ny");
     assert_eq!(code, 0);
     assert!(stdout.contains("All Todos"), "stdout: {}", stdout);
-    assert!(stdout.contains("[x] #0: Build compiler"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("[x] #0: Build compiler"),
+        "stdout: {}",
+        stdout
+    );
     assert!(stdout.contains("Completed: 2/5"), "stdout: {}", stdout);
     assert!(stdout.contains("ny-todo v1"), "stdout: {}", stdout);
     assert!(stdout.contains("contains 'test'"), "stdout: {}", stdout);
@@ -761,7 +773,11 @@ fn test_example_functional() {
     let (code, stdout) = compile_and_run_example("examples/functional.ny");
     assert_eq!(code, 0);
     assert!(stdout.contains("Sum of 1..10 = 55"), "stdout: {}", stdout);
-    assert!(stdout.contains("Sum of even squares = 220"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("Sum of even squares = 220"),
+        "stdout: {}",
+        stdout
+    );
 }
 
 // Phase 26 — GC
@@ -886,6 +902,7 @@ fn test_optional_negative() {
         .arg(&output);
     cmd.assert()
         .failure()
-        .stderr(predicates::prelude::predicate::str::contains("cannot access field"));
+        .stderr(predicates::prelude::predicate::str::contains(
+            "cannot access field",
+        ));
 }
-

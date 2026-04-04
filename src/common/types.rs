@@ -232,7 +232,9 @@ impl NyType {
                     return None;
                 }
                 // Check for HashMap<K,V> pattern
-                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>'))
+                if let Some(inner) = name
+                    .strip_prefix("HashMap<")
+                    .and_then(|s| s.strip_suffix('>'))
                 {
                     if let Some(comma) = inner.find(',') {
                         let key_str = inner[..comma].trim();

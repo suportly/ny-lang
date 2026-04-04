@@ -127,7 +127,9 @@ fn test_undefined_function() {
     compile_invalid("undefined_function.ny")
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("undeclared function 'does_not_exist'"));
+        .stderr(predicate::str::contains(
+            "undeclared function 'does_not_exist'",
+        ));
 }
 
 #[test]

@@ -79,7 +79,9 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
         | Expr::Deref { operand, .. }
         | Expr::Cast { expr: operand, .. }
         | Expr::Try { operand, .. }
-        | Expr::Await { future: operand, .. }
+        | Expr::Await {
+            future: operand, ..
+        }
         | Expr::Go { call: operand, .. }
         | Expr::NullCoalesce { value: operand, .. } => {
             find_free_vars_inner(operand, bound, free);
@@ -113,9 +115,7 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
             find_free_vars_inner(start, bound, free);
             find_free_vars_inner(end, bound, free);
         }
-        Expr::Lambda {
-            params, body, ..
-        } => {
+        Expr::Lambda { params, body, .. } => {
             // Nested lambda params become bound within its body
             let mut inner_bound: Vec<String> = bound.to_vec();
             for p in params {
@@ -144,7 +144,9 @@ fn find_free_vars_in_stmts(stmts: &[Stmt], bound: &[String], free: &mut Vec<Stri
                     find_free_vars_inner(v, bound, free);
                 }
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 find_free_vars_inner(condition, bound, free);
                 find_free_vars_inner(body, bound, free);
             }
@@ -198,7 +200,13 @@ fn find_free_vars_in_stmts(stmts: &[Stmt], bound: &[String], free: &mut Vec<Stri
                 find_free_vars_inner(body, bound, free);
             }
             Stmt::Break { .. } | Stmt::Continue { .. } => {}
-            Stmt::ForMap { map_expr, body, key_var, val_var, .. } => {
+            Stmt::ForMap {
+                map_expr,
+                body,
+                key_var,
+                val_var,
+                ..
+            } => {
                 find_free_vars_inner(map_expr, bound, free);
                 let mut loop_bound: Vec<String> = bound.to_vec();
                 loop_bound.push(key_var.clone());
@@ -277,7 +285,10 @@ impl<'ctx> CodeGen<'ctx> {
                     Ok(Some(str_val))
                 }
                 LitValue::Nil => {
-                    let null_ptr = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
+                    let null_ptr = self
+                        .context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .const_null();
                     Ok(Some(null_ptr.into()))
                 }
             },
@@ -378,14 +389,9 @@ impl<'ctx> CodeGen<'ctx> {
                         .into_pointer_value();
 
                     // Null check: if malloc returned NULL, panic
-                    let is_null = self
-                        .builder
-                        .build_is_null(ptr, "alloc_null")
-                        .unwrap();
-                    let panic_bb =
-                        self.context.append_basic_block(*function, "alloc_panic");
-                    let ok_bb =
-                        self.context.append_basic_block(*function, "alloc_ok");
+                    let is_null = self.builder.build_is_null(ptr, "alloc_null").unwrap();
+                    let panic_bb = self.context.append_basic_block(*function, "alloc_panic");
+                    let ok_bb = self.context.append_basic_block(*function, "alloc_ok");
                     self.builder
                         .build_conditional_branch(is_null, panic_bb, ok_bb)
                         .unwrap();
@@ -403,10 +409,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let fprintf_fn = self.get_or_declare_fprintf();
                     let msg = self
                         .builder
-                        .build_global_string_ptr(
-                            "panic: alloc failed (out of memory)\n",
-                            "oom_msg",
-                        )
+                        .build_global_string_ptr("panic: alloc failed (out of memory)\n", "oom_msg")
                         .unwrap();
                     self.builder
                         .build_call(
@@ -419,7 +422,11 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_call(trace_print, &[], "").unwrap();
                     let exit_fn = self.get_or_declare_exit();
                     self.builder
-                        .build_call(exit_fn, &[self.context.i32_type().const_int(1, false).into()], "")
+                        .build_call(
+                            exit_fn,
+                            &[self.context.i32_type().const_int(1, false).into()],
+                            "",
+                        )
                         .unwrap();
                     self.builder.build_unreachable().unwrap();
 
@@ -467,18 +474,14 @@ impl<'ctx> CodeGen<'ctx> {
                 // Handle gc_collect() — trigger GC collection
                 if callee == "gc_collect" {
                     let gc_collect_fn = self.get_or_declare_ny_gc_collect();
-                    self.builder
-                        .build_call(gc_collect_fn, &[], "")
-                        .unwrap();
+                    self.builder.build_call(gc_collect_fn, &[], "").unwrap();
                     return Ok(None);
                 }
 
                 // Handle gc_stats() — print GC stats
                 if callee == "gc_stats" {
                     let gc_stats_fn = self.get_or_declare_ny_gc_stats();
-                    self.builder
-                        .build_call(gc_stats_fn, &[], "")
-                        .unwrap();
+                    self.builder.build_call(gc_stats_fn, &[], "").unwrap();
                     return Ok(None);
                 }
 
@@ -512,16 +515,26 @@ impl<'ctx> CodeGen<'ctx> {
                 if callee == "error_new" {
                     let msg_val = self.compile_expr(&args[0], function)?.unwrap();
                     let msg_struct = msg_val.into_struct_value();
-                    let msg_ptr = self.builder.build_extract_value(msg_struct, 0, "err_ptr").unwrap();
-                    let msg_len = self.builder.build_extract_value(msg_struct, 1, "err_len").unwrap();
+                    let msg_ptr = self
+                        .builder
+                        .build_extract_value(msg_struct, 0, "err_ptr")
+                        .unwrap();
+                    let msg_len = self
+                        .builder
+                        .build_extract_value(msg_struct, 1, "err_len")
+                        .unwrap();
                     let error_new_fn = self.get_or_declare_c_fn(
                         "ny_error_new",
                         self.context.i32_type().fn_type(
-                            &[self.context.ptr_type(AddressSpace::default()).into(), self.context.i64_type().into()],
+                            &[
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                                self.context.i64_type().into(),
+                            ],
                             false,
                         ),
                     );
-                    let code = self.builder
+                    let code = self
+                        .builder
                         .build_call(error_new_fn, &[msg_ptr.into(), msg_len.into()], "err_code")
                         .unwrap()
                         .try_as_basic_value()
@@ -533,45 +546,88 @@ impl<'ctx> CodeGen<'ctx> {
                 // Handle error_message(code) -> str
                 if callee == "error_message" {
                     let code_val = self.compile_expr(&args[0], function)?.unwrap();
-                    let out_len_alloca = self.builder.build_alloca(self.context.i64_type(), "emsg_len").unwrap();
+                    let out_len_alloca = self
+                        .builder
+                        .build_alloca(self.context.i64_type(), "emsg_len")
+                        .unwrap();
                     let error_msg_fn = self.get_or_declare_c_fn(
                         "ny_error_message",
                         self.context.ptr_type(AddressSpace::default()).fn_type(
-                            &[self.context.i32_type().into(), self.context.ptr_type(AddressSpace::default()).into()],
+                            &[
+                                self.context.i32_type().into(),
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                            ],
                             false,
                         ),
                     );
-                    let msg_ptr = self.builder
-                        .build_call(error_msg_fn, &[code_val.into(), out_len_alloca.into()], "emsg_ptr")
+                    let msg_ptr = self
+                        .builder
+                        .build_call(
+                            error_msg_fn,
+                            &[code_val.into(), out_len_alloca.into()],
+                            "emsg_ptr",
+                        )
                         .unwrap()
                         .try_as_basic_value()
                         .basic()
                         .unwrap();
-                    let msg_len = self.builder.build_load(self.context.i64_type(), out_len_alloca, "emsg_len_v").unwrap();
+                    let msg_len = self
+                        .builder
+                        .build_load(self.context.i64_type(), out_len_alloca, "emsg_len_v")
+                        .unwrap();
                     let str_ty = super::types::str_type(self.context);
-                    let s0 = self.builder.build_insert_value(str_ty.get_undef(), msg_ptr, 0, "es_p").unwrap();
-                    let s1 = self.builder.build_insert_value(s0.into_struct_value(), msg_len, 1, "es_l").unwrap();
+                    let s0 = self
+                        .builder
+                        .build_insert_value(str_ty.get_undef(), msg_ptr, 0, "es_p")
+                        .unwrap();
+                    let s1 = self
+                        .builder
+                        .build_insert_value(s0.into_struct_value(), msg_len, 1, "es_l")
+                        .unwrap();
                     return Ok(Some(s1.into_struct_value().into()));
                 }
 
                 // Handle error_trace(code) -> str
                 if callee == "error_trace" {
                     let code_val = self.compile_expr(&args[0], function)?.unwrap();
-                    let out_len_alloca = self.builder.build_alloca(self.context.i64_type(), "etrace_len").unwrap();
+                    let out_len_alloca = self
+                        .builder
+                        .build_alloca(self.context.i64_type(), "etrace_len")
+                        .unwrap();
                     let error_trace_fn = self.get_or_declare_c_fn(
                         "ny_error_trace",
                         self.context.ptr_type(AddressSpace::default()).fn_type(
-                            &[self.context.i32_type().into(), self.context.ptr_type(AddressSpace::default()).into()],
+                            &[
+                                self.context.i32_type().into(),
+                                self.context.ptr_type(AddressSpace::default()).into(),
+                            ],
                             false,
                         ),
                     );
-                    let trace_ptr = self.builder
-                        .build_call(error_trace_fn, &[code_val.into(), out_len_alloca.into()], "etrace_ptr")
-                        .unwrap().try_as_basic_value().basic().unwrap();
-                    let trace_len = self.builder.build_load(self.context.i64_type(), out_len_alloca, "etrace_len_v").unwrap();
+                    let trace_ptr = self
+                        .builder
+                        .build_call(
+                            error_trace_fn,
+                            &[code_val.into(), out_len_alloca.into()],
+                            "etrace_ptr",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let trace_len = self
+                        .builder
+                        .build_load(self.context.i64_type(), out_len_alloca, "etrace_len_v")
+                        .unwrap();
                     let str_ty = super::types::str_type(self.context);
-                    let s0 = self.builder.build_insert_value(str_ty.get_undef(), trace_ptr, 0, "et_p").unwrap();
-                    let s1 = self.builder.build_insert_value(s0.into_struct_value(), trace_len, 1, "et_l").unwrap();
+                    let s0 = self
+                        .builder
+                        .build_insert_value(str_ty.get_undef(), trace_ptr, 0, "et_p")
+                        .unwrap();
+                    let s1 = self
+                        .builder
+                        .build_insert_value(s0.into_struct_value(), trace_len, 1, "et_l")
+                        .unwrap();
                     return Ok(Some(s1.into_struct_value().into()));
                 }
 
@@ -580,7 +636,11 @@ impl<'ctx> CodeGen<'ctx> {
                     let cap_val = self.compile_expr(&args[0], function)?.unwrap();
                     let cap_i32 = self
                         .builder
-                        .build_int_cast(cap_val.into_int_value(), self.context.i32_type(), "chan_cap")
+                        .build_int_cast(
+                            cap_val.into_int_value(),
+                            self.context.i32_type(),
+                            "chan_cap",
+                        )
                         .unwrap();
                     // Default elem_size = 8 (i64 / pointer sized)
                     // Will be corrected by VarDecl handler based on declared type
@@ -948,9 +1008,10 @@ impl<'ctx> CodeGen<'ctx> {
                         if val.is_int_value() {
                             let iv = val.into_int_value();
                             if iv.get_type().get_bit_width() < 64 {
-                                let ext = self.builder.build_int_s_extend(
-                                    iv, self.context.i64_type(), "t_ext"
-                                ).unwrap();
+                                let ext = self
+                                    .builder
+                                    .build_int_s_extend(iv, self.context.i64_type(), "t_ext")
+                                    .unwrap();
                                 call_args.push(ext.into());
                             } else {
                                 call_args.push(iv.into());
@@ -971,82 +1032,165 @@ impl<'ctx> CodeGen<'ctx> {
                     // Use 16 bytes as default val_size (covers str {ptr,len}, i64, f64)
                     let val_size = self.context.i64_type().const_int(16, false);
                     let fn_val = self.get_or_declare_ny_hmap_new();
-                    let ptr = self.builder.build_call(fn_val, &[val_size.into()], "hmap_ptr").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let ptr = self
+                        .builder
+                        .build_call(fn_val, &[val_size.into()], "hmap_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
 
                 // === String→String Map (smap) ===
                 if callee == "smap_new" {
                     let fn_val = self.get_or_declare_ny_smap_new();
-                    let ptr = self.builder.build_call(fn_val, &[], "smap_ptr").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let ptr = self
+                        .builder
+                        .build_call(fn_val, &[], "smap_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(ptr));
                 }
                 if callee == "smap_insert" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let val_val = self.compile_expr(&args[2], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "si_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "si_kl").unwrap();
-                    let vp = self.builder.build_extract_value(val_val, 0, "si_vp").unwrap();
-                    let vl = self.builder.build_extract_value(val_val, 1, "si_vl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let val_val = self
+                        .compile_expr(&args[2], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "si_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "si_kl")
+                        .unwrap();
+                    let vp = self
+                        .builder
+                        .build_extract_value(val_val, 0, "si_vp")
+                        .unwrap();
+                    let vl = self
+                        .builder
+                        .build_extract_value(val_val, 1, "si_vl")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_smap_insert();
-                    self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), vp.into(), vl.into()], "").unwrap();
+                    self.builder
+                        .build_call(
+                            fn_val,
+                            &[map_ptr.into(), kp.into(), kl.into(), vp.into(), vl.into()],
+                            "",
+                        )
+                        .unwrap();
                     return Ok(None);
                 }
                 if callee == "smap_get" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "sg_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "sg_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "sg_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "sg_kl")
+                        .unwrap();
                     let i64_ty = self.context.i64_type();
                     let out_len = self.builder.build_alloca(i64_ty, "sg_ol").unwrap();
                     let fn_val = self.get_or_declare_ny_smap_get();
-                    let ptr = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), out_len.into()], "sg_r").unwrap()
-                        .try_as_basic_value().basic().unwrap().into_pointer_value();
-                    let len = self.builder.build_load(i64_ty, out_len, "sg_rl").unwrap().into_int_value();
+                    let ptr = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[map_ptr.into(), kp.into(), kl.into(), out_len.into()],
+                            "sg_r",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let len = self
+                        .builder
+                        .build_load(i64_ty, out_len, "sg_rl")
+                        .unwrap()
+                        .into_int_value();
                     let str_ty = str_type(self.context);
                     let result = str_ty.const_zero();
-                    let result = self.builder.build_insert_value(result, ptr, 0, "sg_sp").unwrap();
-                    let result = self.builder.build_insert_value(result, len, 1, "sg_sl").unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, ptr, 0, "sg_sp")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, len, 1, "sg_sl")
+                        .unwrap();
                     return Ok(Some(result.into_struct_value().into()));
                 }
                 if callee == "smap_contains" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "sc_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "sc_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "sc_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "sc_kl")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_smap_contains();
-                    let result = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "sc_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "sc_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "smap_len" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
                     let fn_val = self.get_or_declare_ny_smap_len();
-                    let result = self.builder.build_call(fn_val, &[map_ptr.into()], "sl_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[map_ptr.into()], "sl_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "smap_free" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
                     let fn_val = self.get_or_declare_ny_smap_free();
-                    self.builder.build_call(fn_val, &[map_ptr.into()], "").unwrap();
+                    self.builder
+                        .build_call(fn_val, &[map_ptr.into()], "")
+                        .unwrap();
                     return Ok(None);
                 }
 
                 // map_key_at(m, index) -> str
                 if callee == "map_key_at" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
-                    let idx_val = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let idx_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_int_value();
                     let idx_i64 = self
                         .builder
-                        .build_int_z_extend_or_bit_cast(
-                            idx_val,
-                            self.context.i64_type(),
-                            "mka_idx",
-                        )
+                        .build_int_z_extend_or_bit_cast(idx_val, self.context.i64_type(), "mka_idx")
                         .unwrap();
                     let i64_ty = self.context.i64_type();
                     let out_len_ptr = self.builder.build_alloca(i64_ty, "mka_olp").unwrap();
@@ -1839,10 +1983,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
 
                     let i64_ty = self.context.i64_type();
-                    let count_ptr = self
-                        .builder
-                        .build_alloca(i64_ty, "sp_count")
-                        .unwrap();
+                    let count_ptr = self.builder.build_alloca(i64_ty, "sp_count").unwrap();
 
                     let split_fn = self.get_or_declare_ny_str_split();
                     let _parts = self
@@ -1916,10 +2057,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
 
                     let i64_ty = self.context.i64_type();
-                    let count_ptr = self
-                        .builder
-                        .build_alloca(i64_ty, "sg_count")
-                        .unwrap();
+                    let count_ptr = self.builder.build_alloca(i64_ty, "sg_count").unwrap();
 
                     let split_fn = self.get_or_declare_ny_str_split();
                     let parts = self
@@ -2008,85 +2146,205 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // JSON builtins
                 if callee == "json_parse" {
-                    let str_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
-                    let ptr = self.builder.build_extract_value(str_val, 0, "jp_p").unwrap();
-                    let len = self.builder.build_extract_value(str_val, 1, "jp_l").unwrap();
+                    let str_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let ptr = self
+                        .builder
+                        .build_extract_value(str_val, 0, "jp_p")
+                        .unwrap();
+                    let len = self
+                        .builder
+                        .build_extract_value(str_val, 1, "jp_l")
+                        .unwrap();
                     let jp_fn = self.get_or_declare_ny_json_parse();
-                    let result = self.builder.build_call(jp_fn, &[ptr.into(), len.into()], "jp_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(jp_fn, &[ptr.into(), len.into()], "jp_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "json_type" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
                     let fn_val = self.get_or_declare_ny_json_type();
-                    let result = self.builder.build_call(fn_val, &[obj.into()], "jt_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[obj.into()], "jt_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "json_get_int" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "jgi_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "jgi_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "jgi_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "jgi_kl")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_json_get_int();
-                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgi_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgi_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     // Truncate i64 to i32
-                    let i32_val = self.builder.build_int_truncate(result.into_int_value(), self.context.i32_type(), "jgi_i32").unwrap();
+                    let i32_val = self
+                        .builder
+                        .build_int_truncate(
+                            result.into_int_value(),
+                            self.context.i32_type(),
+                            "jgi_i32",
+                        )
+                        .unwrap();
                     return Ok(Some(i32_val.into()));
                 }
                 if callee == "json_get_float" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "jgf_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "jgf_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "jgf_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "jgf_kl")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_json_get_float();
-                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgf_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgf_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "json_get_str" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "jgs_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "jgs_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "jgs_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "jgs_kl")
+                        .unwrap();
                     let i64_ty = self.context.i64_type();
                     let out_len_ptr = self.builder.build_alloca(i64_ty, "jgs_olp").unwrap();
                     let fn_val = self.get_or_declare_ny_json_get_str();
-                    let buf = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into(), out_len_ptr.into()], "jgs_r").unwrap()
-                        .try_as_basic_value().basic().unwrap().into_pointer_value();
-                    let out_len = self.builder.build_load(i64_ty, out_len_ptr, "jgs_len").unwrap().into_int_value();
+                    let buf = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[obj.into(), kp.into(), kl.into(), out_len_ptr.into()],
+                            "jgs_r",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let out_len = self
+                        .builder
+                        .build_load(i64_ty, out_len_ptr, "jgs_len")
+                        .unwrap()
+                        .into_int_value();
                     let str_ty = str_type(self.context);
                     let result = str_ty.const_zero();
-                    let result = self.builder.build_insert_value(result, buf, 0, "jgs_sp").unwrap();
-                    let result = self.builder.build_insert_value(result, out_len, 1, "jgs_sl").unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, buf, 0, "jgs_sp")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, out_len, 1, "jgs_sl")
+                        .unwrap();
                     return Ok(Some(result.into_struct_value().into()));
                 }
                 if callee == "json_get_bool" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
-                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
-                    let kp = self.builder.build_extract_value(key_val, 0, "jgb_kp").unwrap();
-                    let kl = self.builder.build_extract_value(key_val, 1, "jgb_kl").unwrap();
+                    let key_val = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_struct_value();
+                    let kp = self
+                        .builder
+                        .build_extract_value(key_val, 0, "jgb_kp")
+                        .unwrap();
+                    let kl = self
+                        .builder
+                        .build_extract_value(key_val, 1, "jgb_kl")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_json_get_bool();
-                    let result = self.builder.build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgb_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[obj.into(), kp.into(), kl.into()], "jgb_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "json_len" {
                     let obj = self.compile_expr(&args[0], function)?.unwrap();
                     let fn_val = self.get_or_declare_ny_json_len();
-                    let result = self.builder.build_call(fn_val, &[obj.into()], "jl_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
-                    let i32_val = self.builder.build_int_truncate(result.into_int_value(), self.context.i32_type(), "jl_i32").unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[obj.into()], "jl_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let i32_val = self
+                        .builder
+                        .build_int_truncate(
+                            result.into_int_value(),
+                            self.context.i32_type(),
+                            "jl_i32",
+                        )
+                        .unwrap();
                     return Ok(Some(i32_val.into()));
                 }
                 if callee == "json_arr_get" {
                     let arr = self.compile_expr(&args[0], function)?.unwrap();
-                    let idx = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
-                    let idx_i64 = self.builder.build_int_z_extend_or_bit_cast(idx, self.context.i64_type(), "ja_idx").unwrap();
+                    let idx = self
+                        .compile_expr(&args[1], function)?
+                        .unwrap()
+                        .into_int_value();
+                    let idx_i64 = self
+                        .builder
+                        .build_int_z_extend_or_bit_cast(idx, self.context.i64_type(), "ja_idx")
+                        .unwrap();
                     let fn_val = self.get_or_declare_ny_json_arr_get();
-                    let result = self.builder.build_call(fn_val, &[arr.into(), idx_i64.into()], "ja_r").unwrap()
-                        .try_as_basic_value().basic().unwrap();
+                    let result = self
+                        .builder
+                        .build_call(fn_val, &[arr.into(), idx_i64.into()], "ja_r")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
                     return Ok(Some(result));
                 }
                 if callee == "json_free" {
@@ -2102,8 +2360,14 @@ impl<'ctx> CodeGen<'ctx> {
                         .compile_expr(&args[0], function)?
                         .unwrap()
                         .into_struct_value();
-                    let pp = self.builder.build_extract_value(path_val, 0, "rmf_pp").unwrap();
-                    let pl = self.builder.build_extract_value(path_val, 1, "rmf_pl").unwrap();
+                    let pp = self
+                        .builder
+                        .build_extract_value(path_val, 0, "rmf_pp")
+                        .unwrap();
+                    let pl = self
+                        .builder
+                        .build_extract_value(path_val, 1, "rmf_pl")
+                        .unwrap();
                     let rmf_fn = self.get_or_declare_ny_remove_file();
                     let result = self
                         .builder
@@ -2172,18 +2436,26 @@ impl<'ctx> CodeGen<'ctx> {
                         .compile_expr(&args[1], function)?
                         .unwrap()
                         .into_struct_value();
-                    let pp = self.builder.build_extract_value(path_val, 0, "wf_pp").unwrap();
-                    let pl = self.builder.build_extract_value(path_val, 1, "wf_pl").unwrap();
-                    let dp = self.builder.build_extract_value(data_val, 0, "wf_dp").unwrap();
-                    let dl = self.builder.build_extract_value(data_val, 1, "wf_dl").unwrap();
+                    let pp = self
+                        .builder
+                        .build_extract_value(path_val, 0, "wf_pp")
+                        .unwrap();
+                    let pl = self
+                        .builder
+                        .build_extract_value(path_val, 1, "wf_pl")
+                        .unwrap();
+                    let dp = self
+                        .builder
+                        .build_extract_value(data_val, 0, "wf_dp")
+                        .unwrap();
+                    let dl = self
+                        .builder
+                        .build_extract_value(data_val, 1, "wf_dl")
+                        .unwrap();
                     let wf_fn = self.get_or_declare_ny_write_file();
                     let result = self
                         .builder
-                        .build_call(
-                            wf_fn,
-                            &[pp.into(), pl.into(), dp.into(), dl.into()],
-                            "wf_r",
-                        )
+                        .build_call(wf_fn, &[pp.into(), pl.into(), dp.into(), dl.into()], "wf_r")
                         .unwrap()
                         .try_as_basic_value()
                         .basic()
@@ -2199,7 +2471,9 @@ impl<'ctx> CodeGen<'ctx> {
                         .into_float_value();
                     let f64_ty = self.context.f64_type();
                     let val_f64 = if val.get_type() != f64_ty {
-                        self.builder.build_float_ext(val, f64_ty, "fts_ext").unwrap()
+                        self.builder
+                            .build_float_ext(val, f64_ty, "fts_ext")
+                            .unwrap()
                     } else {
                         val
                     };
@@ -2221,8 +2495,14 @@ impl<'ctx> CodeGen<'ctx> {
                         .into_int_value();
                     let str_ty = str_type(self.context);
                     let result = str_ty.const_zero();
-                    let result = self.builder.build_insert_value(result, buf, 0, "fts_p").unwrap();
-                    let result = self.builder.build_insert_value(result, out_len, 1, "fts_l").unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, buf, 0, "fts_p")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, out_len, 1, "fts_l")
+                        .unwrap();
                     return Ok(Some(result.into_struct_value().into()));
                 }
 
@@ -2232,8 +2512,14 @@ impl<'ctx> CodeGen<'ctx> {
                         .compile_expr(&args[0], function)?
                         .unwrap()
                         .into_struct_value();
-                    let ptr = self.builder.build_extract_value(str_val, 0, "stf_p").unwrap();
-                    let len = self.builder.build_extract_value(str_val, 1, "stf_l").unwrap();
+                    let ptr = self
+                        .builder
+                        .build_extract_value(str_val, 0, "stf_p")
+                        .unwrap();
+                    let len = self
+                        .builder
+                        .build_extract_value(str_val, 1, "stf_l")
+                        .unwrap();
                     let stf_fn = self.get_or_declare_ny_str_to_float();
                     let result = self
                         .builder
@@ -2256,9 +2542,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .into_float_value();
                     let f64_ty = self.context.f64_type();
                     let arg_f64 = if arg.get_type() != f64_ty {
-                        self.builder
-                            .build_float_ext(arg, f64_ty, "to_f64")
-                            .unwrap()
+                        self.builder.build_float_ext(arg, f64_ty, "to_f64").unwrap()
                     } else {
                         arg
                     };
@@ -2828,23 +3112,36 @@ impl<'ctx> CodeGen<'ctx> {
                         "send" => {
                             let val = self.compile_expr(&args[0], function)?.unwrap();
                             // Alloca a temporary, store the value, pass pointer to ny_chan_send
-                            let tmp = self.builder.build_alloca(elem_llvm, "chan_send_tmp").unwrap();
+                            let tmp = self
+                                .builder
+                                .build_alloca(elem_llvm, "chan_send_tmp")
+                                .unwrap();
                             self.builder.build_store(tmp, val).unwrap();
                             let send_fn = self.get_or_declare_ny_chan_send();
-                            self.builder.build_call(send_fn, &[ch_ptr.into(), tmp.into()], "").unwrap();
+                            self.builder
+                                .build_call(send_fn, &[ch_ptr.into(), tmp.into()], "")
+                                .unwrap();
                             return Ok(None);
                         }
                         "recv" => {
                             // Alloca a temporary, pass pointer to ny_chan_recv, load result
-                            let tmp = self.builder.build_alloca(elem_llvm, "chan_recv_tmp").unwrap();
+                            let tmp = self
+                                .builder
+                                .build_alloca(elem_llvm, "chan_recv_tmp")
+                                .unwrap();
                             let recv_fn = self.get_or_declare_ny_chan_recv();
-                            self.builder.build_call(recv_fn, &[ch_ptr.into(), tmp.into()], "").unwrap();
-                            let result = self.builder.build_load(elem_llvm, tmp, "chan_val").unwrap();
+                            self.builder
+                                .build_call(recv_fn, &[ch_ptr.into(), tmp.into()], "")
+                                .unwrap();
+                            let result =
+                                self.builder.build_load(elem_llvm, tmp, "chan_val").unwrap();
                             return Ok(Some(result));
                         }
                         "close" => {
                             let close_fn = self.get_or_declare_ny_chan_close();
-                            self.builder.build_call(close_fn, &[ch_ptr.into()], "").unwrap();
+                            self.builder
+                                .build_call(close_fn, &[ch_ptr.into()], "")
+                                .unwrap();
                             return Ok(None);
                         }
                         _ => {}
@@ -2860,59 +3157,124 @@ impl<'ctx> CodeGen<'ctx> {
                     match method.as_str() {
                         "insert" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
-                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
-                            let kp = self.builder.build_extract_value(key_val, 0, "hi_kp").unwrap();
-                            let kl = self.builder.build_extract_value(key_val, 1, "hi_kl").unwrap();
+                            let key_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let kp = self
+                                .builder
+                                .build_extract_value(key_val, 0, "hi_kp")
+                                .unwrap();
+                            let kl = self
+                                .builder
+                                .build_extract_value(key_val, 1, "hi_kl")
+                                .unwrap();
                             let val = self.compile_expr(&args[1], function)?.unwrap();
                             // Alloca 16-byte buffer, store value at start
                             let val_alloca = self.builder.build_alloca(buf_ty, "hi_buf").unwrap();
                             self.builder.build_store(val_alloca, val).unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_insert();
-                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), val_alloca.into()], "").unwrap();
+                            self.builder
+                                .build_call(
+                                    fn_val,
+                                    &[map_ptr.into(), kp.into(), kl.into(), val_alloca.into()],
+                                    "",
+                                )
+                                .unwrap();
                             return Ok(None);
                         }
                         "get" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
-                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
-                            let kp = self.builder.build_extract_value(key_val, 0, "hg_kp").unwrap();
-                            let kl = self.builder.build_extract_value(key_val, 1, "hg_kl").unwrap();
+                            let key_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let kp = self
+                                .builder
+                                .build_extract_value(key_val, 0, "hg_kp")
+                                .unwrap();
+                            let kl = self
+                                .builder
+                                .build_extract_value(key_val, 1, "hg_kl")
+                                .unwrap();
                             // Alloca 16-byte buffer, read value
                             let out_alloca = self.builder.build_alloca(buf_ty, "hg_buf").unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_get();
-                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), out_alloca.into()], "").unwrap();
-                            let result = self.builder.build_load(val_llvm, out_alloca, "hg_val").unwrap();
+                            self.builder
+                                .build_call(
+                                    fn_val,
+                                    &[map_ptr.into(), kp.into(), kl.into(), out_alloca.into()],
+                                    "",
+                                )
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_load(val_llvm, out_alloca, "hg_val")
+                                .unwrap();
                             return Ok(Some(result));
                         }
                         "contains" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
-                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
-                            let kp = self.builder.build_extract_value(key_val, 0, "hc_kp").unwrap();
-                            let kl = self.builder.build_extract_value(key_val, 1, "hc_kl").unwrap();
+                            let key_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let kp = self
+                                .builder
+                                .build_extract_value(key_val, 0, "hc_kp")
+                                .unwrap();
+                            let kl = self
+                                .builder
+                                .build_extract_value(key_val, 1, "hc_kl")
+                                .unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_contains();
-                            let result = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "hc_r").unwrap()
-                                .try_as_basic_value().basic().unwrap();
+                            let result = self
+                                .builder
+                                .build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "hc_r")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap();
                             return Ok(Some(result));
                         }
                         "len" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_len();
-                            let result = self.builder.build_call(fn_val, &[map_ptr.into()], "hl_r").unwrap()
-                                .try_as_basic_value().basic().unwrap();
+                            let result = self
+                                .builder
+                                .build_call(fn_val, &[map_ptr.into()], "hl_r")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap();
                             return Ok(Some(result));
                         }
                         "remove" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
-                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
-                            let kp = self.builder.build_extract_value(key_val, 0, "hr_kp").unwrap();
-                            let kl = self.builder.build_extract_value(key_val, 1, "hr_kl").unwrap();
+                            let key_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let kp = self
+                                .builder
+                                .build_extract_value(key_val, 0, "hr_kp")
+                                .unwrap();
+                            let kl = self
+                                .builder
+                                .build_extract_value(key_val, 1, "hr_kl")
+                                .unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_remove();
-                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "").unwrap();
+                            self.builder
+                                .build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "")
+                                .unwrap();
                             return Ok(None);
                         }
                         "free" => {
                             let map_ptr = self.compile_expr(object, function)?.unwrap();
                             let fn_val = self.get_or_declare_ny_hmap_free();
-                            self.builder.build_call(fn_val, &[map_ptr.into()], "").unwrap();
+                            self.builder
+                                .build_call(fn_val, &[map_ptr.into()], "")
+                                .unwrap();
                             return Ok(None);
                         }
                         _ => {}
@@ -3186,10 +3548,8 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Bounds check: len > 0 (use len-1 as index, check < len)
                             let one = self.context.i64_type().const_int(1, false);
-                            let last_idx = self
-                                .builder
-                                .build_int_sub(len, one, "last_idx")
-                                .unwrap();
+                            let last_idx =
+                                self.builder.build_int_sub(len, one, "last_idx").unwrap();
                             self.build_bounds_check(last_idx, len, function);
 
                             // Load data[len-1]
@@ -3209,10 +3569,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             // Decrement len
-                            let new_len = self
-                                .builder
-                                .build_int_sub(len, one, "pop_new_len")
-                                .unwrap();
+                            let new_len =
+                                self.builder.build_int_sub(len, one, "pop_new_len").unwrap();
                             self.builder.build_store(len_gep, new_len).unwrap();
 
                             return Ok(Some(val));
@@ -3265,18 +3623,14 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "rev_loop");
-                            let swap_bb =
-                                self.context.append_basic_block(*function, "rev_swap");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "rev_done");
+                            let loop_bb = self.context.append_basic_block(*function, "rev_loop");
+                            let swap_bb = self.context.append_basic_block(*function, "rev_swap");
+                            let done_bb = self.context.append_basic_block(*function, "rev_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "rev_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "rev_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -3298,36 +3652,24 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
                             let ptr_i = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[i_val], "rev_ptr_i",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "rev_ptr_i")
                                     .unwrap()
                             };
                             let ptr_j = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[j_val], "rev_ptr_j",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[j_val], "rev_ptr_j")
                                     .unwrap()
                             };
-                            let val_i = self
-                                .builder
-                                .build_load(elem_llvm, ptr_i, "rev_vi")
-                                .unwrap();
-                            let val_j = self
-                                .builder
-                                .build_load(elem_llvm, ptr_j, "rev_vj")
-                                .unwrap();
+                            let val_i =
+                                self.builder.build_load(elem_llvm, ptr_i, "rev_vi").unwrap();
+                            let val_j =
+                                self.builder.build_load(elem_llvm, ptr_j, "rev_vj").unwrap();
                             self.builder.build_store(ptr_i, val_j).unwrap();
                             self.builder.build_store(ptr_j, val_i).unwrap();
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "rev_next")
-                                .unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "rev_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, swap_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
                             return Ok(None);
@@ -3363,30 +3705,23 @@ impl<'ctx> CodeGen<'ctx> {
                             let one = i64_ty.const_int(1, false);
 
                             // Outer loop: for i in 0..len-1
-                            let outer_bb =
-                                self.context.append_basic_block(*function, "sort_outer");
-                            let inner_bb =
-                                self.context.append_basic_block(*function, "sort_inner");
-                            let cmp_bb =
-                                self.context.append_basic_block(*function, "sort_cmp");
-                            let swap_bb =
-                                self.context.append_basic_block(*function, "sort_swap");
+                            let outer_bb = self.context.append_basic_block(*function, "sort_outer");
+                            let inner_bb = self.context.append_basic_block(*function, "sort_inner");
+                            let cmp_bb = self.context.append_basic_block(*function, "sort_cmp");
+                            let swap_bb = self.context.append_basic_block(*function, "sort_swap");
                             let inner_inc_bb =
                                 self.context.append_basic_block(*function, "sort_inner_inc");
                             let outer_inc_bb =
                                 self.context.append_basic_block(*function, "sort_outer_inc");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "sort_done");
+                            let done_bb = self.context.append_basic_block(*function, "sort_done");
 
-                            let len_m1 =
-                                self.builder.build_int_sub(len, one, "len_m1").unwrap();
+                            let len_m1 = self.builder.build_int_sub(len, one, "len_m1").unwrap();
                             let pre_bb = self.builder.get_insert_block().unwrap();
                             self.builder.build_unconditional_branch(outer_bb).unwrap();
 
                             // Outer loop header
                             self.builder.position_at_end(outer_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "sort_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "sort_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let outer_cond = self
@@ -3399,8 +3734,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Inner loop header: for j in 0..len-1-i
                             self.builder.position_at_end(inner_bb);
-                            let j_phi =
-                                self.builder.build_phi(i64_ty, "sort_j").unwrap();
+                            let j_phi = self.builder.build_phi(i64_ty, "sort_j").unwrap();
                             j_phi.add_incoming(&[(&zero, outer_bb)]);
                             let j_val = j_phi.as_basic_value().into_int_value();
                             let inner_limit = self
@@ -3417,28 +3751,18 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Compare: if data[j] > data[j+1], swap
                             self.builder.position_at_end(cmp_bb);
-                            let j_plus1 = self
-                                .builder
-                                .build_int_add(j_val, one, "j_p1")
-                                .unwrap();
+                            let j_plus1 = self.builder.build_int_add(j_val, one, "j_p1").unwrap();
                             let ptr_j = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[j_val], "ptr_j",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[j_val], "ptr_j")
                                     .unwrap()
                             };
                             let ptr_j1 = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[j_plus1], "ptr_j1",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[j_plus1], "ptr_j1")
                                     .unwrap()
                             };
-                            let val_j = self
-                                .builder
-                                .build_load(elem_llvm, ptr_j, "val_j")
-                                .unwrap();
+                            let val_j = self.builder.build_load(elem_llvm, ptr_j, "val_j").unwrap();
                             let val_j1 = self
                                 .builder
                                 .build_load(elem_llvm, ptr_j1, "val_j1")
@@ -3478,25 +3802,15 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Inner increment
                             self.builder.position_at_end(inner_inc_bb);
-                            let next_j = self
-                                .builder
-                                .build_int_add(j_val, one, "next_j")
-                                .unwrap();
+                            let next_j = self.builder.build_int_add(j_val, one, "next_j").unwrap();
                             j_phi.add_incoming(&[(&next_j, inner_inc_bb)]);
-                            self.builder
-                                .build_unconditional_branch(inner_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(inner_bb).unwrap();
 
                             // Outer increment
                             self.builder.position_at_end(outer_inc_bb);
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "next_i")
-                                .unwrap();
+                            let next_i = self.builder.build_int_add(i_val, one, "next_i").unwrap();
                             i_phi.add_incoming(&[(&next_i, outer_inc_bb)]);
-                            self.builder
-                                .build_unconditional_branch(outer_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(outer_bb).unwrap();
 
                             // Done
                             self.builder.position_at_end(done_bb);
@@ -3560,33 +3874,39 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap()
                                 .into_pointer_value();
 
-                            let new_vec_ptr = self
-                                .builder
-                                .build_alloca(vec_struct_ty, "map_vec")
-                                .unwrap();
+                            let new_vec_ptr =
+                                self.builder.build_alloca(vec_struct_ty, "map_vec").unwrap();
                             // Init: {data, len=0, cap=8, elem_size}
-                            let dg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "mv_dg").unwrap();
+                            let dg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "mv_dg")
+                                .unwrap();
                             self.builder.build_store(dg, new_data).unwrap();
-                            let lg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "mv_lg").unwrap();
+                            let lg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "mv_lg")
+                                .unwrap();
                             self.builder.build_store(lg, zero).unwrap();
-                            let cg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "mv_cg").unwrap();
+                            let cg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "mv_cg")
+                                .unwrap();
                             self.builder.build_store(cg, initial_cap).unwrap();
-                            let eg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "mv_eg").unwrap();
+                            let eg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "mv_eg")
+                                .unwrap();
                             self.builder.build_store(eg, elem_sz).unwrap();
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "map_loop");
-                            let body_bb =
-                                self.context.append_basic_block(*function, "map_body");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "map_done");
+                            let loop_bb = self.context.append_basic_block(*function, "map_loop");
+                            let body_bb = self.context.append_basic_block(*function, "map_body");
+                            let done_bb = self.context.append_basic_block(*function, "map_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "map_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "map_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -3600,9 +3920,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(body_bb);
                             let elem_ptr = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[i_val], "map_ep",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "map_ep")
                                     .unwrap()
                             };
                             let elem_val = self
@@ -3612,27 +3930,56 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Call function — direct for closures, indirect for function ptrs
                             let mapped = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
-                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
-                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                if let Some((func, _, _)) =
+                                    self.functions.get(lambda_fn_name).cloned()
+                                {
+                                    let mut call_args: Vec<
+                                        inkwell::values::BasicMetadataValueEnum,
+                                    > = Vec::new();
                                     for (cap_name, cap_ty) in cap_vars {
                                         if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
                                             let cap_llvm = ny_to_llvm(self.context, cap_ty);
-                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            let cv = self
+                                                .builder
+                                                .build_load(cap_llvm, *cap_ptr, cap_name)
+                                                .unwrap();
                                             call_args.push(cv.into());
                                         }
                                     }
                                     call_args.push(elem_val.into());
-                                    self.builder.build_call(func, &call_args, "map_r").unwrap()
-                                        .try_as_basic_value().basic().unwrap()
+                                    self.builder
+                                        .build_call(func, &call_args, "map_r")
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
                                 } else {
                                     let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
-                                    self.builder.build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r").unwrap()
-                                        .try_as_basic_value().basic().unwrap()
+                                    self.builder
+                                        .build_indirect_call(
+                                            fn_ty,
+                                            fn_ptr_val,
+                                            &[elem_val.into()],
+                                            "map_r",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
                                 }
                             } else {
                                 let fn_ty = elem_llvm.fn_type(&[elem_llvm.into()], false);
-                                self.builder.build_indirect_call(fn_ty, fn_ptr_val, &[elem_val.into()], "map_r").unwrap()
-                                    .try_as_basic_value().basic().unwrap()
+                                self.builder
+                                    .build_indirect_call(
+                                        fn_ty,
+                                        fn_ptr_val,
+                                        &[elem_val.into()],
+                                        "map_r",
+                                    )
+                                    .unwrap()
+                                    .try_as_basic_value()
+                                    .basic()
+                                    .unwrap()
                             };
 
                             // Push to new vec (inline push: load len, store at data[len], inc len)
@@ -3674,10 +4021,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 .builder
                                 .build_int_compare(IntPredicate::UGE, nv_len, nv_cap, "nv_grow")
                                 .unwrap();
-                            let grow_bb =
-                                self.context.append_basic_block(*function, "map_grow");
-                            let push_bb =
-                                self.context.append_basic_block(*function, "map_push");
+                            let grow_bb = self.context.append_basic_block(*function, "map_grow");
+                            let push_bb = self.context.append_basic_block(*function, "map_push");
                             self.builder
                                 .build_conditional_branch(needs_grow, grow_bb, push_bb)
                                 .unwrap();
@@ -3685,11 +4030,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(grow_bb);
                             let new_cap = self
                                 .builder
-                                .build_int_mul(
-                                    nv_cap,
-                                    i64_ty.const_int(2, false),
-                                    "nv_nc",
-                                )
+                                .build_int_mul(nv_cap, i64_ty.const_int(2, false), "nv_nc")
                                 .unwrap();
                             let new_size = self
                                 .builder
@@ -3698,11 +4039,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let realloc_fn = self.get_or_declare_realloc();
                             let new_data = self
                                 .builder
-                                .build_call(
-                                    realloc_fn,
-                                    &[nv_data.into(), new_size.into()],
-                                    "nv_nd",
-                                )
+                                .build_call(realloc_fn, &[nv_data.into(), new_size.into()], "nv_nd")
                                 .unwrap()
                                 .try_as_basic_value()
                                 .basic()
@@ -3710,9 +4047,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .into_pointer_value();
                             self.builder.build_store(nv_data_gep, new_data).unwrap();
                             self.builder.build_store(nv_cap_gep, new_cap).unwrap();
-                            self.builder
-                                .build_unconditional_branch(push_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(push_bb).unwrap();
 
                             self.builder.position_at_end(push_bb);
                             let cur_data = self
@@ -3731,32 +4066,24 @@ impl<'ctx> CodeGen<'ctx> {
                                 .into_int_value();
                             let dest = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, cur_data, &[cur_len], "nv_dp",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, cur_data, &[cur_len], "nv_dp")
                                     .unwrap()
                             };
                             self.builder.build_store(dest, mapped).unwrap();
-                            let new_len = self
-                                .builder
-                                .build_int_add(cur_len, one, "nv_nl")
-                                .unwrap();
+                            let new_len =
+                                self.builder.build_int_add(cur_len, one, "nv_nl").unwrap();
                             self.builder.build_store(nv_len_gep, new_len).unwrap();
 
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "map_next")
-                                .unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "map_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, push_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
-                            let result =
-                                self.builder
-                                    .build_load(vec_struct_ty, new_vec_ptr, "map_result")
-                                    .unwrap();
+                            let result = self
+                                .builder
+                                .build_load(vec_struct_ty, new_vec_ptr, "map_result")
+                                .unwrap();
                             return Ok(Some(result));
                         }
                         "filter" => {
@@ -3809,17 +4136,27 @@ impl<'ctx> CodeGen<'ctx> {
                                 .basic()
                                 .unwrap()
                                 .into_pointer_value();
-                            let new_vec_ptr = self
+                            let new_vec_ptr =
+                                self.builder.build_alloca(vec_struct_ty, "fil_vec").unwrap();
+                            let dg = self
                                 .builder
-                                .build_alloca(vec_struct_ty, "fil_vec")
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fv_dg")
                                 .unwrap();
-                            let dg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fv_dg").unwrap();
                             self.builder.build_store(dg, new_data).unwrap();
-                            let lg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fv_lg").unwrap();
+                            let lg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fv_lg")
+                                .unwrap();
                             self.builder.build_store(lg, zero).unwrap();
-                            let cg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fv_cg").unwrap();
+                            let cg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fv_cg")
+                                .unwrap();
                             self.builder.build_store(cg, initial_cap).unwrap();
-                            let eg = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "fv_eg").unwrap();
+                            let eg = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 3, "fv_eg")
+                                .unwrap();
                             self.builder.build_store(eg, elem_sz).unwrap();
 
                             // Loop over source
@@ -3838,68 +4175,165 @@ impl<'ctx> CodeGen<'ctx> {
                             let i_phi = self.builder.build_phi(i64_ty, "fil_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
-                            let cond = self.builder
+                            let cond = self
+                                .builder
                                 .build_int_compare(IntPredicate::ULT, i_val, len, "fil_cond")
                                 .unwrap();
-                            self.builder.build_conditional_branch(cond, check_bb, done_bb).unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, check_bb, done_bb)
+                                .unwrap();
 
                             // Call predicate
                             self.builder.position_at_end(check_bb);
                             let ep = unsafe {
-                                self.builder.build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "fil_ep").unwrap()
+                                self.builder
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "fil_ep")
+                                    .unwrap()
                             };
                             let ev = self.builder.build_load(elem_llvm, ep, "fil_ev").unwrap();
                             let keep = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
-                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
-                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                if let Some((func, _, _)) =
+                                    self.functions.get(lambda_fn_name).cloned()
+                                {
+                                    let mut call_args: Vec<
+                                        inkwell::values::BasicMetadataValueEnum,
+                                    > = Vec::new();
                                     for (cap_name, cap_ty) in cap_vars {
                                         if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
                                             let cap_llvm = ny_to_llvm(self.context, cap_ty);
-                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            let cv = self
+                                                .builder
+                                                .build_load(cap_llvm, *cap_ptr, cap_name)
+                                                .unwrap();
                                             call_args.push(cv.into());
                                         }
                                     }
                                     call_args.push(ev.into());
-                                    self.builder.build_call(func, &call_args, "fil_keep").unwrap()
-                                        .try_as_basic_value().basic().unwrap().into_int_value()
+                                    self.builder
+                                        .build_call(func, &call_args, "fil_keep")
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
+                                        .into_int_value()
                                 } else {
-                                    let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
-                                    self.builder.build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep").unwrap()
-                                        .try_as_basic_value().basic().unwrap().into_int_value()
+                                    let pred_ty = self
+                                        .context
+                                        .bool_type()
+                                        .fn_type(&[elem_llvm.into()], false);
+                                    self.builder
+                                        .build_indirect_call(
+                                            pred_ty,
+                                            fn_ptr_val,
+                                            &[ev.into()],
+                                            "fil_keep",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
+                                        .into_int_value()
                                 }
                             } else {
-                                let pred_ty = self.context.bool_type().fn_type(&[elem_llvm.into()], false);
-                                self.builder.build_indirect_call(pred_ty, fn_ptr_val, &[ev.into()], "fil_keep").unwrap()
-                                    .try_as_basic_value().basic().unwrap().into_int_value()
+                                let pred_ty =
+                                    self.context.bool_type().fn_type(&[elem_llvm.into()], false);
+                                self.builder
+                                    .build_indirect_call(
+                                        pred_ty,
+                                        fn_ptr_val,
+                                        &[ev.into()],
+                                        "fil_keep",
+                                    )
+                                    .unwrap()
+                                    .try_as_basic_value()
+                                    .basic()
+                                    .unwrap()
+                                    .into_int_value()
                             };
-                            self.builder.build_conditional_branch(keep, push_bb, skip_bb).unwrap();
+                            self.builder
+                                .build_conditional_branch(keep, push_bb, skip_bb)
+                                .unwrap();
 
                             // Push element (with grow check)
                             self.builder.position_at_end(push_bb);
-                            let nv_len_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fpl").unwrap();
-                            let nv_cap_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fpc").unwrap();
-                            let nv_data_gep = self.builder.build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fpd").unwrap();
-                            let cur_len = self.builder.build_load(i64_ty, nv_len_gep, "fcl").unwrap().into_int_value();
-                            let cur_cap = self.builder.build_load(i64_ty, nv_cap_gep, "fcc").unwrap().into_int_value();
-                            let needs_grow = self.builder
+                            let nv_len_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 1, "fpl")
+                                .unwrap();
+                            let nv_cap_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 2, "fpc")
+                                .unwrap();
+                            let nv_data_gep = self
+                                .builder
+                                .build_struct_gep(vec_struct_ty, new_vec_ptr, 0, "fpd")
+                                .unwrap();
+                            let cur_len = self
+                                .builder
+                                .build_load(i64_ty, nv_len_gep, "fcl")
+                                .unwrap()
+                                .into_int_value();
+                            let cur_cap = self
+                                .builder
+                                .build_load(i64_ty, nv_cap_gep, "fcc")
+                                .unwrap()
+                                .into_int_value();
+                            let needs_grow = self
+                                .builder
                                 .build_int_compare(IntPredicate::UGE, cur_len, cur_cap, "fng")
                                 .unwrap();
-                            self.builder.build_conditional_branch(needs_grow, grow_bb, store_bb).unwrap();
+                            self.builder
+                                .build_conditional_branch(needs_grow, grow_bb, store_bb)
+                                .unwrap();
 
                             self.builder.position_at_end(grow_bb);
-                            let nc = self.builder.build_int_mul(cur_cap, i64_ty.const_int(2, false), "fnc").unwrap();
+                            let nc = self
+                                .builder
+                                .build_int_mul(cur_cap, i64_ty.const_int(2, false), "fnc")
+                                .unwrap();
                             let ns = self.builder.build_int_mul(nc, elem_sz, "fns").unwrap();
                             let realloc_fn = self.get_or_declare_realloc();
-                            let cd = self.builder.build_load(self.context.ptr_type(AddressSpace::default()), nv_data_gep, "fcd").unwrap().into_pointer_value();
-                            let nd = self.builder.build_call(realloc_fn, &[cd.into(), ns.into()], "fnd").unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+                            let cd = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    nv_data_gep,
+                                    "fcd",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let nd = self
+                                .builder
+                                .build_call(realloc_fn, &[cd.into(), ns.into()], "fnd")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
                             self.builder.build_store(nv_data_gep, nd).unwrap();
                             self.builder.build_store(nv_cap_gep, nc).unwrap();
                             self.builder.build_unconditional_branch(store_bb).unwrap();
 
                             self.builder.position_at_end(store_bb);
-                            let sd = self.builder.build_load(self.context.ptr_type(AddressSpace::default()), nv_data_gep, "fsd").unwrap().into_pointer_value();
-                            let sl = self.builder.build_load(i64_ty, nv_len_gep, "fsl").unwrap().into_int_value();
-                            let dp = unsafe { self.builder.build_in_bounds_gep(elem_llvm, sd, &[sl], "fdp").unwrap() };
+                            let sd = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    nv_data_gep,
+                                    "fsd",
+                                )
+                                .unwrap()
+                                .into_pointer_value();
+                            let sl = self
+                                .builder
+                                .build_load(i64_ty, nv_len_gep, "fsl")
+                                .unwrap()
+                                .into_int_value();
+                            let dp = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(elem_llvm, sd, &[sl], "fdp")
+                                    .unwrap()
+                            };
                             self.builder.build_store(dp, ev).unwrap();
                             let nl = self.builder.build_int_add(sl, one, "fnl").unwrap();
                             self.builder.build_store(nv_len_gep, nl).unwrap();
@@ -3907,12 +4341,16 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Skip / next iteration
                             self.builder.position_at_end(skip_bb);
-                            let next_i = self.builder.build_int_add(i_val, one, "fil_next").unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "fil_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, skip_bb)]);
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
-                            let result = self.builder.build_load(vec_struct_ty, new_vec_ptr, "fil_result").unwrap();
+                            let result = self
+                                .builder
+                                .build_load(vec_struct_ty, new_vec_ptr, "fil_result")
+                                .unwrap();
                             return Ok(Some(result));
                         }
                         "reduce" => {
@@ -3944,36 +4382,27 @@ impl<'ctx> CodeGen<'ctx> {
                             } else {
                                 None
                             };
-                            let init_val = self
-                                .compile_expr(&args[1], function)?
-                                .unwrap();
+                            let init_val = self.compile_expr(&args[1], function)?.unwrap();
 
                             let i64_ty = self.context.i64_type();
                             let zero = i64_ty.const_int(0, false);
                             let one = i64_ty.const_int(1, false);
 
                             // fn(acc: T, elem: T) -> T
-                            let fn_ty = elem_llvm.fn_type(
-                                &[elem_llvm.into(), elem_llvm.into()],
-                                false,
-                            );
+                            let fn_ty =
+                                elem_llvm.fn_type(&[elem_llvm.into(), elem_llvm.into()], false);
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "red_loop");
-                            let body_bb =
-                                self.context.append_basic_block(*function, "red_body");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "red_done");
+                            let loop_bb = self.context.append_basic_block(*function, "red_loop");
+                            let body_bb = self.context.append_basic_block(*function, "red_body");
+                            let done_bb = self.context.append_basic_block(*function, "red_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "red_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "red_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
-                            let acc_phi =
-                                self.builder.build_phi(elem_llvm, "red_acc").unwrap();
+                            let acc_phi = self.builder.build_phi(elem_llvm, "red_acc").unwrap();
                             acc_phi.add_incoming(&[(&init_val, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
 
@@ -3988,46 +4417,66 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(body_bb);
                             let ep = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[i_val], "red_ep",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "red_ep")
                                     .unwrap()
                             };
-                            let ev = self
-                                .builder
-                                .build_load(elem_llvm, ep, "red_ev")
-                                .unwrap();
+                            let ev = self.builder.build_load(elem_llvm, ep, "red_ev").unwrap();
                             let new_acc = if let Some((lambda_fn_name, cap_vars)) = &closure_info {
-                                if let Some((func, _, _)) = self.functions.get(lambda_fn_name).cloned() {
-                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                if let Some((func, _, _)) =
+                                    self.functions.get(lambda_fn_name).cloned()
+                                {
+                                    let mut call_args: Vec<
+                                        inkwell::values::BasicMetadataValueEnum,
+                                    > = Vec::new();
                                     for (cap_name, cap_ty) in cap_vars {
                                         if let Some((cap_ptr, _)) = self.variables.get(cap_name) {
                                             let cap_llvm = ny_to_llvm(self.context, cap_ty);
-                                            let cv = self.builder.build_load(cap_llvm, *cap_ptr, cap_name).unwrap();
+                                            let cv = self
+                                                .builder
+                                                .build_load(cap_llvm, *cap_ptr, cap_name)
+                                                .unwrap();
                                             call_args.push(cv.into());
                                         }
                                     }
                                     call_args.push(acc_phi.as_basic_value().into());
                                     call_args.push(ev.into());
-                                    self.builder.build_call(func, &call_args, "red_r").unwrap()
-                                        .try_as_basic_value().basic().unwrap()
+                                    self.builder
+                                        .build_call(func, &call_args, "red_r")
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
                                 } else {
-                                    self.builder.build_indirect_call(fn_ty, fn_ptr, &[acc_phi.as_basic_value().into(), ev.into()], "red_r").unwrap()
-                                        .try_as_basic_value().basic().unwrap()
+                                    self.builder
+                                        .build_indirect_call(
+                                            fn_ty,
+                                            fn_ptr,
+                                            &[acc_phi.as_basic_value().into(), ev.into()],
+                                            "red_r",
+                                        )
+                                        .unwrap()
+                                        .try_as_basic_value()
+                                        .basic()
+                                        .unwrap()
                                 }
                             } else {
-                                self.builder.build_indirect_call(fn_ty, fn_ptr, &[acc_phi.as_basic_value().into(), ev.into()], "red_r").unwrap()
-                                    .try_as_basic_value().basic().unwrap()
+                                self.builder
+                                    .build_indirect_call(
+                                        fn_ty,
+                                        fn_ptr,
+                                        &[acc_phi.as_basic_value().into(), ev.into()],
+                                        "red_r",
+                                    )
+                                    .unwrap()
+                                    .try_as_basic_value()
+                                    .basic()
+                                    .unwrap()
                             };
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "red_next")
-                                .unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "red_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, body_bb)]);
                             acc_phi.add_incoming(&[(&new_acc, body_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
                             return Ok(Some(acc_phi.as_basic_value()));
@@ -4058,18 +4507,14 @@ impl<'ctx> CodeGen<'ctx> {
                             let fn_ty = void_ty.fn_type(&[elem_llvm.into()], false);
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "fe_loop");
-                            let body_bb =
-                                self.context.append_basic_block(*function, "fe_body");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "fe_done");
+                            let loop_bb = self.context.append_basic_block(*function, "fe_loop");
+                            let body_bb = self.context.append_basic_block(*function, "fe_body");
+                            let done_bb = self.context.append_basic_block(*function, "fe_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "fe_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "fe_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -4083,26 +4528,16 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(body_bb);
                             let ep = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[i_val], "fe_ep",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "fe_ep")
                                     .unwrap()
                             };
-                            let ev = self
-                                .builder
-                                .build_load(elem_llvm, ep, "fe_ev")
-                                .unwrap();
+                            let ev = self.builder.build_load(elem_llvm, ep, "fe_ev").unwrap();
                             self.builder
                                 .build_indirect_call(fn_ty, fn_ptr, &[ev.into()], "")
                                 .unwrap();
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "fe_next")
-                                .unwrap();
+                            let next_i = self.builder.build_int_add(i_val, one, "fe_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, body_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
                             return Ok(None);
@@ -4147,7 +4582,8 @@ impl<'ctx> CodeGen<'ctx> {
                             let i_phi = self.builder.build_phi(i64_ty, "qa_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
-                            let cond = self.builder
+                            let cond = self
+                                .builder
                                 .build_int_compare(IntPredicate::ULT, i_val, len, "qa_cond")
                                 .unwrap();
                             self.builder
@@ -4160,10 +4596,9 @@ impl<'ctx> CodeGen<'ctx> {
                                     .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "qa_ep")
                                     .unwrap()
                             };
-                            let ev = self.builder
-                                .build_load(elem_llvm, ep, "qa_ev")
-                                .unwrap();
-                            let result = self.builder
+                            let ev = self.builder.build_load(elem_llvm, ep, "qa_ev").unwrap();
+                            let result = self
+                                .builder
                                 .build_indirect_call(pred_ty, fn_ptr, &[ev.into()], "qa_r")
                                 .unwrap()
                                 .try_as_basic_value()
@@ -4183,9 +4618,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Increment block
                             self.builder.position_at_end(inc_bb);
-                            let next_i = self.builder
-                                .build_int_add(i_val, one, "qa_next")
-                                .unwrap();
+                            let next_i = self.builder.build_int_add(i_val, one, "qa_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, inc_bb)]);
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
@@ -4200,9 +4633,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                             self.builder.position_at_end(merge_bb);
-                            let phi = self.builder
-                                .build_phi(bool_ty, "qa_result")
-                                .unwrap();
+                            let phi = self.builder.build_phi(bool_ty, "qa_result").unwrap();
                             phi.add_incoming(&[(&early_val, early_bb), (&done_val, done_bb)]);
                             return Ok(Some(phi.as_basic_value()));
                         }
@@ -4233,10 +4664,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_extract_value(sep_val, 1, "join_sl")
                                 .unwrap();
                             let i64_ty = self.context.i64_type();
-                            let out_len_ptr = self
-                                .builder
-                                .build_alloca(i64_ty, "join_olp")
-                                .unwrap();
+                            let out_len_ptr =
+                                self.builder.build_alloca(i64_ty, "join_olp").unwrap();
                             let join_fn = self.get_or_declare_ny_str_join();
                             let result_ptr = self
                                 .builder
@@ -4311,28 +4740,42 @@ impl<'ctx> CodeGen<'ctx> {
                             acc_phi.add_incoming(&[(&zero_elem, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
 
-                            let cond = self.builder
+                            let cond = self
+                                .builder
                                 .build_int_compare(IntPredicate::ULT, i_val, len, "sum_cond")
                                 .unwrap();
-                            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, body_bb, done_bb)
+                                .unwrap();
 
                             self.builder.position_at_end(body_bb);
                             let ep = unsafe {
-                                self.builder.build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "sum_ep").unwrap()
+                                self.builder
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "sum_ep")
+                                    .unwrap()
                             };
                             let ev = self.builder.build_load(elem_llvm, ep, "sum_ev").unwrap();
                             let new_acc: inkwell::values::BasicValueEnum = if elem_ty.is_float() {
-                                self.builder.build_float_add(
-                                    acc_phi.as_basic_value().into_float_value(),
-                                    ev.into_float_value(), "sum_fa",
-                                ).unwrap().into()
+                                self.builder
+                                    .build_float_add(
+                                        acc_phi.as_basic_value().into_float_value(),
+                                        ev.into_float_value(),
+                                        "sum_fa",
+                                    )
+                                    .unwrap()
+                                    .into()
                             } else {
-                                self.builder.build_int_add(
-                                    acc_phi.as_basic_value().into_int_value(),
-                                    ev.into_int_value(), "sum_ia",
-                                ).unwrap().into()
+                                self.builder
+                                    .build_int_add(
+                                        acc_phi.as_basic_value().into_int_value(),
+                                        ev.into_int_value(),
+                                        "sum_ia",
+                                    )
+                                    .unwrap()
+                                    .into()
                             };
-                            let next_i = self.builder.build_int_add(i_val, one, "sum_next").unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "sum_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, body_bb)]);
                             acc_phi.add_incoming(&[(&new_acc, body_bb)]);
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
@@ -4354,9 +4797,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_extract_value(sv, 1, "vc_len")
                                 .unwrap()
                                 .into_int_value();
-                            let needle = self
-                                .compile_expr(&args[0], function)?
-                                .unwrap();
+                            let needle = self.compile_expr(&args[0], function)?.unwrap();
 
                             let i64_ty = self.context.i64_type();
                             let i32_ty = self.context.i32_type();
@@ -4364,24 +4805,17 @@ impl<'ctx> CodeGen<'ctx> {
                             let one = i64_ty.const_int(1, false);
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "vc_loop");
-                            let check_bb =
-                                self.context.append_basic_block(*function, "vc_check");
-                            let inc_bb =
-                                self.context.append_basic_block(*function, "vc_inc");
-                            let found_bb =
-                                self.context.append_basic_block(*function, "vc_found");
-                            let not_bb =
-                                self.context.append_basic_block(*function, "vc_not");
-                            let merge_bb =
-                                self.context.append_basic_block(*function, "vc_merge");
+                            let loop_bb = self.context.append_basic_block(*function, "vc_loop");
+                            let check_bb = self.context.append_basic_block(*function, "vc_check");
+                            let inc_bb = self.context.append_basic_block(*function, "vc_inc");
+                            let found_bb = self.context.append_basic_block(*function, "vc_found");
+                            let not_bb = self.context.append_basic_block(*function, "vc_not");
+                            let merge_bb = self.context.append_basic_block(*function, "vc_merge");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "vc_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "vc_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -4395,9 +4829,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(check_bb);
                             let elem_ptr = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        elem_llvm, data_ptr, &[i_val], "vc_ptr",
-                                    )
+                                    .build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "vc_ptr")
                                     .unwrap()
                             };
                             let elem_val = self
@@ -4429,40 +4861,26 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             self.builder.position_at_end(inc_bb);
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "vc_next")
-                                .unwrap();
+                            let next_i = self.builder.build_int_add(i_val, one, "vc_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, inc_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             if method == "contains" {
                                 // contains: return bool
                                 self.builder.position_at_end(found_bb);
-                                let true_val =
-                                    self.context.bool_type().const_int(1, false);
-                                self.builder
-                                    .build_unconditional_branch(merge_bb)
-                                    .unwrap();
+                                let true_val = self.context.bool_type().const_int(1, false);
+                                self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                                 self.builder.position_at_end(not_bb);
-                                let false_val =
-                                    self.context.bool_type().const_int(0, false);
-                                self.builder
-                                    .build_unconditional_branch(merge_bb)
-                                    .unwrap();
+                                let false_val = self.context.bool_type().const_int(0, false);
+                                self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                                 self.builder.position_at_end(merge_bb);
                                 let phi = self
                                     .builder
                                     .build_phi(self.context.bool_type(), "vc_result")
                                     .unwrap();
-                                phi.add_incoming(&[
-                                    (&true_val, found_bb),
-                                    (&false_val, not_bb),
-                                ]);
+                                phi.add_incoming(&[(&true_val, found_bb), (&false_val, not_bb)]);
                                 return Ok(Some(phi.as_basic_value()));
                             } else {
                                 // index_of: return i32
@@ -4471,25 +4889,15 @@ impl<'ctx> CodeGen<'ctx> {
                                     .builder
                                     .build_int_truncate(i_val, i32_ty, "vc_idx")
                                     .unwrap();
-                                self.builder
-                                    .build_unconditional_branch(merge_bb)
-                                    .unwrap();
+                                self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                                 self.builder.position_at_end(not_bb);
                                 let neg1 = i32_ty.const_all_ones();
-                                self.builder
-                                    .build_unconditional_branch(merge_bb)
-                                    .unwrap();
+                                self.builder.build_unconditional_branch(merge_bb).unwrap();
 
                                 self.builder.position_at_end(merge_bb);
-                                let phi = self
-                                    .builder
-                                    .build_phi(i32_ty, "vc_idx_result")
-                                    .unwrap();
-                                phi.add_incoming(&[
-                                    (&idx, found_bb),
-                                    (&neg1, not_bb),
-                                ]);
+                                let phi = self.builder.build_phi(i32_ty, "vc_idx_result").unwrap();
+                                phi.add_incoming(&[(&idx, found_bb), (&neg1, not_bb)]);
                                 return Ok(Some(phi.as_basic_value()));
                             }
                         }
@@ -4667,8 +5075,9 @@ impl<'ctx> CodeGen<'ctx> {
                             let pre_bb = self.builder.get_insert_block().unwrap();
                             let start_loop =
                                 self.context.append_basic_block(*function, "trim_start");
-                            let start_done =
-                                self.context.append_basic_block(*function, "trim_start_done");
+                            let start_done = self
+                                .context
+                                .append_basic_block(*function, "trim_start_done");
                             self.builder.build_unconditional_branch(start_loop).unwrap();
 
                             self.builder.position_at_end(start_loop);
@@ -4700,27 +5109,20 @@ impl<'ctx> CodeGen<'ctx> {
                                 .builder
                                 .build_int_compare(IntPredicate::ULE, ch, space, "is_sp")
                                 .unwrap();
-                            let next_s = self
-                                .builder
-                                .build_int_add(s_val, one, "next_s")
-                                .unwrap();
+                            let next_s = self.builder.build_int_add(s_val, one, "next_s").unwrap();
                             s_phi.add_incoming(&[(&next_s, check_bb)]);
                             self.builder
                                 .build_conditional_branch(is_space, start_loop, start_done)
                                 .unwrap();
 
                             self.builder.position_at_end(start_done);
-                            let start_idx = self
-                                .builder
-                                .build_phi(i64_ty, "start_idx")
-                                .unwrap();
+                            let start_idx = self.builder.build_phi(i64_ty, "start_idx").unwrap();
                             start_idx.add_incoming(&[(&s_val, start_loop), (&s_val, check_bb)]);
                             let start_val = start_idx.as_basic_value().into_int_value();
 
                             // Find end: skip trailing spaces
                             let end_pre = self.builder.get_insert_block().unwrap();
-                            let end_loop =
-                                self.context.append_basic_block(*function, "trim_end");
+                            let end_loop = self.context.append_basic_block(*function, "trim_end");
                             let end_done =
                                 self.context.append_basic_block(*function, "trim_end_done");
                             self.builder.build_unconditional_branch(end_loop).unwrap();
@@ -4740,10 +5142,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             self.builder.position_at_end(end_check_bb);
-                            let e_m1 = self
-                                .builder
-                                .build_int_sub(e_val, one, "e_m1")
-                                .unwrap();
+                            let e_m1 = self.builder.build_int_sub(e_val, one, "e_m1").unwrap();
                             let ech_ptr = unsafe {
                                 self.builder
                                     .build_in_bounds_gep(i8_ty, ptr, &[e_m1], "e_ch_ptr")
@@ -4764,19 +5163,14 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             self.builder.position_at_end(end_done);
-                            let end_idx = self
-                                .builder
-                                .build_phi(i64_ty, "end_idx")
-                                .unwrap();
+                            let end_idx = self.builder.build_phi(i64_ty, "end_idx").unwrap();
                             end_idx.add_incoming(&[(&e_val, end_loop), (&e_val, end_check_bb)]);
                             let end_val = end_idx.as_basic_value().into_int_value();
 
                             // Build result: {ptr + start, end - start}
                             let new_ptr = unsafe {
                                 self.builder
-                                    .build_in_bounds_gep(
-                                        i8_ty, ptr, &[start_val], "trim_new_ptr",
-                                    )
+                                    .build_in_bounds_gep(i8_ty, ptr, &[start_val], "trim_new_ptr")
                                     .unwrap()
                             };
                             let new_len = self
@@ -4832,18 +5226,14 @@ impl<'ctx> CodeGen<'ctx> {
                             let one = i64_ty.const_int(1, false);
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "case_loop");
-                            let body_bb =
-                                self.context.append_basic_block(*function, "case_body");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "case_done");
+                            let loop_bb = self.context.append_basic_block(*function, "case_loop");
+                            let body_bb = self.context.append_basic_block(*function, "case_body");
+                            let done_bb = self.context.append_basic_block(*function, "case_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "case_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "case_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -4887,14 +5277,10 @@ impl<'ctx> CodeGen<'ctx> {
                                     .unwrap()
                             };
                             self.builder.build_store(dst_ptr, conv_i8).unwrap();
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "case_next")
-                                .unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "case_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, body_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
                             let str_ty = str_type(self.context);
@@ -4954,10 +5340,8 @@ impl<'ctx> CodeGen<'ctx> {
 
                             // Alloca for out_len
                             let i64_ty = self.context.i64_type();
-                            let out_len_ptr = self
-                                .builder
-                                .build_alloca(i64_ty, "rep_out_len")
-                                .unwrap();
+                            let out_len_ptr =
+                                self.builder.build_alloca(i64_ty, "rep_out_len").unwrap();
 
                             let replace_fn = self.get_or_declare_ny_str_replace();
                             let result_ptr = self
@@ -5024,10 +5408,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 )
                                 .unwrap();
 
-                            let total_len = self
-                                .builder
-                                .build_int_mul(len, n_i64, "rep_total")
-                                .unwrap();
+                            let total_len =
+                                self.builder.build_int_mul(len, n_i64, "rep_total").unwrap();
 
                             let malloc_fn = self.get_or_declare_malloc();
                             let buf = self
@@ -5046,18 +5428,14 @@ impl<'ctx> CodeGen<'ctx> {
                             let one = i64_ty.const_int(1, false);
 
                             let pre_bb = self.builder.get_insert_block().unwrap();
-                            let loop_bb =
-                                self.context.append_basic_block(*function, "rep_loop");
-                            let body_bb =
-                                self.context.append_basic_block(*function, "rep_body");
-                            let done_bb =
-                                self.context.append_basic_block(*function, "rep_done");
+                            let loop_bb = self.context.append_basic_block(*function, "rep_loop");
+                            let body_bb = self.context.append_basic_block(*function, "rep_body");
+                            let done_bb = self.context.append_basic_block(*function, "rep_done");
 
                             self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "rep_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "rep_i").unwrap();
                             i_phi.add_incoming(&[(&zero, pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
                             let cond = self
@@ -5069,30 +5447,19 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             self.builder.position_at_end(body_bb);
-                            let offset = self
-                                .builder
-                                .build_int_mul(i_val, len, "rep_off")
-                                .unwrap();
+                            let offset = self.builder.build_int_mul(i_val, len, "rep_off").unwrap();
                             let dst = unsafe {
                                 self.builder
                                     .build_in_bounds_gep(i8_ty, buf, &[offset], "rep_dst")
                                     .unwrap()
                             };
                             self.builder
-                                .build_call(
-                                    memcpy_fn,
-                                    &[dst.into(), ptr.into(), len.into()],
-                                    "",
-                                )
+                                .build_call(memcpy_fn, &[dst.into(), ptr.into(), len.into()], "")
                                 .unwrap();
-                            let next_i = self
-                                .builder
-                                .build_int_add(i_val, one, "rep_next")
-                                .unwrap();
+                            let next_i =
+                                self.builder.build_int_add(i_val, one, "rep_next").unwrap();
                             i_phi.add_incoming(&[(&next_i, body_bb)]);
-                            self.builder
-                                .build_unconditional_branch(loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
 
                             self.builder.position_at_end(done_bb);
                             let str_ty = str_type(self.context);
@@ -5145,32 +5512,26 @@ impl<'ctx> CodeGen<'ctx> {
                             let neg1_i32 = i32_ty.const_all_ones(); // -1
 
                             let io_pre_bb = self.builder.get_insert_block().unwrap();
-                            let io_loop_bb =
-                                self.context.append_basic_block(*function, "io_loop");
+                            let io_loop_bb = self.context.append_basic_block(*function, "io_loop");
                             let io_check_bb =
                                 self.context.append_basic_block(*function, "io_check");
-                            let io_inc_bb =
-                                self.context.append_basic_block(*function, "io_inc");
+                            let io_inc_bb = self.context.append_basic_block(*function, "io_inc");
                             let io_found_bb =
                                 self.context.append_basic_block(*function, "io_found");
-                            let io_not_bb =
-                                self.context.append_basic_block(*function, "io_not");
+                            let io_not_bb = self.context.append_basic_block(*function, "io_not");
                             let io_merge_bb =
                                 self.context.append_basic_block(*function, "io_merge");
 
                             let len_ok = self
                                 .builder
-                                .build_int_compare(
-                                    IntPredicate::ULE, ndl_len, hay_len, "io_len_ok",
-                                )
+                                .build_int_compare(IntPredicate::ULE, ndl_len, hay_len, "io_len_ok")
                                 .unwrap();
                             self.builder
                                 .build_conditional_branch(len_ok, io_loop_bb, io_not_bb)
                                 .unwrap();
 
                             self.builder.position_at_end(io_loop_bb);
-                            let i_phi =
-                                self.builder.build_phi(i64_ty, "io_i").unwrap();
+                            let i_phi = self.builder.build_phi(i64_ty, "io_i").unwrap();
                             i_phi.add_incoming(&[(&zero_i64, io_pre_bb)]);
                             let i_val = i_phi.as_basic_value().into_int_value();
 
@@ -5185,7 +5546,10 @@ impl<'ctx> CodeGen<'ctx> {
                             let in_range = self
                                 .builder
                                 .build_int_compare(
-                                    IntPredicate::ULT, i_val, limit_p1, "io_in_range",
+                                    IntPredicate::ULT,
+                                    i_val,
+                                    limit_p1,
+                                    "io_in_range",
                                 )
                                 .unwrap();
                             self.builder
@@ -5212,9 +5576,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .into_int_value();
                             let found = self
                                 .builder
-                                .build_int_compare(
-                                    IntPredicate::EQ, cmp, zero_i32, "io_found",
-                                )
+                                .build_int_compare(IntPredicate::EQ, cmp, zero_i32, "io_found")
                                 .unwrap();
                             self.builder
                                 .build_conditional_branch(found, io_found_bb, io_inc_bb)
@@ -5226,9 +5588,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_int_add(i_val, one_i64, "io_next_i")
                                 .unwrap();
                             i_phi.add_incoming(&[(&next_i, io_inc_bb)]);
-                            self.builder
-                                .build_unconditional_branch(io_loop_bb)
-                                .unwrap();
+                            self.builder.build_unconditional_branch(io_loop_bb).unwrap();
 
                             // Found: return i as i32
                             self.builder.position_at_end(io_found_bb);
@@ -5247,14 +5607,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
 
                             self.builder.position_at_end(io_merge_bb);
-                            let phi = self
-                                .builder
-                                .build_phi(i32_ty, "io_result")
-                                .unwrap();
-                            phi.add_incoming(&[
-                                (&found_idx, io_found_bb),
-                                (&neg1_i32, io_not_bb),
-                            ]);
+                            let phi = self.builder.build_phi(i32_ty, "io_result").unwrap();
+                            phi.add_incoming(&[(&found_idx, io_found_bb), (&neg1_i32, io_not_bb)]);
                             return Ok(Some(phi.as_basic_value()));
                         }
                         "contains" | "starts_with" | "ends_with" => {
@@ -5338,8 +5692,7 @@ impl<'ctx> CodeGen<'ctx> {
                                         .unwrap();
 
                                     self.builder.position_at_end(sw_false_bb);
-                                    let false_val =
-                                        self.context.bool_type().const_int(0, false);
+                                    let false_val = self.context.bool_type().const_int(0, false);
                                     self.builder
                                         .build_unconditional_branch(sw_merge_bb)
                                         .unwrap();
@@ -5386,7 +5739,10 @@ impl<'ctx> CodeGen<'ctx> {
                                     let tail_ptr = unsafe {
                                         self.builder
                                             .build_in_bounds_gep(
-                                                i8_ty, hay_ptr, &[offset], "ew_tail",
+                                                i8_ty,
+                                                hay_ptr,
+                                                &[offset],
+                                                "ew_tail",
                                             )
                                             .unwrap()
                                     };
@@ -5411,8 +5767,7 @@ impl<'ctx> CodeGen<'ctx> {
                                         .unwrap();
 
                                     self.builder.position_at_end(ew_false_bb);
-                                    let false_val =
-                                        self.context.bool_type().const_int(0, false);
+                                    let false_val = self.context.bool_type().const_int(0, false);
                                     self.builder
                                         .build_unconditional_branch(ew_merge_bb)
                                         .unwrap();
@@ -5460,10 +5815,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                                     // Loop header: i = 0 .. hay_len - ndl_len
                                     self.builder.position_at_end(ct_loop_bb);
-                                    let i_phi = self
-                                        .builder
-                                        .build_phi(i64_ty, "ct_i")
-                                        .unwrap();
+                                    let i_phi = self.builder.build_phi(i64_ty, "ct_i").unwrap();
                                     i_phi.add_incoming(&[(&zero_i64, ct_pre_bb)]);
                                     let i_val = i_phi.as_basic_value().into_int_value();
 
@@ -5492,9 +5844,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     self.builder.position_at_end(ct_check_bb);
                                     let sub_ptr = unsafe {
                                         self.builder
-                                            .build_in_bounds_gep(
-                                                i8_ty, hay_ptr, &[i_val], "ct_sub",
-                                            )
+                                            .build_in_bounds_gep(i8_ty, hay_ptr, &[i_val], "ct_sub")
                                             .unwrap()
                                     };
                                     let cmp = self
@@ -5512,7 +5862,10 @@ impl<'ctx> CodeGen<'ctx> {
                                     let found = self
                                         .builder
                                         .build_int_compare(
-                                            IntPredicate::EQ, cmp, zero_i32, "ct_found",
+                                            IntPredicate::EQ,
+                                            cmp,
+                                            zero_i32,
+                                            "ct_found",
                                         )
                                         .unwrap();
                                     self.builder
@@ -5526,9 +5879,7 @@ impl<'ctx> CodeGen<'ctx> {
                                         .build_int_add(i_val, one_i64, "ct_next_i")
                                         .unwrap();
                                     i_phi.add_incoming(&[(&next_i, ct_inc_bb)]);
-                                    self.builder
-                                        .build_unconditional_branch(ct_loop_bb)
-                                        .unwrap();
+                                    self.builder.build_unconditional_branch(ct_loop_bb).unwrap();
 
                                     // Found
                                     self.builder.position_at_end(ct_found_bb);
@@ -5539,8 +5890,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                                     // Not found
                                     self.builder.position_at_end(ct_not_bb);
-                                    let false_val =
-                                        self.context.bool_type().const_int(0, false);
+                                    let false_val = self.context.bool_type().const_int(0, false);
                                     self.builder
                                         .build_unconditional_branch(ct_merge_bb)
                                         .unwrap();
@@ -5571,8 +5921,14 @@ impl<'ctx> CodeGen<'ctx> {
                     let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
 
                     // Extract data pointer (field 0) and vtable pointer (field 1)
-                    let data_ptr = self.builder.build_extract_value(fat_struct, 0, "dyn_data").unwrap();
-                    let vtable_ptr = self.builder.build_extract_value(fat_struct, 1, "dyn_vtable").unwrap();
+                    let data_ptr = self
+                        .builder
+                        .build_extract_value(fat_struct, 0, "dyn_data")
+                        .unwrap();
+                    let vtable_ptr = self
+                        .builder
+                        .build_extract_value(fat_struct, 1, "dyn_vtable")
+                        .unwrap();
 
                     // Find method index in trait definition
                     if let Some(trait_methods) = self.trait_defs.get(trait_name).cloned() {
@@ -5594,18 +5950,24 @@ impl<'ctx> CodeGen<'ctx> {
                                 )
                             }
                             .unwrap();
-                            let fn_ptr = self.builder.build_load(ptr_ty, fn_ptr_gep, "fn_ptr").unwrap().into_pointer_value();
+                            let fn_ptr = self
+                                .builder
+                                .build_load(ptr_ty, fn_ptr_gep, "fn_ptr")
+                                .unwrap()
+                                .into_pointer_value();
 
                             // Build the function type for the indirect call
                             // First param is self (pointer to concrete data)
-                            let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_ty.into()];
+                            let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> =
+                                vec![ptr_ty.into()];
                             // Skip self (param 0) and add remaining params
                             for pt in param_types.iter().skip(1) {
                                 llvm_param_types.push(ny_to_llvm(self.context, pt).into());
                             }
 
                             // Compile additional args
-                            let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = vec![data_ptr.into()];
+                            let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                vec![data_ptr.into()];
                             for arg in args {
                                 let val = self.compile_expr(arg, function)?.unwrap();
                                 call_args.push(val.into());
@@ -5618,7 +5980,10 @@ impl<'ctx> CodeGen<'ctx> {
                                 ny_to_llvm(self.context, &ret_ty).fn_type(&llvm_param_types, false)
                             };
 
-                            let call = self.builder.build_indirect_call(fn_type, fn_ptr, &call_args, "dyn_call").unwrap();
+                            let call = self
+                                .builder
+                                .build_indirect_call(fn_type, fn_ptr, &call_args, "dyn_call")
+                                .unwrap();
                             if ret_ty == NyType::Unit {
                                 return Ok(None);
                             } else {
@@ -5658,16 +6023,29 @@ impl<'ctx> CodeGen<'ctx> {
                         _ => String::new(),
                     };
                     let qualified_name = format!("{}_{}", struct_name, method);
-                    if let Some((func, param_types, ret_ty)) = self.functions.get(&qualified_name).cloned() {
+                    if let Some((func, param_types, ret_ty)) =
+                        self.functions.get(&qualified_name).cloned()
+                    {
                         // Auto-deref: if object is *Struct but method expects Struct (by value),
                         // load the struct through the pointer
                         let self_val = if let NyType::Pointer(inner) = &obj_ty {
-                            if let NyType::Struct { name: sn, fields: sf } = inner.as_ref() {
-                                let st = NyType::Struct { name: sn.clone(), fields: sf.clone() };
+                            if let NyType::Struct {
+                                name: sn,
+                                fields: sf,
+                            } = inner.as_ref()
+                            {
+                                let st = NyType::Struct {
+                                    name: sn.clone(),
+                                    fields: sf.clone(),
+                                };
                                 if !param_types.is_empty() && param_types[0] == st {
                                     let struct_ty = self.get_or_create_llvm_struct_type(sn, sf);
                                     self.builder
-                                        .build_load(struct_ty, obj_val.into_pointer_value(), "autoderef")
+                                        .build_load(
+                                            struct_ty,
+                                            obj_val.into_pointer_value(),
+                                            "autoderef",
+                                        )
                                         .unwrap()
                                 } else {
                                     obj_val
@@ -6280,13 +6658,18 @@ impl<'ctx> CodeGen<'ctx> {
                 let def = self.compile_expr(default, function)?.unwrap();
 
                 // Check if val is null
-                let is_null = self.builder.build_is_null(val.into_pointer_value(), "is_null").unwrap();
+                let is_null = self
+                    .builder
+                    .build_is_null(val.into_pointer_value(), "is_null")
+                    .unwrap();
 
                 let then_bb = self.context.append_basic_block(*function, "nc_nonnull");
                 let else_bb = self.context.append_basic_block(*function, "nc_null");
                 let merge_bb = self.context.append_basic_block(*function, "nc_merge");
 
-                self.builder.build_conditional_branch(is_null, else_bb, then_bb).unwrap();
+                self.builder
+                    .build_conditional_branch(is_null, else_bb, then_bb)
+                    .unwrap();
 
                 // Non-null: use val
                 self.builder.position_at_end(then_bb);
@@ -6317,42 +6700,69 @@ impl<'ctx> CodeGen<'ctx> {
                     }
 
                     // Get the target function
-                    let (target_fn, _, _) = self.functions.get(callee).cloned().unwrap_or_else(|| {
-                        // Try qualified name (method)
-                        let fn_val = self.module.get_function(callee).unwrap();
-                        (fn_val, vec![], NyType::Unit)
-                    });
+                    let (target_fn, _, _) =
+                        self.functions.get(callee).cloned().unwrap_or_else(|| {
+                            // Try qualified name (method)
+                            let fn_val = self.module.get_function(callee).unwrap();
+                            (fn_val, vec![], NyType::Unit)
+                        });
 
                     if args.is_empty() {
                         // No args — submit function directly with null arg
                         let async_pool = self.get_or_declare_ny_async_pool();
-                        let pool_ptr = self.builder.build_call(async_pool, &[], "go_pool").unwrap()
-                            .try_as_basic_value().basic().unwrap();
+                        let pool_ptr = self
+                            .builder
+                            .build_call(async_pool, &[], "go_pool")
+                            .unwrap()
+                            .try_as_basic_value()
+                            .basic()
+                            .unwrap();
                         let pool_submit = self.get_or_declare_ny_pool_submit_arg();
                         let null_ptr = ptr_ty.const_null();
-                        self.builder.build_call(
-                            pool_submit,
-                            &[pool_ptr.into(), target_fn.as_global_value().as_pointer_value().into(), null_ptr.into()],
-                            "",
-                        ).unwrap();
+                        self.builder
+                            .build_call(
+                                pool_submit,
+                                &[
+                                    pool_ptr.into(),
+                                    target_fn.as_global_value().as_pointer_value().into(),
+                                    null_ptr.into(),
+                                ],
+                                "",
+                            )
+                            .unwrap();
                     } else {
                         // Pack args into a heap-allocated struct
-                        let arg_types: Vec<inkwell::types::BasicTypeEnum> = arg_vals.iter().map(|v| v.get_type()).collect();
+                        let arg_types: Vec<inkwell::types::BasicTypeEnum> =
+                            arg_vals.iter().map(|v| v.get_type()).collect();
                         let arg_struct_ty = self.context.struct_type(&arg_types, false);
                         let malloc_fn = self.get_or_declare_malloc();
                         let arg_size = arg_struct_ty.size_of().unwrap();
-                        let arg_ptr = self.builder
+                        let arg_ptr = self
+                            .builder
                             .build_call(malloc_fn, &[arg_size.into()], "go_args")
-                            .unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+                            .unwrap()
+                            .try_as_basic_value()
+                            .basic()
+                            .unwrap()
+                            .into_pointer_value();
 
                         // Store each arg
                         for (i, val) in arg_vals.iter().enumerate() {
-                            let gep = self.builder.build_struct_gep(arg_struct_ty, arg_ptr, i as u32, &format!("go_a{}", i)).unwrap();
+                            let gep = self
+                                .builder
+                                .build_struct_gep(
+                                    arg_struct_ty,
+                                    arg_ptr,
+                                    i as u32,
+                                    &format!("go_a{}", i),
+                                )
+                                .unwrap();
                             self.builder.build_store(gep, *val).unwrap();
                         }
 
                         // Create thunk: void* thunk(void* packed_args)
-                        static GO_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        static GO_COUNTER: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
                         let id = GO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let thunk_name = format!("__go_thunk_{}", id);
                         let thunk_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
@@ -6364,10 +6774,22 @@ impl<'ctx> CodeGen<'ctx> {
 
                         // Unpack args
                         let packed_ptr = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
-                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                            Vec::new();
                         for (i, ty) in arg_types.iter().enumerate() {
-                            let gep = self.builder.build_struct_gep(arg_struct_ty, packed_ptr, i as u32, &format!("unp{}", i)).unwrap();
-                            let val = self.builder.build_load(*ty, gep, &format!("arg{}", i)).unwrap();
+                            let gep = self
+                                .builder
+                                .build_struct_gep(
+                                    arg_struct_ty,
+                                    packed_ptr,
+                                    i as u32,
+                                    &format!("unp{}", i),
+                                )
+                                .unwrap();
+                            let val = self
+                                .builder
+                                .build_load(*ty, gep, &format!("arg{}", i))
+                                .unwrap();
                             call_args.push(val.into());
                         }
 
@@ -6376,7 +6798,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                         // Free the args struct
                         let free_fn = self.get_or_declare_free();
-                        self.builder.build_call(free_fn, &[packed_ptr.into()], "").unwrap();
+                        self.builder
+                            .build_call(free_fn, &[packed_ptr.into()], "")
+                            .unwrap();
 
                         // Return null
                         let null = ptr_ty.const_null();
@@ -6387,14 +6811,25 @@ impl<'ctx> CodeGen<'ctx> {
 
                         // Submit thunk to pool
                         let async_pool = self.get_or_declare_ny_async_pool();
-                        let pool_ptr = self.builder.build_call(async_pool, &[], "go_pool").unwrap()
-                            .try_as_basic_value().basic().unwrap();
+                        let pool_ptr = self
+                            .builder
+                            .build_call(async_pool, &[], "go_pool")
+                            .unwrap()
+                            .try_as_basic_value()
+                            .basic()
+                            .unwrap();
                         let pool_submit = self.get_or_declare_ny_pool_submit_arg();
-                        self.builder.build_call(
-                            pool_submit,
-                            &[pool_ptr.into(), thunk_fn.as_global_value().as_pointer_value().into(), arg_ptr.into()],
-                            "",
-                        ).unwrap();
+                        self.builder
+                            .build_call(
+                                pool_submit,
+                                &[
+                                    pool_ptr.into(),
+                                    thunk_fn.as_global_value().as_pointer_value().into(),
+                                    arg_ptr.into(),
+                                ],
+                                "",
+                            )
+                            .unwrap();
                     }
                 }
                 Ok(None)

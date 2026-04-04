@@ -7,9 +7,7 @@ use super::{Dependency, Manifest, PkgError};
 pub fn cmd_init(project_dir: &Path) -> Result<(), PkgError> {
     let manifest_path = project_dir.join("ny.pkg");
     if manifest_path.exists() {
-        return Err(PkgError::AlreadyExists(
-            "ny.pkg already exists".to_string(),
-        ));
+        return Err(PkgError::AlreadyExists("ny.pkg already exists".to_string()));
     }
 
     let name = project_dir
@@ -47,8 +45,9 @@ pub fn cmd_add(
 ) -> Result<(), PkgError> {
     fetch::check_git()?;
 
-    let root = Manifest::find_project_root(start_dir)
-        .ok_or_else(|| PkgError::NotFound("no ny.pkg found — run `ny pkg init` first".to_string()))?;
+    let root = Manifest::find_project_root(start_dir).ok_or_else(|| {
+        PkgError::NotFound("no ny.pkg found — run `ny pkg init` first".to_string())
+    })?;
 
     let mut manifest = Manifest::load(&root)?;
     let pkg_name = name
@@ -87,8 +86,9 @@ pub fn cmd_add(
 pub fn cmd_build(start_dir: &Path) -> Result<(), PkgError> {
     fetch::check_git()?;
 
-    let root = Manifest::find_project_root(start_dir)
-        .ok_or_else(|| PkgError::NotFound("no ny.pkg found — run `ny pkg init` first".to_string()))?;
+    let root = Manifest::find_project_root(start_dir).ok_or_else(|| {
+        PkgError::NotFound("no ny.pkg found — run `ny pkg init` first".to_string())
+    })?;
 
     let mut manifest = Manifest::load(&root)?;
     let deps_dir = Manifest::deps_dir(&root);

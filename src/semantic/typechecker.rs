@@ -103,6 +103,16 @@ impl TypeChecker {
                         })));
                     }
                 }
+                // Check HashMap<K,V>
+                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(comma) = inner.find(',') {
+                        let k_str = inner[..comma].trim();
+                        let v_str = inner[comma + 1..].trim();
+                        let k_ty = NyType::from_name(k_str).unwrap_or(NyType::Str);
+                        let v_ty = NyType::from_name(v_str).unwrap_or(NyType::I32);
+                        return Some(NyType::HashMap(Box::new(k_ty), Box::new(v_ty)));
+                    }
+                }
                 // Check struct types
                 if let Some(fields) = self.structs.get(name) {
                     return Some(NyType::Struct {
@@ -761,6 +771,11 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
+                // hmap_new() → HashMap<str, i32> (annotation overrides)
+                if callee == "hmap_new" {
+                    return NyType::HashMap(Box::new(NyType::Str), Box::new(NyType::I32));
+                }
+
                 // String→String Map
                 if callee == "smap_new" {
                     return NyType::Pointer(Box::new(NyType::U8));
@@ -1627,6 +1642,37 @@ impl TypeChecker {
         span: Span,
     ) -> NyType {
         // Built-in Vec methods
+        // HashMap<K,V> methods
+        if let NyType::HashMap(_key_ty, val_ty) = receiver_ty {
+            match method {
+                "insert" => {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                "get" => {
+                    for arg in args { self.check_expr(arg); }
+                    return *val_ty.clone();
+                }
+                "contains" => {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Bool;
+                }
+                "len" => return NyType::I64,
+                "remove" | "free" => {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                _ => {
+                    for arg in args { self.check_expr(arg); }
+                    self.errors.push(CompileError::type_error(
+                        format!("no method '{}' found for HashMap type", method),
+                        span,
+                    ));
+                    return NyType::I32;
+                }
+            }
+        }
+
         if let NyType::Vec(elem) = receiver_ty {
             match method {
                 "push" => {
@@ -1948,6 +1994,7 @@ impl TypeChecker {
                         // Allow numeric coercion and Vec coercion
                         let compatible = init_ty == declared_ty
                             || (init_ty.is_vec() && declared_ty.is_vec())
+                            || (init_ty.is_hashmap() && declared_ty.is_hashmap())
                             || (init_ty.is_numeric() && declared_ty.is_numeric());
                         if !compatible {
                             self.errors.push(CompileError::type_error(

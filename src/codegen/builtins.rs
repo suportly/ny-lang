@@ -25,6 +25,9 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "fclose" | "fread_byte" | "fwrite_str" | "map_get" | "str_to_int" => Some(NyType::I32),
         "map_contains" => Some(NyType::Bool),
 
+        // Generic HashMap
+        "hmap_new" => Some(NyType::HashMap(Box::new(NyType::Str), Box::new(NyType::I32))),
+
         // String→String Map
         "smap_new" => Some(NyType::Pointer(Box::new(NyType::U8))),
         "smap_insert" => Some(NyType::Unit),
@@ -146,6 +149,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "smap_contains",
     "smap_len",
     "smap_free",
+    "hmap_new",
     "map_len",
     "arena_new",
     "arena_alloc",

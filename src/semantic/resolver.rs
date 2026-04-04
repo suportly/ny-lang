@@ -123,6 +123,16 @@ impl Resolver {
                         })));
                     }
                 }
+                // Check HashMap<K,V>
+                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(comma) = inner.find(',') {
+                        let k_str = inner[..comma].trim();
+                        let v_str = inner[comma + 1..].trim();
+                        let k_ty = NyType::from_name(k_str).unwrap_or(NyType::Str);
+                        let v_ty = NyType::from_name(v_str).unwrap_or(NyType::I32);
+                        return Some(NyType::HashMap(Box::new(k_ty), Box::new(v_ty)));
+                    }
+                }
                 // Try registered struct types
                 if let Some(fields) = self.structs.get(name) {
                     return Some(NyType::Struct {

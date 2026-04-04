@@ -152,7 +152,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg("-lpthread");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
-    for rt_name in &["hashmap.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c"] {
+    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c"] {
         if let Some(rt_path) = find_runtime_file(rt_name) {
             cmd.arg(rt_path);
         }
@@ -257,6 +257,16 @@ impl<'ctx> CodeGen<'ctx> {
                             name: inner.to_string(),
                             variants: variants.clone(),
                         }));
+                    }
+                }
+                // Check HashMap<K,V> pattern
+                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(comma) = inner.find(',') {
+                        let k_str = inner[..comma].trim();
+                        let v_str = inner[comma + 1..].trim();
+                        let k_ty = NyType::from_name(k_str).unwrap_or(NyType::Str);
+                        let v_ty = NyType::from_name(v_str).unwrap_or(NyType::I32);
+                        return NyType::HashMap(Box::new(k_ty), Box::new(v_ty));
                     }
                 }
                 // Check registered struct types

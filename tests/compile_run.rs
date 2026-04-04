@@ -648,6 +648,11 @@ fn test_vec_str2() {
 }
 
 #[test]
+fn test_hashmap_generic() {
+    assert_eq!(compile_and_run("hashmap_generic.ny"), 42);
+}
+
+#[test]
 fn test_smap() {
     assert_eq!(compile_and_run("smap_test.ny"), 42);
 }

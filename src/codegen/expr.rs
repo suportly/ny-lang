@@ -758,6 +758,16 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
+                // hmap_new() — create generic HashMap
+                if callee == "hmap_new" {
+                    // Use 16 bytes as default val_size (covers str {ptr,len}, i64, f64)
+                    let val_size = self.context.i64_type().const_int(16, false);
+                    let fn_val = self.get_or_declare_ny_hmap_new();
+                    let ptr = self.builder.build_call(fn_val, &[val_size.into()], "hmap_ptr").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+
                 // === String→String Map (smap) ===
                 if callee == "smap_new" {
                     let fn_val = self.get_or_declare_ny_smap_new();
@@ -2560,6 +2570,74 @@ impl<'ctx> CodeGen<'ctx> {
                 ..
             } => {
                 let obj_ty = self.infer_expr_type(object);
+
+                // Handle HashMap<K,V> methods
+                if let NyType::HashMap(_key_ty, val_ty) = &obj_ty {
+                    let val_llvm = ny_to_llvm(self.context, val_ty);
+                    // Buffer type for C runtime: always 16 bytes (max value size)
+                    let buf_ty = self.context.i8_type().array_type(16);
+
+                    match method.as_str() {
+                        "insert" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
+                            let kp = self.builder.build_extract_value(key_val, 0, "hi_kp").unwrap();
+                            let kl = self.builder.build_extract_value(key_val, 1, "hi_kl").unwrap();
+                            let val = self.compile_expr(&args[1], function)?.unwrap();
+                            // Alloca 16-byte buffer, store value at start
+                            let val_alloca = self.builder.build_alloca(buf_ty, "hi_buf").unwrap();
+                            self.builder.build_store(val_alloca, val).unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_insert();
+                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), val_alloca.into()], "").unwrap();
+                            return Ok(None);
+                        }
+                        "get" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
+                            let kp = self.builder.build_extract_value(key_val, 0, "hg_kp").unwrap();
+                            let kl = self.builder.build_extract_value(key_val, 1, "hg_kl").unwrap();
+                            // Alloca 16-byte buffer, read value
+                            let out_alloca = self.builder.build_alloca(buf_ty, "hg_buf").unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_get();
+                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), out_alloca.into()], "").unwrap();
+                            let result = self.builder.build_load(val_llvm, out_alloca, "hg_val").unwrap();
+                            return Ok(Some(result));
+                        }
+                        "contains" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
+                            let kp = self.builder.build_extract_value(key_val, 0, "hc_kp").unwrap();
+                            let kl = self.builder.build_extract_value(key_val, 1, "hc_kl").unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_contains();
+                            let result = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "hc_r").unwrap()
+                                .try_as_basic_value().basic().unwrap();
+                            return Ok(Some(result));
+                        }
+                        "len" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_len();
+                            let result = self.builder.build_call(fn_val, &[map_ptr.into()], "hl_r").unwrap()
+                                .try_as_basic_value().basic().unwrap();
+                            return Ok(Some(result));
+                        }
+                        "remove" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let key_val = self.compile_expr(&args[0], function)?.unwrap().into_struct_value();
+                            let kp = self.builder.build_extract_value(key_val, 0, "hr_kp").unwrap();
+                            let kl = self.builder.build_extract_value(key_val, 1, "hr_kl").unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_remove();
+                            self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "").unwrap();
+                            return Ok(None);
+                        }
+                        "free" => {
+                            let map_ptr = self.compile_expr(object, function)?.unwrap();
+                            let fn_val = self.get_or_declare_ny_hmap_free();
+                            self.builder.build_call(fn_val, &[map_ptr.into()], "").unwrap();
+                            return Ok(None);
+                        }
+                        _ => {}
+                    }
+                }
 
                 // Handle built-in Vec methods
                 if let NyType::Vec(elem_ty) = &obj_ty {

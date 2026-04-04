@@ -149,6 +149,12 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MethodCall { object, method, .. } => {
                 let obj_ty = self.infer_expr_type(object);
                 match &obj_ty {
+                    NyType::HashMap(_, val) => match method.as_str() {
+                        "get" => *val.clone(),
+                        "len" => NyType::I64,
+                        "contains" => NyType::Bool,
+                        _ => NyType::Unit,
+                    },
                     NyType::Vec(elem) => match method.as_str() {
                         "len" => NyType::I64,
                         "get" | "pop" | "sum" => *elem.clone(),

@@ -42,6 +42,7 @@ pub enum NyType {
         lanes: u32,
     },
     Vec(Box<NyType>),
+    HashMap(Box<NyType>, Box<NyType>),
 }
 
 impl NyType {
@@ -102,6 +103,10 @@ impl NyType {
 
     pub fn is_vec(&self) -> bool {
         matches!(self, NyType::Vec(_))
+    }
+
+    pub fn is_hashmap(&self) -> bool {
+        matches!(self, NyType::HashMap(_, _))
     }
 
     pub fn is_simd(&self) -> bool {
@@ -210,9 +215,21 @@ impl NyType {
                     if let Some(elem_ty) = NyType::from_name(inner) {
                         return Some(NyType::Vec(Box::new(elem_ty)));
                     }
-                    // Unknown inner type (might be a struct) — return None
-                    // so the typechecker can resolve it from struct definitions
                     return None;
+                }
+                // Check for HashMap<K,V> pattern
+                if let Some(inner) = name.strip_prefix("HashMap<").and_then(|s| s.strip_suffix('>'))
+                {
+                    if let Some(comma) = inner.find(',') {
+                        let key_str = inner[..comma].trim();
+                        let val_str = inner[comma + 1..].trim();
+                        if let (Some(k), Some(v)) =
+                            (NyType::from_name(key_str), NyType::from_name(val_str))
+                        {
+                            return Some(NyType::HashMap(Box::new(k), Box::new(v)));
+                        }
+                        return None; // struct key/val resolved elsewhere
+                    }
                 }
                 None
             }
@@ -255,6 +272,7 @@ impl fmt::Display for NyType {
             NyType::Simd { elem, lanes } => write!(f, "{}x{}", elem, lanes),
             NyType::Slice(elem) => write!(f, "[]{}", elem),
             NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
+            NyType::HashMap(k, v) => write!(f, "HashMap<{},{}>", k, v),
             NyType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {

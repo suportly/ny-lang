@@ -958,24 +958,6 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_gc_collect", fn_ty, None)
     }
 
-    pub(super) fn get_or_declare_ny_gc_root_push(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_root_push") {
-            return f;
-        }
-        let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
-        self.module.add_function("ny_gc_root_push", fn_ty, None)
-    }
-
-    pub(super) fn get_or_declare_ny_gc_root_pop(&self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("ny_gc_root_pop") {
-            return f;
-        }
-        let i64_ty = self.context.i64_type();
-        let fn_ty = self.context.void_type().fn_type(&[i64_ty.into()], false);
-        self.module.add_function("ny_gc_root_pop", fn_ty, None)
-    }
-
     pub(super) fn get_or_declare_ny_gc_stats(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_gc_stats") {
             return f;

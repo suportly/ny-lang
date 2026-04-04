@@ -408,7 +408,7 @@ fn main() {
         Commands::Repl => {
             eprintln!("Ny Lang REPL v0.1.0 — type expressions, :q to quit");
             eprintln!("  Wrap in fn main() -> i32 {{ ... }} automatically.");
-            eprintln!("");
+            eprintln!();
 
             let tmp_dir = std::env::temp_dir();
             let tmp_src = tmp_dir.join("ny_repl.ny");

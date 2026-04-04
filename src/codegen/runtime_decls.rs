@@ -223,6 +223,17 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_ty = self.context.i64_type();
         self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
+    pub(super) fn get_or_declare_ny_str_join(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_str_join") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = ptr_ty.fn_type(
+            &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()],
+            false,
+        );
+        self.module.add_function("ny_str_join", fn_ty, None)
+    }
+
     // Tensor<f64>
     pub(super) fn get_or_declare_tensor_fn(&self, name: &str) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function(name) { return f; }

@@ -158,6 +158,7 @@ impl<'ctx> CodeGen<'ctx> {
                     NyType::Vec(elem) => match method.as_str() {
                         "len" => NyType::I64,
                         "get" | "pop" | "sum" => *elem.clone(),
+                        "join" => NyType::Str,
                         "contains" => NyType::Bool,
                         "index_of" => NyType::I32,
                         "map" | "filter" => NyType::Vec(elem.clone()),

@@ -1724,6 +1724,10 @@ impl TypeChecker {
                     return NyType::Unit;
                 }
                 "pop" | "sum" => return *elem.clone(),
+                "join" => {
+                    if args.len() == 1 { self.check_expr(&args[0]); }
+                    return NyType::Str;
+                }
                 "sort" | "reverse" | "clear" => return NyType::Unit,
                 "map" | "filter" => {
                     if args.len() == 1 {

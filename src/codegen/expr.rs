@@ -3955,6 +3955,73 @@ impl<'ctx> CodeGen<'ctx> {
                             phi.add_incoming(&[(&early_val, early_bb), (&done_val, done_bb)]);
                             return Ok(Some(phi.as_basic_value()));
                         }
+                        "join" => {
+                            // Vec<str>.join(sep) -> str
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "join_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "join_len")
+                                .unwrap()
+                                .into_int_value();
+                            let sep_val = self
+                                .compile_expr(&args[0], function)?
+                                .unwrap()
+                                .into_struct_value();
+                            let sep_ptr = self
+                                .builder
+                                .build_extract_value(sep_val, 0, "join_sp")
+                                .unwrap();
+                            let sep_len = self
+                                .builder
+                                .build_extract_value(sep_val, 1, "join_sl")
+                                .unwrap();
+                            let i64_ty = self.context.i64_type();
+                            let out_len_ptr = self
+                                .builder
+                                .build_alloca(i64_ty, "join_olp")
+                                .unwrap();
+                            let join_fn = self.get_or_declare_ny_str_join();
+                            let result_ptr = self
+                                .builder
+                                .build_call(
+                                    join_fn,
+                                    &[
+                                        data_ptr.into(),
+                                        len.into(),
+                                        sep_ptr.into(),
+                                        sep_len.into(),
+                                        out_len_ptr.into(),
+                                    ],
+                                    "join_r",
+                                )
+                                .unwrap()
+                                .try_as_basic_value()
+                                .basic()
+                                .unwrap()
+                                .into_pointer_value();
+                            let out_len = self
+                                .builder
+                                .build_load(i64_ty, out_len_ptr, "join_rl")
+                                .unwrap()
+                                .into_int_value();
+                            let str_ty = str_type(self.context);
+                            let result = str_ty.const_zero();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, result_ptr, 0, "join_rp")
+                                .unwrap();
+                            let result = self
+                                .builder
+                                .build_insert_value(result, out_len, 1, "join_rl2")
+                                .unwrap();
+                            return Ok(Some(result.into_struct_value().into()));
+                        }
                         "sum" => {
                             // v.sum() -> T — sum all elements
                             let obj_val = self.compile_expr(object, function)?.unwrap();

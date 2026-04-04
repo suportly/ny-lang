@@ -88,6 +88,38 @@ void ny_trace_print(void) {
     }
 }
 
+// Join an array of {ptr, len} string slices with a separator.
+// items: array of NyStrSlice (each 16 bytes: ptr + len)
+// count: number of items
+// sep_ptr/sep_len: separator string
+// Returns: malloc'd joined string, sets *out_len
+char *ny_str_join(const void *items, long count,
+                  const char *sep_ptr, long sep_len, long *out_len) {
+    typedef struct { const char *ptr; long len; } Slice;
+    const Slice *slices = (const Slice *)items;
+
+    // Calculate total length
+    long total = 0;
+    for (long i = 0; i < count; i++) {
+        total += slices[i].len;
+        if (i > 0) total += sep_len;
+    }
+
+    char *result = (char *)malloc(total > 0 ? total : 1);
+    char *dst = result;
+    for (long i = 0; i < count; i++) {
+        if (i > 0 && sep_len > 0) {
+            memcpy(dst, sep_ptr, sep_len);
+            dst += sep_len;
+        }
+        memcpy(dst, slices[i].ptr, slices[i].len);
+        dst += slices[i].len;
+    }
+
+    *out_len = total;
+    return result;
+}
+
 // Remove a file. Returns 0 on success, -1 on failure.
 int ny_remove_file(const char *path, long path_len) {
     char *cpath = (char *)malloc(path_len + 1);

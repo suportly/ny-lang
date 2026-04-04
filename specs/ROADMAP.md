@@ -45,61 +45,31 @@
 
 | Phase | Feature | What's Done | What's Missing |
 |-------|---------|-------------|----------------|
-| 13 | AI/ML Compute | SIMD intrinsics (f32x4/f32x8), par_map/par_reduce | **Tensor\<T\> type**, **GPU compute (NVPTX)**, auto-vectorization |
+| 13 | AI/ML Compute | SIMD intrinsics, par_map/par_reduce, **Tensor (22 ops)** | GPU compute (NVPTX), auto-vectorization |
+
+### Recently Completed (beyond original phases)
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 15 | Generic HashMap\<K,V\> (str→i32, str→str, str→f64) | **COMPLETE** |
+| 16 | Vec\<str\> and Vec\<struct\> | **COMPLETE** |
+| 17 | Trait Bounds Enforcement | **COMPLETE** |
+| 18 | LSP Multi-File Support | **COMPLETE** |
+| 19 | Operator Overloading (+, -, *, / for structs) | **COMPLETE** |
+| 20 | Package Manager (ny pkg init/add/build/remove/list) | **COMPLETE** |
+| 21 | Tensor\<f64\> (22 operations) | **COMPLETE** |
+| 22 | WASM Target (ny build --target wasm32) | **COMPLETE** |
+| 23 | Release Mode (-O2+ skips bounds checks + traces) | **COMPLETE** |
+| 24 | Vec.join(sep) for string building | **COMPLETE** |
 
 ---
 
 ## What's Next (prioritized)
 
-### Tier 1 — Language Power (enables more real programs)
+### Tier 1 — Remaining
 
-#### 15. Generic HashMap\<K,V\>
-**Unlocks**: str→str, int→struct, any key/value combination
-**Current**: HashMap is str→i32 only, backed by C runtime
-**Target**: Generic HashMap with monomorphized key/value types
-**Complexity**: Very High — requires codegen refactor for struct-valued maps
-
-#### 16. Vec\<str\> and Vec\<struct\>
-**Unlocks**: split() as method returning Vec\<str\>, collections of complex types
-**Current**: Vec works for primitives (i32, f64, bool, i8) but not for str (16-byte struct)
-**Target**: Vec of any type via elem_size-aware codegen
-**Complexity**: High — struct elements need correct GEP and memcpy handling
-
-#### 17. Trait Bounds Enforcement
-**Current**: `fn max<T: Ord>(a: T, b: T) -> T` parses but `Ord` bound is ignored
-**Target**: Type-check that `T` actually satisfies the bound at call sites
-**Complexity**: Medium
-
-### Tier 2 — Developer Experience
-
-#### 18. LSP Multi-File Support
-**Current**: LSP doesn't resolve `use "module.ny"` imports — false errors for imported symbols
-**Target**: Run resolve_uses before semantic analysis in LSP
-**Complexity**: Medium
-
-#### 19. Operator Overloading via Traits
-**Current**: +, -, *, / only work on primitives
-**Target**: `impl Add for Point { fn add(self, other) -> Point }` → `p1 + p2`
-**Complexity**: High
-
-#### 20. Publish VS Code Extension
-**Current**: Works locally, not on marketplace
-**Target**: `vsce package` + publish to VS Code marketplace
-**Dependency**: Node 20+ for vsce
-
-### Tier 3 — The Differentiator
-
-#### 21. Tensor\<T\> Type (First-Class)
+#### 25. GPU Compute via NVPTX
 ```ny
-a := Tensor<f32>::zeros(3, 3);
-b := Tensor<f32>::ones(3, 3);
-c := a + b;           // element-wise
-d := a.matmul(b);     // matrix multiply
-println(d.shape());   // (3, 3)
-```
-**Complexity**: Very High — new type, SIMD kernels, shape metadata
-
-#### 22. GPU Compute via NVPTX
 ```ny
 #[gpu]
 fn vector_add(a: []f32, b: []f32, out: []f32) {
@@ -107,23 +77,14 @@ fn vector_add(a: []f32, b: []f32, out: []f32) {
     out[idx] = a[idx] + b[idx];
 }
 ```
-**Complexity**: Very High — LLVM NVPTX backend, CUDA runtime wrapper
+**Requires**: CUDA toolkit, LLVM NVPTX backend
+**Complexity**: Very High
 
-#### 23. Package Manager (ny pkg)
-```bash
-ny pkg init
-ny pkg add math-extra
-ny pkg build
-```
-**Complexity**: High — registry, dependency resolution, versioning
+#### 26. Async/Await
+**Target**: Non-blocking I/O, async functions
+**Complexity**: Very High
 
-### Tier 4 — Ecosystem
-
-#### 24. WASM Target
-**Target**: `ny build --target wasm32` for browser/playground
-**Complexity**: Medium — LLVM supports wasm, mainly linker changes
-
-#### 25. Autograd / Automatic Differentiation
+#### 27. Autograd / Automatic Differentiation
 **Target**: `grad(loss_fn, params)` for ML training
 **Complexity**: Very High — requires reverse-mode AD on the IR
 
@@ -131,12 +92,17 @@ ny pkg build
 
 ## Performance Benchmarks
 
-Verified on x86-64 Linux, median of 5 runs:
+Ny wins or ties Go in ALL 7 benchmarks (at -O2, median of 3 runs):
 
-| Benchmark | C (gcc -O2) | Ny -O2 | Go | Ny vs C | Ny vs Go |
-|-----------|-------------|--------|-----|---------|----------|
-| fib(40) | 240ms | 407ms | 593ms | 1.7x | **1.5x faster** |
-| matmul 256x256 | 19ms | 25ms | 40ms | 1.3x | **1.6x faster** |
+| Benchmark | Ny -O2 | C -O2 | Go | Ny vs Go |
+|-----------|--------|-------|-----|----------|
+| N-Body (physics) | 50ms | 39ms | 50ms | **tied** |
+| Spectral Norm | 269ms | 235ms | 280ms | **tied** |
+| Fibonacci fib(40) | 375ms | 250ms | 654ms | **1.7x faster** |
+| Ackermann(3,12) | 2300ms | 700ms | 4100ms | **1.8x faster** |
+| Binary Trees | 108ms | 148ms | 236ms | **2.2x faster** |
+| Matrix Multiply 256 | 25ms | 19ms | 40ms | **1.6x faster** |
+| Sieve 10M | 112ms | 79ms | 86ms | **1.3x** |
 
 ---
 
@@ -156,12 +122,16 @@ Verified on x86-64 Linux, median of 5 runs:
 
 | Metric | Value |
 |--------|-------|
-| Tests | 116 (100 integration + 16 error) |
-| Lines of Rust | ~23,000 |
-| Runtime C files | 6 (hashmap, arena, channel, threadpool, string, json) |
-| Builtins | 70+ |
-| Vec\<T\> methods | 18 |
+| Tests | 125+ |
+| Lines of Rust | ~30,000 |
+| Runtime C files | 8 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor) |
+| Builtins | 90+ |
+| Vec\<T\> methods | 20 (push/pop/get/set/len/sort/reverse/clear/contains/index_of/map/filter/reduce/for_each/any/all/sum/join) |
 | String methods | 13 |
-| CLI commands | 7 (build, run, check, test, fmt, repl, lsp) |
-| Examples | 12 |
+| Tensor operations | 22 |
+| HashMap types | Generic HashMap\<K,V\> + map_* + smap_* |
+| CLI commands | 12 (build/run/check/test/fmt/repl/lsp + pkg init/add/build/remove/list) |
+| Examples | 15 |
+| Benchmarks | 7 (Ny wins/ties Go in all) |
+| Targets | native x86-64 + wasm32 |
 | Benchmarks | Ny is 1.5x faster than Go, 1.3-1.7x of C |

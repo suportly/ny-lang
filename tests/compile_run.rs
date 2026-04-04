@@ -658,6 +658,11 @@ fn test_tensor_ops() {
 }
 
 #[test]
+fn test_vec_join() {
+    assert_eq!(compile_and_run("vec_join.ny"), 42);
+}
+
+#[test]
 fn test_smap() {
     assert_eq!(compile_and_run("smap_test.ny"), 42);
 }

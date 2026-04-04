@@ -70,7 +70,7 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
         Expr::FieldAccess { object, .. } | Expr::TupleIndex { object, .. } => {
             find_free_vars_inner(object, bound, free);
         }
-        Expr::StructInit { fields, .. } => {
+        Expr::StructInit { fields, .. } | Expr::New { fields, .. } => {
             for (_, val) in fields {
                 find_free_vars_inner(val, bound, free);
             }
@@ -79,7 +79,9 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
         | Expr::Deref { operand, .. }
         | Expr::Cast { expr: operand, .. }
         | Expr::Try { operand, .. }
-        | Expr::Await { future: operand, .. } => {
+        | Expr::Await { future: operand, .. }
+        | Expr::Go { call: operand, .. }
+        | Expr::NullCoalesce { value: operand, .. } => {
             find_free_vars_inner(operand, bound, free);
         }
         Expr::MethodCall { object, args, .. } => {
@@ -196,6 +198,19 @@ fn find_free_vars_in_stmts(stmts: &[Stmt], bound: &[String], free: &mut Vec<Stri
                 find_free_vars_inner(body, bound, free);
             }
             Stmt::Break { .. } | Stmt::Continue { .. } => {}
+            Stmt::ForMap { map_expr, body, key_var, val_var, .. } => {
+                find_free_vars_inner(map_expr, bound, free);
+                let mut loop_bound: Vec<String> = bound.to_vec();
+                loop_bound.push(key_var.clone());
+                loop_bound.push(val_var.clone());
+                find_free_vars_inner(body, &loop_bound, free);
+            }
+            Stmt::Select { arms, .. } => {
+                for arm in arms {
+                    find_free_vars_inner(&arm.channel, bound, free);
+                    find_free_vars_inner(&arm.body, bound, free);
+                }
+            }
         }
     }
 }
@@ -260,6 +275,10 @@ impl<'ctx> CodeGen<'ctx> {
                     // Build a string literal as a {ptr, len} struct value
                     let str_val = self.build_str_literal(s);
                     Ok(Some(str_val))
+                }
+                LitValue::Nil => {
+                    let null_ptr = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
+                    Ok(Some(null_ptr.into()))
                 }
             },
 
@@ -416,6 +435,144 @@ impl<'ctx> CodeGen<'ctx> {
                         .build_call(free_fn, &[ptr_val.into()], "")
                         .unwrap();
                     return Ok(None);
+                }
+
+                // Handle gc_alloc(size) — GC-managed allocation
+                if callee == "gc_alloc" {
+                    let size_val = self
+                        .compile_expr(&args[0], function)?
+                        .unwrap()
+                        .into_int_value();
+                    let size_i64 = self
+                        .builder
+                        .build_int_z_extend_or_bit_cast(
+                            size_val,
+                            self.context.i64_type(),
+                            "gc_alloc_size",
+                        )
+                        .unwrap();
+                    // has_pointers = 1 (conservative: assume payload may contain ptrs)
+                    let has_ptrs = self.context.i8_type().const_int(1, false);
+                    let gc_alloc_fn = self.get_or_declare_ny_gc_alloc();
+                    let ptr = self
+                        .builder
+                        .build_call(gc_alloc_fn, &[size_i64.into(), has_ptrs.into()], "gc_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(ptr));
+                }
+
+                // Handle gc_collect() — trigger GC collection
+                if callee == "gc_collect" {
+                    let gc_collect_fn = self.get_or_declare_ny_gc_collect();
+                    self.builder
+                        .build_call(gc_collect_fn, &[], "")
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // Handle gc_stats() — print GC stats
+                if callee == "gc_stats" {
+                    let gc_stats_fn = self.get_or_declare_ny_gc_stats();
+                    self.builder
+                        .build_call(gc_stats_fn, &[], "")
+                        .unwrap();
+                    return Ok(None);
+                }
+
+                // Handle gc_bytes_allocated() -> i64
+                if callee == "gc_bytes_allocated" {
+                    let gc_fn = self.get_or_declare_ny_gc_bytes_allocated();
+                    let result = self
+                        .builder
+                        .build_call(gc_fn, &[], "gc_bytes")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle gc_collection_count() -> i64
+                if callee == "gc_collection_count" {
+                    let gc_fn = self.get_or_declare_ny_gc_collection_count();
+                    let result = self
+                        .builder
+                        .build_call(gc_fn, &[], "gc_collections")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(result));
+                }
+
+                // Handle error_new(message_str) -> i32 (error code)
+                if callee == "error_new" {
+                    let msg_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let msg_struct = msg_val.into_struct_value();
+                    let msg_ptr = self.builder.build_extract_value(msg_struct, 0, "err_ptr").unwrap();
+                    let msg_len = self.builder.build_extract_value(msg_struct, 1, "err_len").unwrap();
+                    let error_new_fn = self.get_or_declare_c_fn(
+                        "ny_error_new",
+                        self.context.i32_type().fn_type(
+                            &[self.context.ptr_type(AddressSpace::default()).into(), self.context.i64_type().into()],
+                            false,
+                        ),
+                    );
+                    let code = self.builder
+                        .build_call(error_new_fn, &[msg_ptr.into(), msg_len.into()], "err_code")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(code));
+                }
+
+                // Handle error_message(code) -> str
+                if callee == "error_message" {
+                    let code_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let out_len_alloca = self.builder.build_alloca(self.context.i64_type(), "emsg_len").unwrap();
+                    let error_msg_fn = self.get_or_declare_c_fn(
+                        "ny_error_message",
+                        self.context.ptr_type(AddressSpace::default()).fn_type(
+                            &[self.context.i32_type().into(), self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
+                    let msg_ptr = self.builder
+                        .build_call(error_msg_fn, &[code_val.into(), out_len_alloca.into()], "emsg_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    let msg_len = self.builder.build_load(self.context.i64_type(), out_len_alloca, "emsg_len_v").unwrap();
+                    let str_ty = super::types::str_type(self.context);
+                    let s0 = self.builder.build_insert_value(str_ty.get_undef(), msg_ptr, 0, "es_p").unwrap();
+                    let s1 = self.builder.build_insert_value(s0.into_struct_value(), msg_len, 1, "es_l").unwrap();
+                    return Ok(Some(s1.into_struct_value().into()));
+                }
+
+                // Handle chan_new(capacity) -> chan<T>
+                if callee == "chan_new" {
+                    let cap_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let cap_i32 = self
+                        .builder
+                        .build_int_cast(cap_val.into_int_value(), self.context.i32_type(), "chan_cap")
+                        .unwrap();
+                    // Default elem_size = 8 (i64 / pointer sized)
+                    // Will be corrected by VarDecl handler based on declared type
+                    let elem_size = self.context.i64_type().const_int(8, false);
+                    let chan_new_fn = self.get_or_declare_ny_chan_new();
+                    let ptr = self
+                        .builder
+                        .build_call(chan_new_fn, &[cap_i32.into(), elem_size.into()], "chan_ptr")
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap();
+                    return Ok(Some(ptr));
                 }
 
                 // Handle fopen(path_str, mode_str) -> FILE*
@@ -2513,6 +2670,46 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(struct_val))
             }
 
+            // ---- New: GC-managed heap allocation ----
+            Expr::New { name, fields, .. } => {
+                let struct_fields = self.struct_types.get(name).cloned().unwrap_or_default();
+                let struct_ty = self.get_or_create_llvm_struct_type(name, &struct_fields);
+
+                // gc_alloc(sizeof(struct), has_pointers=1)
+                let size = struct_ty.size_of().unwrap();
+                let has_ptrs = self.context.i8_type().const_int(1, false);
+                let gc_alloc_fn = self.get_or_declare_ny_gc_alloc();
+                let heap_ptr = self
+                    .builder
+                    .build_call(gc_alloc_fn, &[size.into(), has_ptrs.into()], "new_ptr")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap()
+                    .into_pointer_value();
+
+                // Store each field value at the correct index
+                for (field_name, field_expr) in fields {
+                    let field_idx = struct_fields
+                        .iter()
+                        .position(|(n, _)| n == field_name)
+                        .unwrap_or(0) as u32;
+                    let val = self.compile_expr(field_expr, function)?.unwrap();
+                    let field_ptr = self
+                        .builder
+                        .build_struct_gep(
+                            struct_ty,
+                            heap_ptr,
+                            field_idx,
+                            &format!("{}_ptr", field_name),
+                        )
+                        .unwrap();
+                    self.builder.build_store(field_ptr, val).unwrap();
+                }
+
+                Ok(Some(heap_ptr.into()))
+            }
+
             // ---- Field access ----
             Expr::FieldAccess { object, field, .. } => {
                 let obj_ty = self.infer_expr_type(object);
@@ -2600,6 +2797,38 @@ impl<'ctx> CodeGen<'ctx> {
                 ..
             } => {
                 let obj_ty = self.infer_expr_type(object);
+
+                // Handle chan<T> methods: send, recv, close
+                if let NyType::Chan(elem_ty) = &obj_ty {
+                    let ch_ptr = self.compile_expr(object, function)?.unwrap();
+                    let elem_llvm = ny_to_llvm(self.context, elem_ty);
+
+                    match method.as_str() {
+                        "send" => {
+                            let val = self.compile_expr(&args[0], function)?.unwrap();
+                            // Alloca a temporary, store the value, pass pointer to ny_chan_send
+                            let tmp = self.builder.build_alloca(elem_llvm, "chan_send_tmp").unwrap();
+                            self.builder.build_store(tmp, val).unwrap();
+                            let send_fn = self.get_or_declare_ny_chan_send();
+                            self.builder.build_call(send_fn, &[ch_ptr.into(), tmp.into()], "").unwrap();
+                            return Ok(None);
+                        }
+                        "recv" => {
+                            // Alloca a temporary, pass pointer to ny_chan_recv, load result
+                            let tmp = self.builder.build_alloca(elem_llvm, "chan_recv_tmp").unwrap();
+                            let recv_fn = self.get_or_declare_ny_chan_recv();
+                            self.builder.build_call(recv_fn, &[ch_ptr.into(), tmp.into()], "").unwrap();
+                            let result = self.builder.build_load(elem_llvm, tmp, "chan_val").unwrap();
+                            return Ok(Some(result));
+                        }
+                        "close" => {
+                            let close_fn = self.get_or_declare_ny_chan_close();
+                            self.builder.build_call(close_fn, &[ch_ptr.into()], "").unwrap();
+                            return Ok(None);
+                        }
+                        _ => {}
+                    }
+                }
 
                 // Handle HashMap<K,V> methods
                 if let NyType::HashMap(_key_ty, val_ty) = &obj_ty {
@@ -5314,6 +5543,70 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
 
+                // Dynamic dispatch for dyn Trait
+                if let NyType::DynTrait(ref trait_name) = obj_ty {
+                    let obj_val = self.compile_expr(object, function)?.unwrap();
+                    let fat_struct = obj_val.into_struct_value();
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+                    // Extract data pointer (field 0) and vtable pointer (field 1)
+                    let data_ptr = self.builder.build_extract_value(fat_struct, 0, "dyn_data").unwrap();
+                    let vtable_ptr = self.builder.build_extract_value(fat_struct, 1, "dyn_vtable").unwrap();
+
+                    // Find method index in trait definition
+                    if let Some(trait_methods) = self.trait_defs.get(trait_name).cloned() {
+                        let method_idx = trait_methods.iter().position(|(n, _, _)| n == method);
+                        if let Some(idx) = method_idx {
+                            let (_, param_types, ret_ty) = &trait_methods[idx];
+
+                            // Load function pointer from vtable[idx]
+                            let vtable_arr_ty = ptr_ty.array_type(trait_methods.len() as u32);
+                            let fn_ptr_gep = unsafe {
+                                self.builder.build_in_bounds_gep(
+                                    vtable_arr_ty,
+                                    vtable_ptr.into_pointer_value(),
+                                    &[
+                                        self.context.i64_type().const_int(0, false),
+                                        self.context.i64_type().const_int(idx as u64, false),
+                                    ],
+                                    "vtable_slot",
+                                )
+                            }
+                            .unwrap();
+                            let fn_ptr = self.builder.build_load(ptr_ty, fn_ptr_gep, "fn_ptr").unwrap().into_pointer_value();
+
+                            // Build the function type for the indirect call
+                            // First param is self (pointer to concrete data)
+                            let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_ty.into()];
+                            // Skip self (param 0) and add remaining params
+                            for pt in param_types.iter().skip(1) {
+                                llvm_param_types.push(ny_to_llvm(self.context, pt).into());
+                            }
+
+                            // Compile additional args
+                            let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = vec![data_ptr.into()];
+                            for arg in args {
+                                let val = self.compile_expr(arg, function)?.unwrap();
+                                call_args.push(val.into());
+                            }
+
+                            let ret_ty = ret_ty.clone();
+                            let fn_type = if ret_ty == NyType::Unit {
+                                self.context.void_type().fn_type(&llvm_param_types, false)
+                            } else {
+                                ny_to_llvm(self.context, &ret_ty).fn_type(&llvm_param_types, false)
+                            };
+
+                            let call = self.builder.build_indirect_call(fn_type, fn_ptr, &call_args, "dyn_call").unwrap();
+                            if ret_ty == NyType::Unit {
+                                return Ok(None);
+                            } else {
+                                return Ok(call.try_as_basic_value().basic());
+                            }
+                        }
+                    }
+                }
+
                 // Compile the object as the first argument (pass by value or pointer)
                 let obj_val = self.compile_expr(object, function)?.unwrap();
                 let callee = method.clone();
@@ -5344,8 +5637,27 @@ impl<'ctx> CodeGen<'ctx> {
                         _ => String::new(),
                     };
                     let qualified_name = format!("{}_{}", struct_name, method);
-                    if let Some((func, _, ret_ty)) = self.functions.get(&qualified_name).cloned() {
-                        let mut arg_values = vec![obj_val.into()];
+                    if let Some((func, param_types, ret_ty)) = self.functions.get(&qualified_name).cloned() {
+                        // Auto-deref: if object is *Struct but method expects Struct (by value),
+                        // load the struct through the pointer
+                        let self_val = if let NyType::Pointer(inner) = &obj_ty {
+                            if let NyType::Struct { name: sn, fields: sf } = inner.as_ref() {
+                                let st = NyType::Struct { name: sn.clone(), fields: sf.clone() };
+                                if !param_types.is_empty() && param_types[0] == st {
+                                    let struct_ty = self.get_or_create_llvm_struct_type(sn, sf);
+                                    self.builder
+                                        .build_load(struct_ty, obj_val.into_pointer_value(), "autoderef")
+                                        .unwrap()
+                                } else {
+                                    obj_val
+                                }
+                            } else {
+                                obj_val
+                            }
+                        } else {
+                            obj_val
+                        };
+                        let mut arg_values = vec![self_val.into()];
                         for arg in args {
                             let val = self.compile_expr(arg, function)?.unwrap();
                             arg_values.push(val.into());
@@ -5939,6 +6251,132 @@ impl<'ctx> CodeGen<'ctx> {
                     .build_extract_value(struct_val, *index as u32, "tuple_idx")
                     .unwrap();
                 Ok(Some(extracted))
+            }
+
+            // ---- Null coalescing (??) ----
+            Expr::NullCoalesce { value, default, .. } => {
+                let val = self.compile_expr(value, function)?.unwrap();
+                let def = self.compile_expr(default, function)?.unwrap();
+
+                // Check if val is null
+                let is_null = self.builder.build_is_null(val.into_pointer_value(), "is_null").unwrap();
+
+                let then_bb = self.context.append_basic_block(*function, "nc_nonnull");
+                let else_bb = self.context.append_basic_block(*function, "nc_null");
+                let merge_bb = self.context.append_basic_block(*function, "nc_merge");
+
+                self.builder.build_conditional_branch(is_null, else_bb, then_bb).unwrap();
+
+                // Non-null: use val
+                self.builder.position_at_end(then_bb);
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // Null: use default
+                self.builder.position_at_end(else_bb);
+                self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+                // Merge with phi
+                self.builder.position_at_end(merge_bb);
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let phi = self.builder.build_phi(ptr_ty, "nc_result").unwrap();
+                phi.add_incoming(&[(&val, then_bb), (&def, else_bb)]);
+                Ok(Some(phi.as_basic_value()))
+            }
+
+            // ---- Go (goroutine) ----
+            Expr::Go { call, .. } => {
+                // `go fn_name(args)` — submit to global thread pool, fire-and-forget
+                if let Expr::Call { callee, args, .. } = call.as_ref() {
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+                    // Compile all argument values
+                    let mut arg_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+                    for arg in args {
+                        arg_vals.push(self.compile_expr(arg, function)?.unwrap());
+                    }
+
+                    // Get the target function
+                    let (target_fn, _, _) = self.functions.get(callee).cloned().unwrap_or_else(|| {
+                        // Try qualified name (method)
+                        let fn_val = self.module.get_function(callee).unwrap();
+                        (fn_val, vec![], NyType::Unit)
+                    });
+
+                    if args.is_empty() {
+                        // No args — submit function directly with null arg
+                        let async_pool = self.get_or_declare_ny_async_pool();
+                        let pool_ptr = self.builder.build_call(async_pool, &[], "go_pool").unwrap()
+                            .try_as_basic_value().basic().unwrap();
+                        let pool_submit = self.get_or_declare_ny_pool_submit_arg();
+                        let null_ptr = ptr_ty.const_null();
+                        self.builder.build_call(
+                            pool_submit,
+                            &[pool_ptr.into(), target_fn.as_global_value().as_pointer_value().into(), null_ptr.into()],
+                            "",
+                        ).unwrap();
+                    } else {
+                        // Pack args into a heap-allocated struct
+                        let arg_types: Vec<inkwell::types::BasicTypeEnum> = arg_vals.iter().map(|v| v.get_type()).collect();
+                        let arg_struct_ty = self.context.struct_type(&arg_types, false);
+                        let malloc_fn = self.get_or_declare_malloc();
+                        let arg_size = arg_struct_ty.size_of().unwrap();
+                        let arg_ptr = self.builder
+                            .build_call(malloc_fn, &[arg_size.into()], "go_args")
+                            .unwrap().try_as_basic_value().basic().unwrap().into_pointer_value();
+
+                        // Store each arg
+                        for (i, val) in arg_vals.iter().enumerate() {
+                            let gep = self.builder.build_struct_gep(arg_struct_ty, arg_ptr, i as u32, &format!("go_a{}", i)).unwrap();
+                            self.builder.build_store(gep, *val).unwrap();
+                        }
+
+                        // Create thunk: void* thunk(void* packed_args)
+                        static GO_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let id = GO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let thunk_name = format!("__go_thunk_{}", id);
+                        let thunk_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                        let thunk_fn = self.module.add_function(&thunk_name, thunk_type, None);
+
+                        let entry = self.context.append_basic_block(thunk_fn, "entry");
+                        let saved_block = self.builder.get_insert_block().unwrap();
+                        self.builder.position_at_end(entry);
+
+                        // Unpack args
+                        let packed_ptr = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
+                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                        for (i, ty) in arg_types.iter().enumerate() {
+                            let gep = self.builder.build_struct_gep(arg_struct_ty, packed_ptr, i as u32, &format!("unp{}", i)).unwrap();
+                            let val = self.builder.build_load(*ty, gep, &format!("arg{}", i)).unwrap();
+                            call_args.push(val.into());
+                        }
+
+                        // Call the target function
+                        self.builder.build_call(target_fn, &call_args, "").unwrap();
+
+                        // Free the args struct
+                        let free_fn = self.get_or_declare_free();
+                        self.builder.build_call(free_fn, &[packed_ptr.into()], "").unwrap();
+
+                        // Return null
+                        let null = ptr_ty.const_null();
+                        self.builder.build_return(Some(&null)).unwrap();
+
+                        // Restore builder position
+                        self.builder.position_at_end(saved_block);
+
+                        // Submit thunk to pool
+                        let async_pool = self.get_or_declare_ny_async_pool();
+                        let pool_ptr = self.builder.build_call(async_pool, &[], "go_pool").unwrap()
+                            .try_as_basic_value().basic().unwrap();
+                        let pool_submit = self.get_or_declare_ny_pool_submit_arg();
+                        self.builder.build_call(
+                            pool_submit,
+                            &[pool_ptr.into(), thunk_fn.as_global_value().as_pointer_value().into(), arg_ptr.into()],
+                            "",
+                        ).unwrap();
+                    }
+                }
+                Ok(None)
             }
 
             // ---- Await ----

@@ -16,6 +16,7 @@ impl<'ctx> CodeGen<'ctx> {
                 LitValue::Float(_) => NyType::F64,
                 LitValue::Bool(_) => NyType::Bool,
                 LitValue::Str(_) => NyType::Str,
+                LitValue::Nil => NyType::Pointer(Box::new(NyType::U8)),
             },
             Expr::Ident { name, .. } => {
                 if let Some((_, ty)) = self.variables.get(name) {
@@ -135,6 +136,16 @@ impl<'ctx> CodeGen<'ctx> {
                     NyType::I32
                 }
             }
+            Expr::New { name, .. } => {
+                if let Some(fields) = self.struct_types.get(name) {
+                    NyType::Pointer(Box::new(NyType::Struct {
+                        name: name.clone(),
+                        fields: fields.clone(),
+                    }))
+                } else {
+                    NyType::Pointer(Box::new(NyType::U8))
+                }
+            }
             Expr::AddrOf { operand, .. } => {
                 let inner_ty = self.infer_expr_type(operand);
                 NyType::Pointer(Box::new(inner_ty))
@@ -149,6 +160,19 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MethodCall { object, method, .. } => {
                 let obj_ty = self.infer_expr_type(object);
                 match &obj_ty {
+                    NyType::DynTrait(trait_name) => {
+                        if let Some(methods) = self.trait_defs.get(trait_name) {
+                            if let Some((_, _, ret_ty)) = methods.iter().find(|(n, _, _)| n == method) {
+                                return ret_ty.clone();
+                            }
+                        }
+                        NyType::I32
+                    }
+                    NyType::Chan(elem) => match method.as_str() {
+                        "recv" => *elem.clone(),
+                        "send" | "close" => NyType::Unit,
+                        _ => NyType::Unit,
+                    },
                     NyType::HashMap(_, val) => match method.as_str() {
                         "get" => *val.clone(),
                         "len" => NyType::I64,
@@ -276,6 +300,14 @@ impl<'ctx> CodeGen<'ctx> {
                 match ft {
                     NyType::Future(inner) => *inner,
                     _ => NyType::I32,
+                }
+            }
+            Expr::Go { .. } => NyType::Unit,
+            Expr::NullCoalesce { value, .. } => {
+                let val_ty = self.infer_expr_type(value);
+                match val_ty {
+                    NyType::Optional(inner) => *inner,
+                    _ => val_ty,
                 }
             }
         }

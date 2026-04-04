@@ -56,6 +56,11 @@ pub enum Item {
         methods: Vec<TraitMethodSig>,
         span: Span,
     },
+    TypeAlias {
+        name: String,
+        target: TypeAnnotation,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +177,27 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// for key, value in map { body }
+    ForMap {
+        key_var: String,
+        val_var: String,
+        map_expr: Expr,
+        body: Expr,
+        span: Span,
+    },
+    /// select { var := ch.recv() => { body }, ... }
+    Select {
+        arms: Vec<SelectArm>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectArm {
+    pub var: String,
+    pub channel: Expr,
+    pub body: Expr,
+    pub span: Span,
 }
 
 /// Target for assignment — can be a simple variable, index, field, or deref
@@ -245,6 +271,12 @@ pub enum Expr {
         fields: Vec<(String, Expr)>,
         span: Span,
     },
+    /// `new Type { fields }` — GC-managed heap allocation, returns *Type
+    New {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
     AddrOf {
         operand: Box<Expr>,
         span: Span,
@@ -308,6 +340,17 @@ pub enum Expr {
         future: Box<Expr>,
         span: Span,
     },
+    /// expr ?? default — null coalescing operator
+    NullCoalesce {
+        value: Box<Expr>,
+        default: Box<Expr>,
+        span: Span,
+    },
+    /// go fn(args) — fire-and-forget goroutine on thread pool
+    Go {
+        call: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -324,6 +367,7 @@ impl Expr {
             | Expr::Index { span, .. }
             | Expr::FieldAccess { span, .. }
             | Expr::StructInit { span, .. }
+            | Expr::New { span, .. }
             | Expr::AddrOf { span, .. }
             | Expr::Deref { span, .. }
             | Expr::MethodCall { span, .. }
@@ -335,7 +379,9 @@ impl Expr {
             | Expr::RangeIndex { span, .. }
             | Expr::Lambda { span, .. }
             | Expr::Try { span, .. }
-            | Expr::Await { span, .. } => *span,
+            | Expr::Await { span, .. }
+            | Expr::Go { span, .. }
+            | Expr::NullCoalesce { span, .. } => *span,
         }
     }
 }
@@ -346,6 +392,7 @@ pub enum LitValue {
     Float(f64),
     Bool(bool),
     Str(String),
+    Nil,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -423,6 +470,14 @@ pub enum TypeAnnotation {
         ret: Box<TypeAnnotation>,
         span: Span,
     },
+    DynTrait {
+        trait_name: String,
+        span: Span,
+    },
+    Optional {
+        inner: Box<TypeAnnotation>,
+        span: Span,
+    },
 }
 
 impl TypeAnnotation {
@@ -433,7 +488,9 @@ impl TypeAnnotation {
             | TypeAnnotation::Pointer { span, .. }
             | TypeAnnotation::Tuple { span, .. }
             | TypeAnnotation::Slice { span, .. }
-            | TypeAnnotation::Function { span, .. } => *span,
+            | TypeAnnotation::Function { span, .. }
+            | TypeAnnotation::DynTrait { span, .. }
+            | TypeAnnotation::Optional { span, .. } => *span,
         }
     }
 
@@ -445,6 +502,8 @@ impl TypeAnnotation {
             TypeAnnotation::Tuple { .. } => "<tuple>",
             TypeAnnotation::Slice { .. } => "<slice>",
             TypeAnnotation::Function { .. } => "<function>",
+            TypeAnnotation::DynTrait { trait_name, .. } => trait_name.as_str(),
+            TypeAnnotation::Optional { .. } => "?",
         }
     }
 }

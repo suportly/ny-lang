@@ -113,6 +113,18 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         "str_split_count" => Some(NyType::I32),
         "str_split_get" => Some(NyType::Str),
 
+        // GC
+        "gc_alloc" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "gc_collect" | "gc_stats" => Some(NyType::Unit),
+        "gc_bytes_allocated" | "gc_collection_count" => Some(NyType::I64),
+
+        // Typed channels
+        "chan_new" => Some(NyType::Chan(Box::new(NyType::I32))),
+
+        // Error handling
+        "error_new" => Some(NyType::I32),
+        "error_message" => Some(NyType::Str),
+
         _ => None,
     }
 }
@@ -231,4 +243,12 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "json_free",
     "str_split_count",
     "str_split_get",
+    "gc_alloc",
+    "gc_collect",
+    "gc_stats",
+    "gc_bytes_allocated",
+    "gc_collection_count",
+    "chan_new",
+    "error_new",
+    "error_message",
 ];

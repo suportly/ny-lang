@@ -44,7 +44,18 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<(), Vec<CompileError>> {
         let is_println = callee == "println";
 
-        for arg in args {
+        for (arg_idx, arg) in args.iter().enumerate() {
+            // Print space separator between multiple arguments (Go-style)
+            if arg_idx > 0 {
+                let printf_fn = self.get_or_declare_printf();
+                let space_fmt = self
+                    .builder
+                    .build_global_string_ptr(" ", "fmt_space")
+                    .unwrap();
+                self.builder
+                    .build_call(printf_fn, &[space_fmt.as_pointer_value().into()], "")
+                    .unwrap();
+            }
             let arg_ty = self.infer_expr_type(arg);
             let val = self.compile_expr(arg, function)?;
 

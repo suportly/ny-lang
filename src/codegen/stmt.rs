@@ -26,6 +26,38 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     self.infer_expr_type(init)
                 };
+
+                // Coerce concrete type to dyn Trait fat pointer
+                let val = if let NyType::DynTrait(ref trait_name) = ny_ty {
+                    let concrete_ty = self.infer_expr_type(init);
+                    let type_name = match &concrete_ty {
+                        NyType::Pointer(inner) => match inner.as_ref() {
+                            NyType::Struct { name, .. } => name.clone(),
+                            _ => String::new(),
+                        },
+                        NyType::Struct { name, .. } => name.clone(),
+                        _ => String::new(),
+                    };
+                    let vtable_key = format!("{}_for_{}", trait_name, type_name);
+                    if let Some((vtable_ptr, _)) = self.vtables.get(&vtable_key) {
+                        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let fat_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+                        let fat_alloca = self.builder.build_alloca(fat_ty, "dyn_fat").unwrap();
+                        // Store data pointer
+                        let data_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 0, "dyn_data").unwrap();
+                        self.builder.build_store(data_gep, val.into_pointer_value()).unwrap();
+                        // Store vtable pointer
+                        let vtable_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 1, "dyn_vtable").unwrap();
+                        self.builder.build_store(vtable_gep, *vtable_ptr).unwrap();
+                        // Load the fat pointer struct
+                        self.builder.build_load(fat_ty, fat_alloca, "dyn_val").unwrap()
+                    } else {
+                        val
+                    }
+                } else {
+                    val
+                };
+
                 let llvm_ty = ny_to_llvm(self.context, &ny_ty);
                 let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
                 self.builder.build_store(alloca, val).unwrap();
@@ -176,6 +208,35 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 if let Some(v) = ret_val {
+                    // Coerce to dyn Trait if function returns dyn Trait
+                    let fn_name = function.get_name().to_str().unwrap_or("").to_string();
+                    let ret_ty = self.functions.get(&fn_name).map(|(_, _, rt)| rt.clone());
+                    let v = if let Some(NyType::DynTrait(ref trait_name)) = ret_ty {
+                        let val_expr = value.as_ref().unwrap();
+                        let concrete_ty = self.infer_expr_type(val_expr);
+                        let type_name = match &concrete_ty {
+                            NyType::Pointer(inner) => match inner.as_ref() {
+                                NyType::Struct { name, .. } => name.clone(),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        };
+                        let vtable_key = format!("{}_for_{}", trait_name, type_name);
+                        if let Some((vtable_ptr, _)) = self.vtables.get(&vtable_key) {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let fat_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+                            let fat_alloca = self.builder.build_alloca(fat_ty, "ret_dyn").unwrap();
+                            let data_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 0, "ret_data").unwrap();
+                            self.builder.build_store(data_gep, v.into_pointer_value()).unwrap();
+                            let vtable_gep = self.builder.build_struct_gep(fat_ty, fat_alloca, 1, "ret_vtbl").unwrap();
+                            self.builder.build_store(vtable_gep, *vtable_ptr).unwrap();
+                            self.builder.build_load(fat_ty, fat_alloca, "ret_fat").unwrap()
+                        } else {
+                            v
+                        }
+                    } else {
+                        v
+                    };
                     self.builder.build_return(Some(&v)).unwrap();
                 } else {
                     self.builder.build_return(None).unwrap();
@@ -636,6 +697,182 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.loop_stack.pop();
                 self.builder.position_at_end(exit_bb);
+                Ok(())
+            }
+
+            Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+                let map_ptr = self.compile_expr(map_expr, function)?.unwrap();
+                let i32_ty = self.context.i32_type();
+                let i64_ty = self.context.i64_type();
+
+                // Get map length
+                let map_len_fn = self.get_or_declare_c_fn(
+                    "ny_map_len",
+                    i64_ty.fn_type(&[self.context.ptr_type(inkwell::AddressSpace::default()).into()], false),
+                );
+                let len = self.builder.build_call(map_len_fn, &[map_ptr.into()], "map_len")
+                    .unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+                let len_i32 = self.builder.build_int_truncate(len, i32_ty, "len32").unwrap();
+
+                // Index variable
+                let idx_alloca = self.builder.build_alloca(i32_ty, "map_idx").unwrap();
+                self.builder.build_store(idx_alloca, i32_ty.const_int(0, false)).unwrap();
+
+                let cond_bb = self.context.append_basic_block(*function, "formap_cond");
+                let body_bb = self.context.append_basic_block(*function, "formap_body");
+                let exit_bb = self.context.append_basic_block(*function, "formap_exit");
+
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+                self.builder.position_at_end(cond_bb);
+
+                let idx = self.builder.build_load(i32_ty, idx_alloca, "idx").unwrap().into_int_value();
+                let cmp = self.builder.build_int_compare(IntPredicate::SLT, idx, len_i32, "cmp").unwrap();
+                self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
+
+                self.builder.position_at_end(body_bb);
+
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let idx_i64 = self.builder.build_int_z_extend(idx, i64_ty, "idx64").unwrap();
+
+                // ny_map_key_at(map, index, &out_len) -> *u8
+                let out_len_alloca = self.builder.build_alloca(i64_ty, "key_len").unwrap();
+                let map_key_at_fn = self.get_or_declare_c_fn(
+                    "ny_map_key_at",
+                    ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false),
+                );
+                let key_ptr = self.builder.build_call(
+                    map_key_at_fn,
+                    &[map_ptr.into(), idx_i64.into(), out_len_alloca.into()],
+                    "key_ptr",
+                ).unwrap().try_as_basic_value().basic().unwrap();
+                let key_len = self.builder.build_load(i64_ty, out_len_alloca, "key_len_v").unwrap();
+
+                // Build str struct {ptr, len}
+                let str_struct_ty = ny_to_llvm(self.context, &NyType::Str).into_struct_type();
+                let key_s0 = self.builder.build_insert_value(str_struct_ty.get_undef(), key_ptr, 0, "ks_p").unwrap();
+                let key_val = self.builder.build_insert_value(key_s0.into_struct_value(), key_len, 1, "ks_l").unwrap();
+
+                // ny_map_get(map, key_ptr, key_len) -> i64 (value)
+                let map_get_fn = self.get_or_declare_c_fn(
+                    "ny_map_get",
+                    i64_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
+                );
+                let val_i64 = self.builder.build_call(
+                    map_get_fn,
+                    &[map_ptr.into(), key_ptr.into(), key_len.into()],
+                    "val_i64",
+                ).unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+                let val_val = self.builder.build_int_truncate(val_i64, i32_ty, "val_i32").unwrap();
+
+                // Declare key and value variables
+                let outer_vars = self.variables.clone();
+                let str_llvm_ty = ny_to_llvm(self.context, &NyType::Str);
+                let key_alloca = self.builder.build_alloca(str_llvm_ty, key_var).unwrap();
+                self.builder.build_store(key_alloca, key_val.into_struct_value()).unwrap();
+                self.variables.insert(key_var.clone(), (key_alloca, NyType::Str));
+
+                let val_alloca = self.builder.build_alloca(i32_ty, val_var).unwrap();
+                self.builder.build_store(val_alloca, val_val).unwrap();
+                self.variables.insert(val_var.clone(), (val_alloca, NyType::I32));
+
+                self.loop_stack.push(LoopFrame { break_bb: exit_bb, continue_bb: cond_bb });
+                self.compile_expr(body, function)?;
+                self.loop_stack.pop();
+                self.variables = outer_vars;
+
+                // Increment index
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    let next_idx = self.builder.build_int_add(idx, i32_ty.const_int(1, false), "next").unwrap();
+                    self.builder.build_store(idx_alloca, next_idx).unwrap();
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+                }
+
+                self.builder.position_at_end(exit_bb);
+                Ok(())
+            }
+
+            Stmt::Select { arms, .. } => {
+                let i32_ty = self.context.i32_type();
+                let i64_ty = self.context.i64_type();
+
+                // Pre-compile channel pointers and element types
+                let mut ch_ptrs = Vec::new();
+                let mut elem_types = Vec::new();
+                for arm in arms.iter() {
+                    if let Expr::MethodCall { object, .. } = &arm.channel {
+                        let obj_ty = self.infer_expr_type(object);
+                        let elem = match &obj_ty {
+                            NyType::Chan(e) => *e.clone(),
+                            _ => NyType::I32,
+                        };
+                        let ptr = self.compile_expr(object, function)?.unwrap();
+                        ch_ptrs.push(ptr);
+                        elem_types.push(elem);
+                    } else {
+                        ch_ptrs.push(self.compile_expr(&arm.channel, function)?.unwrap());
+                        elem_types.push(NyType::I32);
+                    }
+                }
+
+                // Allocate receive buffer (8 bytes fits i32/i64/f64/ptr)
+                let recv_buf = self.builder.build_alloca(i64_ty, "sel_buf").unwrap();
+                let try_recv_fn = self.get_or_declare_ny_chan_try_recv();
+                let sleep_fn = self.get_or_declare_c_fn(
+                    "usleep",
+                    i32_ty.fn_type(&[i32_ty.into()], false),
+                );
+
+                let poll_bb = self.context.append_basic_block(*function, "sel_poll");
+                let merge_bb = self.context.append_basic_block(*function, "sel_merge");
+                self.builder.build_unconditional_branch(poll_bb).unwrap();
+
+                // Build chain: poll → try0 → try1 → ... → sleep → poll
+                self.builder.position_at_end(poll_bb);
+
+                let mut prev_fail_bb = poll_bb;
+                for (i, arm) in arms.iter().enumerate() {
+                    // If i > 0, we need to be in the "not ready" block from previous try
+                    if i > 0 {
+                        self.builder.position_at_end(prev_fail_bb);
+                    }
+
+                    let got = self.builder.build_call(
+                        try_recv_fn,
+                        &[ch_ptrs[i].into(), recv_buf.into()],
+                        &format!("got_{}", i),
+                    ).unwrap().try_as_basic_value().basic().unwrap().into_int_value();
+
+                    let is_ready = self.builder.build_int_compare(
+                        IntPredicate::NE, got, i32_ty.const_int(0, false), &format!("rdy_{}", i),
+                    ).unwrap();
+
+                    let arm_bb = self.context.append_basic_block(*function, &format!("sel_arm_{}", i));
+                    let fail_bb = self.context.append_basic_block(*function, &format!("sel_fail_{}", i));
+                    self.builder.build_conditional_branch(is_ready, arm_bb, fail_bb).unwrap();
+
+                    // Compile arm body
+                    self.builder.position_at_end(arm_bb);
+                    let elem_llvm = ny_to_llvm(self.context, &elem_types[i]);
+                    let recv_val = self.builder.build_load(elem_llvm, recv_buf, &format!("val_{}", i)).unwrap();
+                    let var_alloca = self.builder.build_alloca(elem_llvm, &arm.var).unwrap();
+                    self.builder.build_store(var_alloca, recv_val).unwrap();
+                    let outer_vars = self.variables.clone();
+                    self.variables.insert(arm.var.clone(), (var_alloca, elem_types[i].clone()));
+                    self.compile_expr(&arm.body, function)?;
+                    self.variables = outer_vars;
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    }
+
+                    prev_fail_bb = fail_bb;
+                }
+
+                // All channels empty: sleep 1ms, then retry
+                self.builder.position_at_end(prev_fail_bb);
+                self.builder.build_call(sleep_fn, &[i32_ty.const_int(1000, false).into()], "").unwrap();
+                self.builder.build_unconditional_branch(poll_bb).unwrap();
+
+                self.builder.position_at_end(merge_bb);
                 Ok(())
             }
 

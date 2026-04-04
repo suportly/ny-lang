@@ -44,6 +44,12 @@ pub enum NyType {
     Vec(Box<NyType>),
     HashMap(Box<NyType>, Box<NyType>),
     Future(Box<NyType>),
+    /// Dynamic trait object: fat pointer {data_ptr, vtable_ptr}
+    DynTrait(String),
+    /// Typed channel: chan<T>
+    Chan(Box<NyType>),
+    /// Optional type: ?T (nullable)
+    Optional(Box<NyType>),
 }
 
 impl NyType {
@@ -211,6 +217,13 @@ impl NyType {
                 lanes: 8,
             }),
             _ => {
+                // Check for chan<T> pattern
+                if let Some(inner) = name.strip_prefix("chan<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(elem_ty) = NyType::from_name(inner) {
+                        return Some(NyType::Chan(Box::new(elem_ty)));
+                    }
+                    return None;
+                }
                 // Check for Vec<T> pattern
                 if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
                     if let Some(elem_ty) = NyType::from_name(inner) {
@@ -275,6 +288,9 @@ impl fmt::Display for NyType {
             NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
             NyType::HashMap(k, v) => write!(f, "HashMap<{},{}>", k, v),
             NyType::Future(inner) => write!(f, "Future<{}>", inner),
+            NyType::DynTrait(name) => write!(f, "dyn {}", name),
+            NyType::Chan(elem) => write!(f, "chan<{}>", elem),
+            NyType::Optional(inner) => write!(f, "?{}", inner),
             NyType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {

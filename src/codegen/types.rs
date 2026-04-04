@@ -78,7 +78,7 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 )
                 .into()
         }
-        NyType::HashMap(_, _) | NyType::Future(_) => {
+        NyType::HashMap(_, _) | NyType::Future(_) | NyType::Chan(_) => {
             // Opaque pointer to C runtime struct
             context.ptr_type(AddressSpace::default()).into()
         }
@@ -102,6 +102,33 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
         NyType::Function { .. } => {
             // Function pointers are opaque pointers in LLVM
             context.ptr_type(AddressSpace::default()).into()
+        }
+        NyType::Optional(inner) => {
+            // For pointer types: just a nullable pointer
+            if inner.is_pointer() {
+                context.ptr_type(AddressSpace::default()).into()
+            } else {
+                // For value types: { bool, T }
+                let inner_llvm = ny_to_llvm(context, inner);
+                context
+                    .struct_type(
+                        &[context.bool_type().into(), inner_llvm],
+                        false,
+                    )
+                    .into()
+            }
+        }
+        NyType::DynTrait(_) => {
+            // Fat pointer: { data_ptr: *u8, vtable_ptr: *u8 }
+            context
+                .struct_type(
+                    &[
+                        context.ptr_type(AddressSpace::default()).into(),
+                        context.ptr_type(AddressSpace::default()).into(),
+                    ],
+                    false,
+                )
+                .into()
         }
         NyType::Unit => {
             panic!("cannot convert {} to LLVM basic type", ty)

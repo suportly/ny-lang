@@ -765,3 +765,108 @@ fn test_example_functional() {
     assert!(stdout.contains("Sum of even squares = 220"), "stdout: {}", stdout);
 }
 
+// Phase 26 — GC
+
+#[test]
+fn test_gc_basic() {
+    assert_eq!(compile_and_run("gc_basic.ny"), 42);
+}
+
+#[test]
+fn test_gc_new() {
+    assert_eq!(compile_and_run("gc_new.ny"), 42);
+}
+
+// Phase 27 — dyn Trait
+
+#[test]
+fn test_dyn_trait() {
+    assert_eq!(compile_and_run("dyn_trait.ny"), 42);
+}
+
+// Phase 28 — Typed Channels
+
+#[test]
+fn test_typed_channel() {
+    assert_eq!(compile_and_run("typed_channel.ny"), 42);
+}
+
+#[test]
+fn test_goroutine() {
+    assert_eq!(compile_and_run("goroutine.ny"), 42);
+}
+
+// Phase 30 — nil + Go-style
+
+#[test]
+fn test_nil() {
+    assert_eq!(compile_and_run("nil.ny"), 42);
+}
+
+#[test]
+fn test_go_style() {
+    assert_eq!(compile_and_run("go_style.ny"), 42);
+}
+
+// Phase 31 — select
+
+#[test]
+fn test_select() {
+    assert_eq!(compile_and_run("select.ny"), 42);
+}
+
+// Phase 32 — dyn return + for map
+
+#[test]
+fn test_dyn_return() {
+    assert_eq!(compile_and_run("dyn_return.ny"), 42);
+}
+
+#[test]
+fn test_for_map() {
+    assert_eq!(compile_and_run("for_map.ny"), 42);
+}
+
+// Phase 33 — type aliases
+
+#[test]
+fn test_type_alias() {
+    assert_eq!(compile_and_run("type_alias.ny"), 42);
+}
+
+// Phase 34 — error handling
+
+#[test]
+fn test_error_handling() {
+    assert_eq!(compile_and_run("error_handling.ny"), 42);
+}
+
+// Phase 35 — optional types
+
+#[test]
+fn test_optional() {
+    assert_eq!(compile_and_run("optional.ny"), 42);
+}
+
+// Phase 36 — var keyword
+
+#[test]
+fn test_var_keyword() {
+    assert_eq!(compile_and_run("var_keyword.ny"), 42);
+}
+
+#[test]
+fn test_optional_negative() {
+    // Accessing field on ?*T without unwrap should be compile error
+    let tmp = tempfile::TempDir::new().unwrap();
+    let output = tmp.path().join("output");
+    let mut cmd = assert_cmd::Command::cargo_bin("ny").unwrap();
+    cmd.arg("build")
+        .arg("tests/fixtures/invalid/optional_unsafe_access.ny")
+        .arg("-o")
+        .arg(&output);
+    cmd.assert()
+        .failure()
+        .stderr(predicates::prelude::predicate::str::contains("cannot access field"));
+}
+

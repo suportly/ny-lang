@@ -164,8 +164,15 @@ impl Lexer {
             "let" => TokenKind::Let,
             "async" => TokenKind::Async,
             "await" => TokenKind::Await,
+            "new" => TokenKind::New,
+            "dyn" => TokenKind::Dyn,
+            "go" => TokenKind::Go,
+            "select" => TokenKind::Select,
+            "type" => TokenKind::Type,
+            "var" => TokenKind::Var,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
+            "nil" => TokenKind::Ident("nil".to_string()),
             "_" => TokenKind::Underscore,
             _ => TokenKind::Ident(text),
         }
@@ -295,7 +302,14 @@ impl Lexer {
                     TokenKind::Assign
                 }
             }
-            '?' => TokenKind::Question,
+            '?' => {
+                if self.peek() == Some('?') {
+                    self.advance();
+                    TokenKind::QuestionQuestion
+                } else {
+                    TokenKind::Question
+                }
+            }
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();

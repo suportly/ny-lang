@@ -241,6 +241,33 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Pointer comparison: ptr == nil, ptr != nil, ptr == ptr
+        if lhs.is_pointer_value() && rhs.is_pointer_value() {
+            let l = lhs.into_pointer_value();
+            let r = rhs.into_pointer_value();
+            let result = match op {
+                BinOp::Eq => self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    self.builder.build_ptr_to_int(l, self.context.i64_type(), "l_int").unwrap(),
+                    self.builder.build_ptr_to_int(r, self.context.i64_type(), "r_int").unwrap(),
+                    "ptr_eq",
+                ).unwrap(),
+                BinOp::Ne => self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    self.builder.build_ptr_to_int(l, self.context.i64_type(), "l_int").unwrap(),
+                    self.builder.build_ptr_to_int(r, self.context.i64_type(), "r_int").unwrap(),
+                    "ptr_ne",
+                ).unwrap(),
+                _ => {
+                    return Err(vec![CompileError::type_error(
+                        "only == and != are supported for pointer comparison".to_string(),
+                        Span::empty(0),
+                    )]);
+                }
+            };
+            return Ok(result.into());
+        }
+
         if lhs.is_int_value() && rhs.is_int_value() {
             let mut l = lhs.into_int_value();
             let mut r = rhs.into_int_value();

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <time.h>
 
 typedef struct {
     int32_t *buffer;
@@ -71,4 +72,42 @@ void ny_channel_close(NyChannel *ch) {
     pthread_cond_broadcast(&ch->not_empty);
     pthread_cond_broadcast(&ch->not_full);
     pthread_mutex_unlock(&ch->mutex);
+}
+
+// Non-blocking try_recv: returns 1 if a value was received, 0 otherwise.
+// On success, *out_value is set to the received value.
+int32_t ny_channel_try_recv(NyChannel *ch, int32_t *out_value) {
+    pthread_mutex_lock(&ch->mutex);
+    if (ch->count == 0) {
+        pthread_mutex_unlock(&ch->mutex);
+        *out_value = 0;
+        return 0;
+    }
+    *out_value = ch->buffer[ch->head];
+    ch->head = (ch->head + 1) % ch->capacity;
+    ch->count--;
+    pthread_cond_signal(&ch->not_full);
+    pthread_mutex_unlock(&ch->mutex);
+    return 1;
+}
+
+// Select over multiple channels for recv.
+// channels: array of NyChannel* pointers
+// n: number of channels
+// out_value: receives the value from the ready channel
+// Returns the index (0-based) of the channel that was ready, or -1 on timeout.
+// Polls in round-robin; blocks briefly between rounds.
+int32_t ny_channel_select(NyChannel **channels, int32_t n, int32_t *out_value) {
+    // Spin-poll with short sleeps
+    struct timespec ts = {0, 1000000}; // 1ms
+    for (int attempt = 0; attempt < 10000; attempt++) {
+        for (int32_t i = 0; i < n; i++) {
+            if (ny_channel_try_recv(channels[i], out_value)) {
+                return i;
+            }
+        }
+        nanosleep(&ts, NULL);
+    }
+    *out_value = 0;
+    return -1; // timeout after ~10 seconds
 }

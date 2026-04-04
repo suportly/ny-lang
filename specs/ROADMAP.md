@@ -1,9 +1,9 @@
 # Ny Lang — Strategic Roadmap
 
-**Updated**: 2026-04-03
-**Goal**: Transform Ny from a compiler prototype into a viable low-level language for AI/ML compute
-**Competitor Reference**: Go (backend/infra), Zig/Rust (systems), Mojo (AI/ML), C++/CUDA (GPU compute)
-**Positioning**: Native-compiled, zero-runtime, immutable-by-default language optimized for numerical computation and ML inference
+**Updated**: 2026-04-04
+**Goal**: "Go with algebraic types" — native-compiled, GC-managed, with interfaces + goroutines + channels + pattern matching
+**Competitor Reference**: Go (concurrency model), Rust (type safety), Zig (simplicity), Mojo (AI/ML)
+**Positioning**: Native-compiled language combining Go's concurrency (goroutines, channels, select) with Rust's type safety (enums, pattern matching, traits) and optional GC
 
 ---
 
@@ -62,32 +62,34 @@
 | 23 | Release Mode (-O2+ skips bounds checks + traces) | **COMPLETE** |
 | 24 | Vec.join(sep) for string building | **COMPLETE** |
 | 25 | Async/Await (async fn + await + thread pool dispatch) | **COMPLETE** |
+| 26 | Garbage Collector (mark-and-sweep, `new` keyword, gc_alloc/gc_collect/gc_stats) | **COMPLETE** |
+| 27 | Dynamic Dispatch (`dyn Trait`, vtables, fat pointers, thunk-based dispatch) | **COMPLETE** |
+| 28 | Typed Channels (`chan<T>`, `.send()/.recv()/.close()`, generic runtime) | **COMPLETE** |
+| 29 | Goroutines (`go fn(args)` — fire-and-forget thread pool dispatch) | **COMPLETE** |
+| 30 | `nil` literal (null pointer value + pointer comparison) | **COMPLETE** |
+| 31 | `select` statement (channel multiplexing with polling try_recv) | **COMPLETE** |
+| 32 | Functions returning `dyn Trait` + `for key, val in map` iteration | **COMPLETE** |
+| 33 | `type` aliases + `println` spaces between args (Go-style) | **COMPLETE** |
+| 34 | Error handling with string messages (`error_new`/`error_message` + `?` operator) | **COMPLETE** |
+| 35 | `?T` optional types + `??` null coalescing + compile-time null safety | **COMPLETE** |
+| 36 | `var` keyword + `async/await` deprecation warnings + operator overloading warnings | **COMPLETE** |
 
 ---
 
 ## What's Next (prioritized)
 
-### Tier 1 — Remaining
+### Tier 1 — Language Completeness
 
-#### 25. GPU Compute via NVPTX
-```ny
-```ny
-#[gpu]
-fn vector_add(a: []f32, b: []f32, out: []f32) {
-    idx := gpu::thread_id();
-    out[idx] = a[idx] + b[idx];
-}
-```
-**Requires**: CUDA toolkit, LLVM NVPTX backend
-**Complexity**: Very High
+- **Standard library modules**: `io`, `os`, `net`, `fmt` as importable packages
+- **Error trait**: formalize `trait Error { fn message(self) -> str; }` as a builtin trait
+- **Green threads**: M:N scheduler replacing OS thread pool for `go`
+- **Generic enums**: `enum Result<T, E> { Ok(T), Err(E) }` with full str payload support
 
-#### 26. Async/Await
-**Target**: Non-blocking I/O, async functions
-**Complexity**: Very High
+### Tier 2 — Performance
 
-#### 27. Autograd / Automatic Differentiation
-**Target**: `grad(loss_fn, params)` for ML training
-**Complexity**: Very High — requires reverse-mode AD on the IR
+- **GPU Compute (NVPTX)**: `#[gpu] fn` compiled to CUDA kernels
+- **Autograd**: `grad(loss_fn, params)` for ML training
+- **Escape analysis**: stack vs heap decision for `new` allocations
 
 ---
 
@@ -110,10 +112,8 @@ Ny wins or ties Go in ALL 7 benchmarks (at -O2, median of 3 runs):
 ## Non-Goals (Explicitly Out of Scope)
 
 - **Web backend framework** — Go and Rust own this
-- **Mobile/WASM target** — Focus on x86-64 + GPU (WASM deferred to Tier 4)
 - **Dynamic typing** — Ny is statically typed
-- **Garbage collection** — Never. Manual + defer + arena
-- **OOP (classes, inheritance)** — Structs + traits only
+- **OOP (classes, inheritance)** — Structs + traits + dyn Trait only
 - **Regex engine** — Use via FFI (pcre2)
 - **HTTP server** — Use via FFI (libcurl)
 
@@ -123,10 +123,10 @@ Ny wins or ties Go in ALL 7 benchmarks (at -O2, median of 3 runs):
 
 | Metric | Value |
 |--------|-------|
-| Tests | 127 |
-| Lines of Rust | ~32,000 |
-| Runtime C files | 9 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor, future) |
-| Builtins | 90+ |
+| Tests | 142 |
+| Lines of Rust | ~23,000 |
+| Runtime C files | 12 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor, future, gc, chan, error) |
+| Builtins | 115 |
 | Vec\<T\> methods | 20 (push/pop/get/set/len/sort/reverse/clear/contains/index_of/map/filter/reduce/for_each/any/all/sum/join) |
 | String methods | 13 |
 | Tensor operations | 22 |

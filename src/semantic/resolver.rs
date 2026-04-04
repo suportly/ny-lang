@@ -19,6 +19,7 @@ pub struct Resolver {
     functions: HashMap<String, (Vec<NyType>, NyType, Span)>,
     structs: HashMap<String, Vec<(String, NyType)>>,
     enums: HashMap<String, Vec<(String, Vec<NyType>)>>,
+    pub type_aliases: HashMap<String, NyType>,
     errors: Vec<CompileError>,
     loop_depth: usize,
 }
@@ -36,6 +37,7 @@ impl Resolver {
             functions: HashMap::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            type_aliases: HashMap::new(),
             errors: Vec::new(),
             loop_depth: 0,
         }
@@ -151,6 +153,10 @@ impl Resolver {
                 if name == "()" {
                     return Some(NyType::Unit);
                 }
+                // Try type aliases
+                if let Some(ty) = self.type_aliases.get(name) {
+                    return Some(ty.clone());
+                }
                 self.errors.push(CompileError::type_error(
                     format!("unknown type '{}'", name),
                     *span,
@@ -193,6 +199,13 @@ impl Resolver {
                     params: param_types,
                     ret: Box::new(ret_ty),
                 })
+            }
+            TypeAnnotation::DynTrait { trait_name, .. } => {
+                Some(NyType::DynTrait(trait_name.clone()))
+            }
+            TypeAnnotation::Optional { inner, .. } => {
+                let inner_ty = self.resolve_type_annotation(inner)?;
+                Some(NyType::Optional(Box::new(inner_ty)))
             }
         }
     }
@@ -262,8 +275,14 @@ impl Resolver {
             }
         }
 
-        // ---- Pass 1b: Register trait definitions (for later validation) ----
-        // (Currently we just parse them; trait conformance checking is future work)
+        // ---- Pass 1b: Register type aliases ----
+        for item in &program.items {
+            if let Item::TypeAlias { name, target, .. } = item {
+                if let Some(ty) = resolver.resolve_type_annotation(target) {
+                    resolver.type_aliases.insert(name.clone(), ty);
+                }
+            }
+        }
 
         // ---- Pass 1c: Register extern function declarations ----
         for item in &program.items {
@@ -425,6 +444,7 @@ impl Resolver {
                 functions: resolver.functions,
                 structs: resolver.structs,
                 enums: resolver.enums,
+                type_aliases: resolver.type_aliases,
             })
         } else {
             Err(resolver.errors)
@@ -439,7 +459,8 @@ impl Resolver {
                     LitValue::Int(_)
                     | LitValue::Float(_)
                     | LitValue::Bool(_)
-                    | LitValue::Str(_) => {}
+                    | LitValue::Str(_)
+                    | LitValue::Nil => {}
                 }
             }
             Expr::Ident { name, span } => {
@@ -529,6 +550,17 @@ impl Resolver {
                     ));
                 }
                 // Resolve all field value expressions
+                for (_field_name, field_expr) in fields {
+                    self.resolve_expr(field_expr);
+                }
+            }
+            Expr::New { name, fields, span } => {
+                if !self.structs.contains_key(name) {
+                    self.errors.push(CompileError::name_error(
+                        format!("undeclared struct type '{}'", name),
+                        *span,
+                    ));
+                }
                 for (_field_name, field_expr) in fields {
                     self.resolve_expr(field_expr);
                 }
@@ -655,6 +687,13 @@ impl Resolver {
             }
             Expr::Await { future, .. } => {
                 self.resolve_expr(future);
+            }
+            Expr::Go { call, .. } => {
+                self.resolve_expr(call);
+            }
+            Expr::NullCoalesce { value, default, .. } => {
+                self.resolve_expr(value);
+                self.resolve_expr(default);
             }
             // ---- Phase 11: Lambda ----
             Expr::Lambda { params, body, .. } => {
@@ -899,6 +938,23 @@ impl Resolver {
                 self.resolve_expr(body);
                 self.loop_depth -= 1;
             }
+            Stmt::ForMap { key_var, val_var, map_expr, body, span, .. } => {
+                self.resolve_expr(map_expr);
+                self.push_scope();
+                self.declare(key_var, Symbol { name: key_var.clone(), ty: NyType::Str, mutability: Mutability::Immutable, span: *span });
+                self.declare(val_var, Symbol { name: val_var.clone(), ty: NyType::I32, mutability: Mutability::Immutable, span: *span });
+                self.resolve_expr(body);
+                self.pop_scope();
+            }
+            Stmt::Select { arms, .. } => {
+                for arm in arms {
+                    self.resolve_expr(&arm.channel);
+                    self.push_scope();
+                    self.declare(&arm.var, Symbol { name: arm.var.clone(), ty: NyType::I32, mutability: Mutability::Immutable, span: arm.span });
+                    self.resolve_expr(&arm.body);
+                    self.pop_scope();
+                }
+            }
             // ---- Phase 4: Tuple destructure ----
             Stmt::TupleDestructure {
                 names,
@@ -974,4 +1030,5 @@ pub struct ResolvedInfo {
     pub functions: HashMap<String, (Vec<NyType>, NyType, Span)>,
     pub structs: HashMap<String, Vec<(String, NyType)>>,
     pub enums: HashMap<String, Vec<(String, Vec<NyType>)>>,
+    pub type_aliases: HashMap<String, NyType>,
 }

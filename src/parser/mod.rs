@@ -54,7 +54,9 @@ impl Parser {
                 | TokenKind::Break
                 | TokenKind::Continue
                 | TokenKind::Defer
-                | TokenKind::Loop => return,
+                | TokenKind::Loop
+                | TokenKind::Select
+                | TokenKind::Var => return,
                 _ => {
                     self.advance();
                 }
@@ -122,6 +124,27 @@ impl Parser {
 
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, CompileError> {
         let start = self.peek_span();
+
+        // Optional type: ?T
+        if *self.peek() == TokenKind::Question {
+            self.advance();
+            let inner = self.parse_type_annotation()?;
+            let span = start.merge(inner.span());
+            return Ok(TypeAnnotation::Optional {
+                inner: Box::new(inner),
+                span,
+            });
+        }
+
+        // Dynamic trait object: dyn Trait
+        if *self.peek() == TokenKind::Dyn {
+            self.advance();
+            let (trait_name, end) = self.expect_ident()?;
+            return Ok(TypeAnnotation::DynTrait {
+                trait_name,
+                span: start.merge(end),
+            });
+        }
 
         // Pointer type: *T
         if *self.peek() == TokenKind::Star {
@@ -216,7 +239,8 @@ impl Parser {
         // In type annotation context, < is always a generic delimiter (not comparison)
         // so we can safely parse it for any capitalized type name
         let starts_upper = name.chars().next().is_some_and(|c| c.is_uppercase());
-        if starts_upper && *self.peek() == TokenKind::Lt {
+        let is_generic_name = starts_upper || name == "chan";
+        if is_generic_name && *self.peek() == TokenKind::Lt {
             self.advance(); // consume <
             let mut type_args = Vec::new();
             while *self.peek() != TokenKind::Gt {
@@ -309,6 +333,15 @@ impl Parser {
             TokenKind::Enum => self.parse_enum_def(),
             TokenKind::Impl => self.parse_impl_block(),
             TokenKind::Trait => self.parse_trait_def(),
+            TokenKind::Type => {
+                let start = self.advance().span;
+                let (name, _) = self.expect_ident()?;
+                self.expect(&TokenKind::Assign)?;
+                let target = self.parse_type_annotation()?;
+                let end = self.peek_span();
+                self.expect(&TokenKind::Semi)?;
+                Ok(Item::TypeAlias { name, target, span: start.merge(end) })
+            }
             TokenKind::Use => self.parse_use_decl(),
             TokenKind::Extern => self.parse_extern_block(),
             _ => Err(CompileError::syntax(
@@ -730,6 +763,12 @@ impl Parser {
                     TokenKind::Loop => {
                         stmts.push(self.parse_loop_stmt()?);
                     }
+                    TokenKind::Select => {
+                        stmts.push(self.parse_select_stmt()?);
+                    }
+                    TokenKind::Var => {
+                        stmts.push(self.parse_var_stmt()?);
+                    }
                     TokenKind::LParen if self.is_tuple_destructure() => {
                         stmts.push(self.parse_tuple_destructure()?);
                     }
@@ -1016,6 +1055,16 @@ impl Parser {
         let start = self.peek_span();
         self.expect(&TokenKind::For)?;
         let (var, _) = self.expect_ident()?;
+
+        // Check for `for key, value in map` pattern
+        let value_var = if *self.peek() == TokenKind::Comma {
+            self.advance();
+            let (vv, _) = self.expect_ident()?;
+            Some(vv)
+        } else {
+            None
+        };
+
         self.expect(&TokenKind::In)?;
         let first_expr = self.parse_expr(0)?;
 
@@ -1050,15 +1099,26 @@ impl Parser {
                 })
             }
             TokenKind::LBrace => {
-                // for item in collection { body }
                 let body = self.parse_block_expr()?;
                 let end = body.span();
-                Ok(Stmt::ForIn {
-                    var,
-                    collection: first_expr,
-                    body,
-                    span: start.merge(end),
-                })
+                if let Some(vv) = value_var {
+                    // for key, value in map { body }
+                    Ok(Stmt::ForMap {
+                        key_var: var,
+                        val_var: vv,
+                        map_expr: first_expr,
+                        body,
+                        span: start.merge(end),
+                    })
+                } else {
+                    // for item in collection { body }
+                    Ok(Stmt::ForIn {
+                        var,
+                        collection: first_expr,
+                        body,
+                        span: start.merge(end),
+                    })
+                }
             }
             _ => Err(CompileError::syntax(
                 format!(
@@ -1076,6 +1136,70 @@ impl Parser {
         let body = self.parse_block_expr()?;
         let span = start.merge(body.span());
         Ok(Stmt::Loop { body, span })
+    }
+
+    // var x = expr; or var x : Type = expr;
+    fn parse_var_stmt(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Var)?;
+        let (name, _) = self.expect_ident()?;
+
+        let ty = if *self.peek() == TokenKind::Colon {
+            self.advance();
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+
+        self.expect(&TokenKind::Assign)?;
+        let init = self.parse_expr(0)?;
+        let end = self.peek_span();
+        self.expect(&TokenKind::Semi)?;
+
+        Ok(Stmt::VarDecl {
+            name,
+            mutability: Mutability::Mutable,
+            ty,
+            init,
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_select_stmt(&mut self) -> Result<Stmt, CompileError> {
+        let start = self.peek_span();
+        self.expect(&TokenKind::Select)?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut arms = Vec::new();
+        while *self.peek() != TokenKind::RBrace {
+            let arm_start = self.peek_span();
+            // Parse: var := channel.recv() => { body }
+            let (var_name, _) = self.expect_ident()?;
+            self.expect(&TokenKind::ColonAssign)?;
+            let channel_expr = self.parse_expr(0)?;
+            self.expect(&TokenKind::FatArrow)?;
+            let body = self.parse_block_expr()?;
+            let arm_span = arm_start.merge(body.span());
+
+            // Optional trailing comma
+            if *self.peek() == TokenKind::Comma {
+                self.advance();
+            }
+
+            arms.push(SelectArm {
+                var: var_name,
+                channel: channel_expr,
+                body,
+                span: arm_span,
+            });
+        }
+        let end = self.peek_span();
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(Stmt::Select {
+            arms,
+            span: start.merge(end),
+        })
     }
 
     fn parse_defer_stmt(&mut self) -> Result<Stmt, CompileError> {
@@ -1258,6 +1382,17 @@ impl Parser {
                     };
                     continue;
                 }
+                TokenKind::QuestionQuestion => {
+                    self.advance();
+                    let default_expr = self.parse_expr(0)?;
+                    let span = lhs.span().merge(default_expr.span());
+                    lhs = Expr::NullCoalesce {
+                        value: Box::new(lhs),
+                        default: Box::new(default_expr),
+                        span,
+                    };
+                    continue;
+                }
                 TokenKind::As => {
                     self.advance();
                     let target_type = self.parse_type_annotation()?;
@@ -1335,6 +1470,14 @@ impl Parser {
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 let start = self.advance().span;
+
+                // nil literal
+                if name == "nil" {
+                    return Ok(Expr::Literal {
+                        value: LitValue::Nil,
+                        span: start,
+                    });
+                }
 
                 // Enum variant: EnumName::Variant or EnumName::Variant(args)
                 if *self.peek() == TokenKind::ColonColon {
@@ -1456,6 +1599,40 @@ impl Parser {
                 Ok(Expr::Await {
                     future: Box::new(future),
                     span,
+                })
+            }
+            TokenKind::Go => {
+                let start = self.advance().span;
+                let call = self.parse_expr(0)?;
+                let span = start.merge(call.span());
+                Ok(Expr::Go {
+                    call: Box::new(call),
+                    span,
+                })
+            }
+            TokenKind::New => {
+                let start = self.advance().span;
+                let (name, _) = self.expect_ident()?;
+                self.expect(&TokenKind::LBrace)?;
+                let mut fields = Vec::new();
+                while *self.peek() != TokenKind::RBrace {
+                    if !fields.is_empty() {
+                        self.expect(&TokenKind::Comma)?;
+                        if *self.peek() == TokenKind::RBrace {
+                            break;
+                        }
+                    }
+                    let (field_name, _) = self.expect_ident()?;
+                    self.expect(&TokenKind::Colon)?;
+                    let value = self.parse_expr(0)?;
+                    fields.push((field_name, value));
+                }
+                let end = self.peek_span();
+                self.expect(&TokenKind::RBrace)?;
+                Ok(Expr::New {
+                    name,
+                    fields,
+                    span: start.merge(end),
                 })
             }
             TokenKind::If => self.parse_if_expr(),

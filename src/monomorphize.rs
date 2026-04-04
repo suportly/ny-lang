@@ -177,6 +177,7 @@ impl SimpleTypeEnv {
                 LitValue::Float(_) => Some(NyType::F64),
                 LitValue::Bool(_) => Some(NyType::Bool),
                 LitValue::Str(_) => Some(NyType::Str),
+                LitValue::Nil => Some(NyType::Pointer(Box::new(NyType::U8))),
             },
             Expr::Ident { name, .. } => self.vars.get(name).cloned(),
             Expr::Call { callee: _, .. } => {

@@ -781,4 +781,124 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         self.module.add_global(ptr_ty, None, "stderr")
     }
+
+    pub(super) fn get_or_declare_atexit(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("atexit") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        // int atexit(void (*func)(void))
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("atexit", fn_ty, None)
+    }
+
+    // -----------------------------------------------------------------------
+    // GC runtime declarations
+    // -----------------------------------------------------------------------
+
+    pub(super) fn get_or_declare_ny_gc_init(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_init") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_gc_init", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_alloc(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_alloc") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let i8_ty = self.context.i8_type();
+        let fn_ty = ptr_ty.fn_type(&[i64_ty.into(), i8_ty.into()], false);
+        self.module.add_function("ny_gc_alloc", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_collect(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_collect") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_gc_collect", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_root_push(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_root_push") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_gc_root_push", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_root_pop(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_root_pop") { return f; }
+        let i64_ty = self.context.i64_type();
+        let fn_ty = self.context.void_type().fn_type(&[i64_ty.into()], false);
+        self.module.add_function("ny_gc_root_pop", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_stats(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_stats") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_gc_stats", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_shutdown(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_shutdown") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_gc_shutdown", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_bytes_allocated(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_bytes_allocated") { return f; }
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[], false);
+        self.module.add_function("ny_gc_bytes_allocated", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_gc_collection_count(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_collection_count") { return f; }
+        let i64_ty = self.context.i64_type();
+        let fn_ty = i64_ty.fn_type(&[], false);
+        self.module.add_function("ny_gc_collection_count", fn_ty, None)
+    }
+
+    // -----------------------------------------------------------------------
+    // Typed channel runtime declarations
+    // -----------------------------------------------------------------------
+
+    pub(super) fn get_or_declare_ny_chan_new(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_chan_new") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        // NyChan *ny_chan_new(int32_t capacity, int64_t elem_size)
+        let fn_ty = ptr_ty.fn_type(&[i32_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_chan_new", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_chan_send(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_chan_send") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        // void ny_chan_send(NyChan *ch, const void *value_ptr)
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_chan_send", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_chan_recv(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_chan_recv") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        // void ny_chan_recv(NyChan *ch, void *out_ptr)
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_chan_recv", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_chan_try_recv(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_chan_try_recv") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+        // int32_t ny_chan_try_recv(NyChan *ch, void *out_ptr)
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_chan_try_recv", fn_ty, None)
+    }
+
+    pub(super) fn get_or_declare_ny_chan_close(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_chan_close") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
+        self.module.add_function("ny_chan_close", fn_ty, None)
+    }
 }

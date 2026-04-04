@@ -39,6 +39,12 @@ pub enum TokenKind {
     Let,
     Async,
     Await,
+    New,
+    Dyn,
+    Go,
+    Select,
+    Type,
+    Var,
 
     // Operators
     Plus,
@@ -103,6 +109,7 @@ pub enum TokenKind {
     Underscore,
     // Phase C: Try operator
     Question,
+    QuestionQuestion,
     // String interpolation: f"text {expr} text"
     FStringLit(String), // the raw f-string content (to be parsed later)
 

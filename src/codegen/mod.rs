@@ -53,6 +53,10 @@ pub fn generate(
         defer_stack: Vec::new(),
         closure_captures: HashMap::new(),
         opt_level,
+        trait_defs: HashMap::new(),
+        vtables: HashMap::new(),
+        trait_impls: HashMap::new(),
+        type_aliases: HashMap::new(),
     };
 
     codegen.compile_program(program)?;
@@ -232,7 +236,7 @@ fn link_executable(obj_path: &Path, output_path: &Path) -> Result<(), Vec<Compil
         .arg("-no-pie");
 
     // Link all runtime C files (hashmap.c, arena.c, etc.)
-    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c", "tensor.c", "future.c"] {
+    for rt_name in &["hashmap.c", "hashmap_generic.c", "arena.c", "channel.c", "threadpool.c", "string.c", "json.c", "tensor.c", "future.c", "gc.c", "chan.c", "error.c"] {
         if let Some(rt_path) = find_runtime_file(rt_name) {
             cmd.arg(rt_path);
         }
@@ -311,6 +315,14 @@ pub(crate) struct CodeGen<'ctx> {
     pub(super) closure_captures: HashMap<String, (String, Vec<(String, NyType)>)>,
     /// Optimization level (0-3). At O2+, skip bounds checks and stack traces.
     pub(super) opt_level: u8,
+    /// Trait definitions: trait_name → [(method_name, param_types, ret_type)]
+    pub(super) trait_defs: HashMap<String, Vec<(String, Vec<NyType>, NyType)>>,
+    /// VTable globals: "TraitName_for_TypeName" → (global_ptr, method_names_in_order)
+    pub(super) vtables: HashMap<String, (PointerValue<'ctx>, Vec<String>)>,
+    /// Trait impl mapping: (trait_name, type_name) → method qualified names
+    pub(super) trait_impls: HashMap<(String, String), Vec<String>>,
+    /// Type aliases: alias_name → resolved NyType
+    pub(super) type_aliases: HashMap<String, NyType>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -366,6 +378,10 @@ impl<'ctx> CodeGen<'ctx> {
                         variants: variant_defs.clone(),
                     };
                 }
+                // Try type aliases
+                if let Some(ty) = self.type_aliases.get(name) {
+                    return ty.clone();
+                }
                 // Fallback
                 NyType::I32
             }
@@ -401,6 +417,13 @@ impl<'ctx> CodeGen<'ctx> {
                     params: param_types,
                     ret: Box::new(ret_ty),
                 }
+            }
+            TypeAnnotation::DynTrait { trait_name, .. } => {
+                NyType::DynTrait(trait_name.clone())
+            }
+            TypeAnnotation::Optional { inner, .. } => {
+                let inner_ty = self.resolve_type_annotation(inner);
+                NyType::Optional(Box::new(inner_ty))
             }
         }
     }
@@ -504,6 +527,14 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Pass 0a2: Register type aliases
+        for item in &program.items {
+            if let Item::TypeAlias { name, target, .. } = item {
+                let ty = self.resolve_type_annotation(target);
+                self.type_aliases.insert(name.clone(), ty);
+            }
+        }
+
         // Pass 0b: Register extern function declarations
         for item in &program.items {
             if let Item::ExternBlock { functions, .. } = item {
@@ -536,16 +567,36 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Pass 0b2: Collect trait definitions
+        for item in &program.items {
+            if let Item::TraitDef { name, methods, .. } = item {
+                let method_sigs: Vec<(String, Vec<NyType>, NyType)> = methods
+                    .iter()
+                    .map(|m| {
+                        let param_types: Vec<NyType> = m
+                            .params
+                            .iter()
+                            .map(|p| self.resolve_type_annotation(&p.ty))
+                            .collect();
+                        let ret_ty = self.resolve_type_annotation(&m.return_type);
+                        (m.name.clone(), param_types, ret_ty)
+                    })
+                    .collect();
+                self.trait_defs.insert(name.clone(), method_sigs);
+            }
+        }
+
         // Pass 0c: Flatten impl methods into top-level functions with qualified names
         let mut impl_methods: Vec<(String, &Vec<Param>, &TypeAnnotation, &Expr, Span)> = Vec::new();
         for item in &program.items {
             if let Item::ImplBlock {
                 type_name,
                 methods,
-                trait_name: _,
+                trait_name,
                 ..
             } = item
             {
+                let mut method_names = Vec::new();
                 for method in methods {
                     if let Item::FunctionDef {
                         name,
@@ -558,8 +609,14 @@ impl<'ctx> CodeGen<'ctx> {
                     } = method
                     {
                         let qualified_name = format!("{}_{}", type_name, name);
-                        impl_methods.push((qualified_name, params, return_type, body, *span));
+                        impl_methods.push((qualified_name.clone(), params, return_type, body, *span));
+                        method_names.push((name.clone(), qualified_name));
                     }
+                }
+                // Track trait implementations for vtable generation
+                if let Some(tname) = trait_name {
+                    let qualified_names: Vec<String> = method_names.iter().map(|(_, q)| q.clone()).collect();
+                    self.trait_impls.insert((tname.clone(), type_name.clone()), qualified_names);
                 }
             }
         }
@@ -645,6 +702,80 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Pass 1b: Generate vtables for trait implementations
+        // Collect trait_impls keys to avoid borrow issues
+        let trait_impl_keys: Vec<(String, String)> = self.trait_impls.keys().cloned().collect();
+        for (trait_name, type_name) in &trait_impl_keys {
+            if let Some(trait_methods) = self.trait_defs.get(trait_name).cloned() {
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+                // For each method, create a thunk that takes (*u8, args...) -> ret
+                // and loads the concrete struct before forwarding to the real method
+                let struct_fields = self.struct_types.get(type_name).cloned().unwrap_or_default();
+                let struct_ty = self.get_or_create_llvm_struct_type(type_name, &struct_fields);
+
+                let mut thunk_ptrs: Vec<inkwell::values::PointerValue> = Vec::new();
+                let mut ordered_names = Vec::new();
+
+                for (method_name, param_types, ret_ty) in &trait_methods {
+                    let qualified = format!("{}_{}", type_name, method_name);
+                    if let Some((real_fn, _, _)) = self.functions.get(&qualified).cloned() {
+                        // Build thunk signature: (*u8, non-self params...) -> ret
+                        let mut thunk_params: Vec<inkwell::types::BasicMetadataTypeEnum> = vec![ptr_ty.into()];
+                        for pt in param_types.iter().skip(1) {
+                            thunk_params.push(ny_to_llvm(self.context, pt).into());
+                        }
+                        let thunk_fn_type = if *ret_ty == NyType::Unit {
+                            self.context.void_type().fn_type(&thunk_params, false)
+                        } else {
+                            ny_to_llvm(self.context, ret_ty).fn_type(&thunk_params, false)
+                        };
+                        let thunk_name = format!("__thunk_{}_{}", type_name, method_name);
+                        let thunk_fn = self.module.add_function(&thunk_name, thunk_fn_type, None);
+
+                        let entry = self.context.append_basic_block(thunk_fn, "entry");
+                        self.builder.position_at_end(entry);
+
+                        // Load concrete struct from data pointer
+                        let data_ptr = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
+                        let struct_val = self.builder.build_load(struct_ty, data_ptr, "self_val").unwrap();
+
+                        // Build call args: loaded struct + forwarded params
+                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = vec![struct_val.into()];
+                        for i in 1..thunk_fn.count_params() {
+                            call_args.push(thunk_fn.get_nth_param(i).unwrap().into());
+                        }
+
+                        let call = self.builder.build_call(real_fn, &call_args, "thunk_call").unwrap();
+                        if *ret_ty == NyType::Unit {
+                            self.builder.build_return(None).unwrap();
+                        } else {
+                            let ret_val = call.try_as_basic_value().basic().unwrap();
+                            self.builder.build_return(Some(&ret_val)).unwrap();
+                        }
+
+                        thunk_ptrs.push(thunk_fn.as_global_value().as_pointer_value());
+                        ordered_names.push(method_name.clone());
+                    }
+                }
+
+                if !thunk_ptrs.is_empty() {
+                    let vtable_arr_ty = ptr_ty.array_type(thunk_ptrs.len() as u32);
+                    let vtable_name = format!("vtable_{}_for_{}", trait_name, type_name);
+                    let vtable_global = self.module.add_global(vtable_arr_ty, None, &vtable_name);
+                    let vtable_init = ptr_ty.const_array(&thunk_ptrs);
+                    vtable_global.set_initializer(&vtable_init);
+                    vtable_global.set_constant(true);
+
+                    let vtable_key = format!("{}_for_{}", trait_name, type_name);
+                    self.vtables.insert(
+                        vtable_key,
+                        (vtable_global.as_pointer_value(), ordered_names),
+                    );
+                }
+            }
+        }
+
         // Pass 2a: Compile impl method bodies
         for (qualified_name, params, _, body, _) in &impl_methods {
             let (function, param_types, _) = self.functions[qualified_name].clone();
@@ -712,6 +843,18 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     self.variables
                         .insert(param.name.clone(), (alloca, ty.clone()));
+                }
+
+                // Initialize GC at the very start of main()
+                if name == "main" {
+                    let gc_init = self.get_or_declare_ny_gc_init();
+                    self.builder.build_call(gc_init, &[], "").unwrap();
+                    // Register gc_shutdown to run at exit (covers all return paths)
+                    let atexit = self.get_or_declare_atexit();
+                    let gc_shutdown = self.get_or_declare_ny_gc_shutdown();
+                    self.builder
+                        .build_call(atexit, &[gc_shutdown.as_global_value().as_pointer_value().into()], "")
+                        .unwrap();
                 }
 
                 // Push function name onto trace stack (debug only, skipped at -O2+)

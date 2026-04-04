@@ -18,6 +18,8 @@ pub struct TypeChecker {
     loop_depth: usize,
     /// Trait definitions: trait_name → (method_sigs, span)
     traits: HashMap<String, (Vec<(String, Vec<NyType>, NyType)>, Span)>,
+    /// Type aliases: alias_name → resolved NyType
+    type_aliases: HashMap<String, NyType>,
 }
 
 impl TypeChecker {
@@ -41,6 +43,7 @@ impl TypeChecker {
             errors: Vec::new(),
             loop_depth: 0,
             traits: HashMap::new(),
+            type_aliases: resolved.type_aliases.clone(),
         }
     }
 
@@ -131,6 +134,10 @@ impl TypeChecker {
                 if name == "()" {
                     return Some(NyType::Unit);
                 }
+                // Type aliases
+                if let Some(ty) = self.type_aliases.get(name) {
+                    return Some(ty.clone());
+                }
                 None
             }
             TypeAnnotation::Array { elem, size, .. } => {
@@ -165,6 +172,13 @@ impl TypeChecker {
                     params: param_types,
                     ret: Box::new(ret_ty),
                 })
+            }
+            TypeAnnotation::DynTrait { trait_name, .. } => {
+                Some(NyType::DynTrait(trait_name.clone()))
+            }
+            TypeAnnotation::Optional { inner, .. } => {
+                let inner_ty = self.resolve_type_annotation(inner)?;
+                Some(NyType::Optional(Box::new(inner_ty)))
             }
         }
     }
@@ -238,8 +252,12 @@ impl TypeChecker {
                 params,
                 return_type,
                 body,
+                is_async,
                 ..
             } => {
+                if *is_async {
+                    eprintln!("warning: 'async fn' is deprecated — use 'go fn()' + channels instead");
+                }
                 let ret_ty = self
                     .resolve_type_annotation(return_type)
                     .unwrap_or(NyType::Unit);
@@ -296,6 +314,20 @@ impl TypeChecker {
                         ));
                     }
                 }
+                // Warn about operator overloading on non-numeric types
+                if trait_name.is_none() {
+                    let op_names = ["add", "sub", "mul", "div", "eq", "ne", "lt", "gt", "le", "ge"];
+                    for method in methods.iter() {
+                        if let Item::FunctionDef { name, .. } = method {
+                            if op_names.contains(&name.as_str()) {
+                                eprintln!(
+                                    "warning: operator overloading '{}' on '{}' can reduce readability — consider a named method",
+                                    name, type_name
+                                );
+                            }
+                        }
+                    }
+                }
                 for method in methods {
                     self.check_item(method);
                 }
@@ -328,6 +360,9 @@ impl TypeChecker {
                     .collect();
                 self.traits.insert(name.clone(), (sigs, *span));
             }
+            Item::TypeAlias { .. } => {
+                // Already registered in resolver pass
+            }
         }
     }
 
@@ -339,6 +374,7 @@ impl TypeChecker {
                 LitValue::Float(_) => NyType::F64,
                 LitValue::Bool(_) => NyType::Bool,
                 LitValue::Str(_) => NyType::Str,
+                LitValue::Nil => NyType::Pointer(Box::new(NyType::U8)),
             },
 
             // ── Identifier ────────────────────────────────────────────
@@ -441,7 +477,12 @@ impl TypeChecker {
                         lhs_ty
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                        if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) {
+                        let nil_cmp = (lhs_ty.is_pointer() && rhs_ty.is_pointer())
+                            || matches!((&lhs_ty, &rhs_ty), (NyType::DynTrait(_), NyType::Pointer(_)))
+                            || matches!((&lhs_ty, &rhs_ty), (NyType::Pointer(_), NyType::DynTrait(_)))
+                            || matches!((&lhs_ty, &rhs_ty), (NyType::Optional(_), NyType::Pointer(_)))
+                            || matches!((&lhs_ty, &rhs_ty), (NyType::Pointer(_), NyType::Optional(_)));
+                        if lhs_ty != rhs_ty && !(lhs_ty.is_numeric() && rhs_ty.is_numeric()) && !nil_cmp {
                             self.errors.push(CompileError::type_error(
                                 format!("cannot compare '{}' with '{}'", lhs_ty, rhs_ty),
                                 *span,
@@ -586,6 +627,60 @@ impl TypeChecker {
                         }
                     }
                     return NyType::Unit;
+                }
+
+                // Built-in gc_alloc(size) -> *u8 (GC-managed allocation)
+                if callee == "gc_alloc" {
+                    if args.len() != 1 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'gc_alloc' expects 1 argument, found {}", args.len()),
+                            *span,
+                        ));
+                    } else {
+                        let arg_ty = self.check_expr(&args[0]);
+                        if !arg_ty.is_integer() {
+                            self.errors.push(CompileError::type_error(
+                                format!("'gc_alloc' expects integer size, found '{}'", arg_ty),
+                                args[0].span(),
+                            ));
+                        }
+                    }
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+
+                // Built-in gc_collect() / gc_stats() -> unit
+                if callee == "gc_collect" || callee == "gc_stats" {
+                    return NyType::Unit;
+                }
+
+                // Built-in gc_bytes_allocated() / gc_collection_count() -> i64
+                if callee == "gc_bytes_allocated" || callee == "gc_collection_count" {
+                    return NyType::I64;
+                }
+
+                // Built-in error_new(message) -> i32 (error code)
+                if callee == "error_new" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I32;
+                }
+
+                // Built-in error_message(code) -> str
+                if callee == "error_message" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
+
+                // Built-in chan_new(capacity) -> chan<T>
+                if callee == "chan_new" {
+                    if args.len() != 1 {
+                        self.errors.push(CompileError::type_error(
+                            format!("'chan_new' expects 1 argument, found {}", args.len()),
+                            *span,
+                        ));
+                    } else {
+                        self.check_expr(&args[0]);
+                    }
+                    return NyType::Chan(Box::new(NyType::I32)); // refined by type annotation
                 }
 
                 // Built-in fopen(path, mode) -> *u8 (FILE pointer)
@@ -1264,6 +1359,56 @@ impl TypeChecker {
                 }
             }
 
+            // ── New (GC-managed heap allocation) ──────────────────────
+            Expr::New { name, fields, span } => {
+                if let Some(def_fields) = self.structs.get(name).cloned() {
+                    for (field_name, field_expr) in fields {
+                        let field_ty = self.check_expr(field_expr);
+                        if let Some((_, expected_ty)) =
+                            def_fields.iter().find(|(n, _)| n == field_name)
+                        {
+                            if field_ty != *expected_ty {
+                                self.errors.push(CompileError::type_error(
+                                    format!(
+                                        "field '{}' of struct '{}': expected '{}', found '{}'",
+                                        field_name, name, expected_ty, field_ty
+                                    ),
+                                    field_expr.span(),
+                                ));
+                            }
+                        } else {
+                            self.errors.push(CompileError::type_error(
+                                format!("struct '{}' has no field named '{}'", name, field_name),
+                                field_expr.span(),
+                            ));
+                        }
+                    }
+                    let provided: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+                    for (def_name, _) in &def_fields {
+                        if !provided.contains(&def_name.as_str()) {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "missing field '{}' in initializer for struct '{}'",
+                                    def_name, name
+                                ),
+                                *span,
+                            ));
+                        }
+                    }
+                    // new returns *Struct (pointer to GC-managed struct)
+                    NyType::Pointer(Box::new(NyType::Struct {
+                        name: name.clone(),
+                        fields: def_fields,
+                    }))
+                } else {
+                    self.errors.push(CompileError::type_error(
+                        format!("unknown struct '{}'", name),
+                        *span,
+                    ));
+                    NyType::Pointer(Box::new(NyType::Unit))
+                }
+            }
+
             // ── Address-of (&expr) ────────────────────────────────────
             Expr::AddrOf { operand, .. } => {
                 let inner_ty = self.check_expr(operand);
@@ -1554,11 +1699,29 @@ impl TypeChecker {
 
             // ── Await ────────────────────────────────────────────────
             Expr::Await { future, .. } => {
+                eprintln!("warning: 'await' is deprecated — use 'go' + channels instead");
                 let ft = self.check_expr(future);
                 match ft {
                     NyType::Future(inner) => *inner,
-                    _ => ft, // Allow await on any type for flexibility
+                    _ => ft,
                 }
+            }
+
+            // ── Null coalescing (??) ──────────────────────────────────
+            Expr::NullCoalesce { value, default, .. } => {
+                let val_ty = self.check_expr(value);
+                self.check_expr(default);
+                // Unwrap optional: ?T → T
+                match val_ty {
+                    NyType::Optional(inner) => *inner,
+                    _ => val_ty,
+                }
+            }
+
+            // ── Go (goroutine) ───────────────────────────────────────
+            Expr::Go { call, .. } => {
+                self.check_expr(call);
+                NyType::Unit
             }
 
             // ── Lambda ───────────────────────────────────────────────
@@ -1647,6 +1810,17 @@ impl TypeChecker {
             }
             // Auto-deref: if it's a pointer to a struct, dereference and access
             NyType::Pointer(inner) => self.resolve_field_access(inner, field, span),
+            // Optional: prevent direct field access — must unwrap first
+            NyType::Optional(inner) => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "cannot access field '{}' on optional type '?{}' — unwrap with 'if let' or '??'",
+                        field, inner
+                    ),
+                    span,
+                ));
+                NyType::I32
+            }
             _ => {
                 self.errors.push(CompileError::type_error(
                     format!("cannot access field '{}' on type '{}'", field, obj_ty),
@@ -1666,6 +1840,38 @@ impl TypeChecker {
         args: &[Expr],
         span: Span,
     ) -> NyType {
+        // chan<T> method calls
+        if let NyType::Chan(elem_ty) = receiver_ty {
+            for arg in args { self.check_expr(arg); }
+            match method {
+                "send" => return NyType::Unit,
+                "recv" => return *elem_ty.clone(),
+                "close" => return NyType::Unit,
+                _ => {
+                    self.errors.push(CompileError::type_error(
+                        format!("chan has no method '{}'", method),
+                        span,
+                    ));
+                    return NyType::Unit;
+                }
+            }
+        }
+
+        // dyn Trait method calls — look up return type from trait definition
+        if let NyType::DynTrait(trait_name) = receiver_ty {
+            for arg in args { self.check_expr(arg); }
+            if let Some((sigs, _)) = self.traits.get(trait_name) {
+                if let Some((_, _, ret_ty)) = sigs.iter().find(|(n, _, _)| n == method) {
+                    return ret_ty.clone();
+                }
+            }
+            self.errors.push(CompileError::type_error(
+                format!("trait '{}' has no method '{}'", trait_name, method),
+                span,
+            ));
+            return NyType::I32;
+        }
+
         // Built-in Vec methods
         // HashMap<K,V> methods
         if let NyType::HashMap(_key_ty, val_ty) = receiver_ty {
@@ -2020,11 +2226,15 @@ impl TypeChecker {
                 let init_ty = self.check_expr(init);
                 if let Some(annotation) = ty {
                     if let Some(declared_ty) = self.resolve_type_annotation(annotation) {
-                        // Allow numeric coercion and Vec coercion
+                        // Allow numeric coercion, Vec coercion, chan coercion, dyn Trait, and optional coercion
+                        let optional_compat = matches!(&declared_ty, NyType::Optional(_));
                         let compatible = init_ty == declared_ty
                             || (init_ty.is_vec() && declared_ty.is_vec())
                             || (init_ty.is_hashmap() && declared_ty.is_hashmap())
-                            || (init_ty.is_numeric() && declared_ty.is_numeric());
+                            || (init_ty.is_numeric() && declared_ty.is_numeric())
+                            || matches!(&declared_ty, NyType::DynTrait(_))
+                            || matches!((&init_ty, &declared_ty), (NyType::Chan(_), NyType::Chan(_)))
+                            || optional_compat;
                         if !compatible {
                             self.errors.push(CompileError::type_error(
                                 format!("expected '{}', found '{}'", declared_ty, init_ty),
@@ -2184,6 +2394,7 @@ impl TypeChecker {
 
                 if ret_ty != self.current_return_type
                     && !(ret_ty.is_numeric() && self.current_return_type.is_numeric())
+                    && !matches!(&self.current_return_type, NyType::DynTrait(_))
                 {
                     self.errors.push(CompileError::type_error(
                         format!(
@@ -2395,6 +2606,43 @@ impl TypeChecker {
                 self.loop_depth += 1;
                 self.check_expr(body);
                 self.loop_depth -= 1;
+            }
+
+            Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+                let map_ty = self.check_expr(map_expr);
+                let (key_ty, val_ty) = match &map_ty {
+                    NyType::HashMap(k, v) => (*k.clone(), *v.clone()),
+                    _ => (NyType::Str, NyType::I32),
+                };
+                self.push_scope();
+                self.declare(key_var, key_ty);
+                self.declare(val_var, val_ty);
+                self.check_expr(body);
+                self.pop_scope();
+            }
+
+            // ── Select ──────────────────────────────────────────────
+            Stmt::Select { arms, .. } => {
+                for arm in arms {
+                    let ch_ty = self.check_expr(&arm.channel);
+                    // Determine recv type from channel method call
+                    let var_ty = if let Expr::MethodCall { object, .. } = &arm.channel {
+                        let obj_ty = self.check_expr(object);
+                        match obj_ty {
+                            NyType::Chan(elem) => *elem,
+                            _ => NyType::I32,
+                        }
+                    } else {
+                        match ch_ty {
+                            NyType::I32 => NyType::I32,
+                            _ => NyType::I32,
+                        }
+                    };
+                    self.push_scope();
+                    self.declare(&arm.var, var_ty);
+                    self.check_expr(&arm.body);
+                    self.pop_scope();
+                }
             }
 
             // ── Tuple destructure ────────────────────────────────────

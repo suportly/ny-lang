@@ -30,12 +30,15 @@ runtime/
 ├── string.c             # String helpers + clock + stack traces
 ├── json.c               # JSON parser
 ├── tensor.c             # Tensor<f64> matrix operations
-└── future.c             # Async/await runtime (NyFuture)
+├── future.c             # Async/await runtime (NyFuture)
+├── gc.c                 # Mark-and-sweep garbage collector
+├── chan.c               # Generic typed channels (chan<T>)
+└── error.c              # Error handling with string messages
 editors/
 └── vscode/              # VS Code extension + LSP client
 specs/                   # Feature specifications
 tests/
-├── compile_run.rs       # Integration tests (111)
+├── compile_run.rs       # Integration tests (126)
 ├── error_tests.rs       # Negative tests (16)
 └── fixtures/            # .ny test programs
 benchmarks/              # 7 benchmarks with C + Go equivalents
@@ -44,7 +47,7 @@ benchmarks/              # 7 benchmarks with C + Go equivalents
 ## Commands
 
 ```bash
-cargo test               # Run all tests (127 total)
+cargo test               # Run all tests (142 total)
 cargo clippy             # Lint
 cargo build --release    # Release binary
 ny build file.ny         # Compile .ny to executable
@@ -73,6 +76,7 @@ ny pkg list              # List dependencies
 - Enums (tagged unions) + pattern matching (match, if let, while let)
 - Generics with monomorphization: `fn max<T>(a: T, b: T) -> T`
 - Trait definitions + impl Trait for Type + trait bounds enforcement
+- **`dyn Trait`**: dynamic dispatch via vtables + fat pointers (`{data_ptr, vtable_ptr}`)
 - Operator overloading: `impl Vec2 { fn add(self, other) -> Vec2 }` → `a + b`
 - Closures (capturing): `|x: i32| -> i32 { x * n }`
 - Async/await: `async fn compute() -> i32 { ... }` + `await future`
@@ -99,13 +103,36 @@ trim, to_upper, to_lower, replace, repeat
 - alloc/free with OOM panic + null check
 - defer (LIFO, function-scoped)
 - Arena allocator (arena_new/alloc/free/reset)
-- No GC — manual memory + defer
+- **GC**: mark-and-sweep garbage collector (gc_alloc/gc_collect/gc_stats/gc_bytes_allocated/gc_collection_count)
+- **`new` keyword**: `new Type { fields }` → GC-managed heap allocation, returns `*Type`
 
-### Concurrency
+### Concurrency (Go-style)
+- **Goroutines**: `go fn(args)` — fire-and-forget dispatch to thread pool
+- **Typed channels**: `chan<T>` with `.send(val)`, `.recv()`, `.close()` methods
+- **`select`**: channel multiplexing (`select { v := ch.recv() => { ... } }`)
 - Threads: thread_spawn/thread_join (pthreads)
 - Channels: channel_new/send/recv/close (bounded blocking, i32)
 - Thread pool: pool_new/submit/wait/free
-- **Async/await**: async fn dispatched to global thread pool, await blocks on condvar
+- Async/await: async fn + await (deprecated — use `go` + channels)
+
+### Null Safety
+- **`nil` literal**: null pointer value, `ptr == nil` / `ptr != nil`
+- **`?T` optional types**: `?*Point` = nullable pointer, compile-time field access prevention
+- **`??` null coalescing**: `p ?? default` — unwrap optional or use default
+
+### Error Handling
+- **`error_new(msg)`**: create error with string message → returns error code
+- **`error_message(code)`**: retrieve error message string
+- **`?` operator**: `val := divide(10, 0)?;` — propagate errors
+- Pattern matching on `enum Result { Ok(i32), Err(i32) }`
+
+### Go-style Ergonomics
+- **`var` keyword**: `var x = 5;` — readable mutable declaration (alternative to `:~=`)
+- **`type` aliases**: `type Meters = f64;` (Go-style type definitions)
+- **`for key, val in map`**: Go-style HashMap iteration
+- **`dyn Trait` returns**: functions can return `dyn Trait` (auto-coercion)
+- **`println` spaces**: automatic spaces between multiple arguments
+- **Deprecation warnings**: `async/await` warns to use `go` + channels; operator overloading warns on non-numeric types
 
 ### Tensor API (22 operations)
 tensor_zeros, tensor_ones, tensor_fill, tensor_rand, tensor_clone,
@@ -114,11 +141,14 @@ tensor_add, tensor_sub, tensor_mul, tensor_scale,
 tensor_matmul, tensor_transpose, tensor_dot, tensor_norm,
 tensor_sum, tensor_max, tensor_min, tensor_print, tensor_free
 
-### Builtins (90+)
+### Builtins (115)
 print/println, alloc/free/sizeof, math (sqrt/sin/cos/floor/ceil/pow/fabs/log/exp),
 file I/O (read_file/write_file/remove_file/fopen/fclose/fread_byte),
 conversion (int_to_str/str_to_int/float_to_str/str_to_float),
 JSON (json_parse/get_str/get_int/get_float/get_bool/len/arr_get/free),
+GC (gc_alloc/gc_collect/gc_stats/gc_bytes_allocated/gc_collection_count),
+channels (chan_new, channel_new/send/recv/close),
+errors (error_new/error_message),
 timing (clock_ms/sleep_ms), exit
 
 ### Tooling
@@ -146,7 +176,7 @@ timing (clock_ms/sleep_ms), exit
 ## Reserved Keywords
 
 fn, if, else, while, for, in, return, struct, break, continue, as, enum, match,
-defer, pub, use, mod, trait, impl, loop, unsafe, extern, let, async, await
+defer, pub, use, mod, trait, impl, loop, unsafe, extern, let, async, await, new, dyn, go, nil, select, type, var
 
 ## Roadmap
 

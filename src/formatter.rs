@@ -163,7 +163,8 @@ fn item_span(item: &Item) -> Span {
         | Item::Use { span, .. }
         | Item::ExternBlock { span, .. }
         | Item::ImplBlock { span, .. }
-        | Item::TraitDef { span, .. } => *span,
+        | Item::TraitDef { span, .. }
+        | Item::TypeAlias { span, .. } => *span,
     }
 }
 
@@ -183,7 +184,9 @@ fn stmt_span(stmt: &Stmt) -> Span {
         | Stmt::Defer { span, .. }
         | Stmt::WhileLet { span, .. }
         | Stmt::IfLet { span, .. }
-        | Stmt::Loop { span, .. } => *span,
+        | Stmt::Loop { span, .. }
+        | Stmt::ForMap { span, .. }
+        | Stmt::Select { span, .. } => *span,
     }
 }
 
@@ -262,6 +265,10 @@ fn format_item(out: &mut String, item: &Item, depth: usize, f: &mut Fmt) {
             }
             indent(out, depth);
             out.push_str("}\n");
+        }
+        Item::TypeAlias { name, target, .. } => {
+            indent(out, depth);
+            out.push_str(&format!("type {} = {};\n", name, format_type_annotation(target)));
         }
         Item::ImplBlock {
             type_name,
@@ -356,6 +363,8 @@ fn format_type_annotation(ty: &TypeAnnotation) -> String {
             let ptypes: Vec<String> = params.iter().map(|p| format_type_annotation(p)).collect();
             format!("fn({}) -> {}", ptypes.join(", "), format_type_annotation(ret))
         }
+        TypeAnnotation::DynTrait { trait_name, .. } => format!("dyn {}", trait_name),
+        TypeAnnotation::Optional { inner, .. } => format!("?{}", format_type_annotation(inner)),
     }
 }
 
@@ -408,6 +417,7 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
             }
             LitValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             LitValue::Str(s) => out.push_str(&format!("\"{}\"", s)),
+            LitValue::Nil => out.push_str("nil"),
         },
         Expr::Ident { name, .. } => out.push_str(name),
         Expr::BinOp { op, lhs, rhs, .. } => {
@@ -472,6 +482,20 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
             out.push_str(field);
         }
         Expr::StructInit { name, fields, .. } => {
+            out.push_str(name);
+            out.push_str(" { ");
+            for (i, (fname, fexpr)) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(fname);
+                out.push_str(": ");
+                format_expr(out, fexpr, depth);
+            }
+            out.push_str(" }");
+        }
+        Expr::New { name, fields, .. } => {
+            out.push_str("new ");
             out.push_str(name);
             out.push_str(" { ");
             for (i, (fname, fexpr)) in fields.iter().enumerate() {
@@ -580,6 +604,15 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
         Expr::Await { future, .. } => {
             out.push_str("await ");
             format_expr(out, future, depth);
+        }
+        Expr::Go { call, .. } => {
+            out.push_str("go ");
+            format_expr(out, call, depth);
+        }
+        Expr::NullCoalesce { value, default, .. } => {
+            format_expr(out, value, depth);
+            out.push_str(" ?? ");
+            format_expr(out, default, depth);
         }
     }
 }
@@ -780,6 +813,29 @@ fn format_stmt_inner(out: &mut String, stmt: &Stmt, depth: usize, f: Option<&mut
             out.push_str("loop ");
             format_expr(out, body, depth);
             out.push('\n');
+        }
+        Stmt::ForMap { key_var, val_var, map_expr, body, .. } => {
+            indent(out, depth);
+            out.push_str(&format!("for {}, {} in ", key_var, val_var));
+            format_expr(out, map_expr, depth);
+            out.push(' ');
+            format_expr(out, body, depth);
+            out.push('\n');
+        }
+        Stmt::Select { arms, .. } => {
+            indent(out, depth);
+            out.push_str("select {\n");
+            for arm in arms {
+                indent(out, depth + 1);
+                out.push_str(&arm.var);
+                out.push_str(" := ");
+                format_expr(out, &arm.channel, depth + 1);
+                out.push_str(" => ");
+                format_expr(out, &arm.body, depth + 1);
+                out.push_str(",\n");
+            }
+            indent(out, depth);
+            out.push_str("}\n");
         }
     }
 }

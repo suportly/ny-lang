@@ -1,168 +1,146 @@
 # Ny Lang
 
-A native-compiled language for numerical computation and ML inference. Compiles to x86-64 via LLVM 18 with zero runtime overhead.
+**Go's concurrency + Rust's type safety.** Native compiled via LLVM 18.
 
-**No GC. No borrow checker. No VM.** Manual memory management with `defer`, immutable by default, pattern matching, generics with monomorphization.
-
-## Quick Start
+Goroutines, typed channels, select, pattern matching, traits with dynamic dispatch — compiled to native x86-64 and WebAssembly. Faster than Go on compute-bound workloads.
 
 ```ny
-fn fibonacci(n: i32) -> i32 {
-    if n <= 1 { return n; }
-    return fibonacci(n - 1) + fibonacci(n - 2);
+fn main() {
+    ch : chan<i32> = chan_new(10);
+
+    go producer(ch, 21);
+    go producer(ch, 21);
+
+    var total = ch.recv() + ch.recv();
+    println("total:", total);  // total: 42
 }
 
-fn main() -> i32 {
-    start := clock_ms();
-    result := fibonacci(35);
-    elapsed := clock_ms() - start;
-    println(f"fib(35) = {result} in {elapsed}ms");
-    return 0;
+fn producer(ch : chan<i32>, value: i32) {
+    ch.send(value);
 }
 ```
 
 ```bash
-ny run fib.ny        # compile + run in one step
-ny build fib.ny -O2  # optimized binary
+ny run main.ny        # compile + run
+ny build main.ny -O2  # optimized binary
 ```
 
-## Features at a Glance
+## Why Ny?
 
-```ny
-// Generics with monomorphization
-fn max<T>(a: T, b: T) -> T {
-    if a > b { return a; }
-    return b;
-}
-
-// Tagged unions + pattern matching
-enum Result { Ok(i32), Err(i32) }
-
-fn divide(a: i32, b: i32) -> Result {
-    if b == 0 { return Result::Err(0); }
-    return Result::Ok(a / b);
-}
-
-// ? operator for error propagation
-val := divide(100, 4)?;
-
-// Structs with methods
-struct Point { x: i32, y: i32 }
-impl Point {
-    fn magnitude(self: Point) -> i32 {
-        return self.x * self.x + self.y * self.y;
-    }
-}
-
-// Closures with capture
-multiplier := 3;
-scale := |x: i32| -> i32 { return x * multiplier; };
-
-// Vec<T> dynamic arrays
-v :~ Vec<i32> = vec_new();
-v.push(5); v.push(3); v.push(8);
-v.sort();     // [3, 5, 8]
-v.reverse();  // [8, 5, 3]
-
-// String methods
-name := "  Hello World  ";
-println(name.trim().to_lower());     // "hello world"
-println(name.contains("World"));     // true
-idx := name.index_of("World");       // 8
-
-// f-string interpolation
-println(f"max is {max(42, 17)}");
-
-// Extern C FFI
-extern { fn abs(x: i32) -> i32; }
-
-// Modules
-use "math.ny";
-```
-
-## Installation
-
-### Prerequisites
-
-- Rust 1.75+ (with cargo)
-- LLVM 18 development libraries
-- A C compiler (`cc`/`gcc`/`clang`) for linking
-
-### LLVM 18 (Ubuntu/Debian)
-
-```bash
-wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh
-sudo ./llvm.sh 18
-sudo apt install llvm-18-dev libpolly-18-dev
-export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
-```
-
-### Build
-
-```bash
-git clone https://github.com/suportly/ny-lang.git
-cd ny-lang
-cargo build --release
-# Binary at target/release/ny
-```
-
-## CLI
-
-```bash
-ny build file.ny           # Compile to executable
-ny build file.ny -O 2      # With optimization (0-3)
-ny build file.ny --emit llvm-ir  # Emit LLVM IR
-ny run file.ny             # Compile and run in one step
-ny check file.ny           # Type-check only (no codegen, shows timing)
-ny test file.ny            # Run test_* functions
-ny repl                    # Interactive REPL
-ny fmt file.ny             # Print formatted source
-ny fmt file.ny --write     # Format in-place
-ny fmt file.ny --check     # Check formatting (CI mode)
-ny pkg init                # Create ny.pkg manifest
-ny pkg add <url>           # Add git dependency
-ny pkg build               # Fetch all dependencies
-ny pkg remove <name>       # Remove dependency
-ny pkg list                # List dependencies
-```
+- **Concurrency built-in**: `go`, `chan<T>`, `select` — no frameworks, no async coloring
+- **Type safety without complexity**: enums, pattern matching, `?T` optionals, `dyn Trait` — no borrow checker
+- **Fast**: 1.3-2.2x faster than Go, within 1.5x of C on all benchmarks
 
 ## Language Tour
 
 ### Variables
 
 ```ny
-x : i32 = 5;          // immutable, explicit type
-y :~ i32 = 10;        // mutable
-z := 42;              // immutable, type inferred
-w :~= 0;              // mutable, type inferred
+result := 42;           // immutable, type inferred
+var total = 0;          // mutable (Go-style)
+name : str = "hello";   // explicit type
 ```
 
-### Types
-
-14 scalar types (`i8`-`i128`, `u8`-`u128`, `f32`, `f64`, `bool`, `str`), arrays `[N]T`, slices `[]T`, pointers `*T`, tuples `(T, U)`, function types `fn(T) -> U`.
-
-### Control Flow
+### Structs + Methods
 
 ```ny
-// if/else expressions
-result := if x > 0 { x } else { -x };
+struct Point { x: i32, y: i32 }
 
-// while, for-range, for-in
-while i < 10 { i += 1; }
-for i in 0..10 { println(i); }
-for item in collection { process(item); }
+impl Point {
+    fn magnitude(self: Point) -> i32 {
+        return self.x * self.x + self.y * self.y;
+    }
+}
 
-// match with exhaustiveness checking
-val := match result {
-    Result::Ok(v) => v,
-    Result::Err(e) => { println(e); return -1; },
-};
-
-// if let, while let
-if let Option::Some(v) = maybe { println(v); }
+p := new Point { x: 3, y: 4 };  // GC-managed heap allocation
+println(p.magnitude());          // 25
 ```
 
-### Generics & Traits
+### Enums + Pattern Matching
+
+```ny
+enum Result {
+    Ok(i32),
+    Err(str),    // string error messages
+}
+
+fn divide(a: i32, b: i32) -> Result {
+    if b == 0 { return Result::Err("division by zero"); }
+    return Result::Ok(a / b);
+}
+
+match divide(10, 3) {
+    Result::Ok(v) => println("result:", v),
+    Result::Err(msg) => println("error:", msg),
+}
+```
+
+### Traits + Dynamic Dispatch
+
+```ny
+interface Shape {
+    fn area(self: i32) -> i32;
+}
+
+struct Circle { radius: i32 }
+impl Shape for Circle {
+    fn area(self: Circle) -> i32 { return self.radius * self.radius * 3; }
+}
+
+// dyn Shape = interface value (fat pointer with vtable)
+fn print_area(s: dyn Shape) { println("area:", s.area()); }
+```
+
+### Error Handling
+
+```ny
+fn compute() -> Result {
+    x := divide(84, 2)?;   // unwraps Ok or propagates Err
+    y := divide(x, 0)?;    // error: "division by zero"
+    return Result::Ok(y);
+}
+
+// Rich errors with messages + stack traces
+code := error_new("something went wrong");
+msg := error_message(code);    // "something went wrong"
+trace := error_trace(code);    // call stack at error creation
+```
+
+### Goroutines + Channels + Select
+
+```ny
+ch1 : chan<i32> = chan_new(16);
+ch2 : chan<i32> = chan_new(16);
+
+go producer(ch1, 20);
+go producer(ch2, 22);
+
+// select: receive from first ready channel
+select {
+    v := ch1.recv() => { println("ch1:", v); },
+    v := ch2.recv() => { println("ch2:", v); },
+}
+```
+
+### Optional Types + Null Safety
+
+```ny
+p : ?*Point = nil;
+
+// Compile error: cannot access field on optional type
+// p.x;
+
+// Safe unwrap with if let
+if let val = p {
+    println(val.x);      // only runs if non-nil
+}
+
+// Null coalescing
+safe := p ?? new Point { x: 0, y: 0 };
+println(safe.x);         // always safe
+```
+
+### Generics
 
 ```ny
 fn max<T>(a: T, b: T) -> T {
@@ -170,227 +148,32 @@ fn max<T>(a: T, b: T) -> T {
     return b;
 }
 
-trait Describable {
-    fn describe(self: i32) -> i32;
+println(max(42, 17));      // 42
+println(max(3.14, 2.71));  // 3.14
+```
+
+### Collections
+
+```ny
+// Vec<T> with 20 methods
+var v : Vec<i32> = vec_new();
+v.push(5); v.push(3); v.push(8);
+v.sort();
+total := v.reduce(|a: i32, b: i32| -> i32 { return a + b; }, 0);
+
+// HashMap with Go-style iteration
+m := map_new();
+map_insert(m, "hello", 42);
+for key, value in m {
+    println(key, value);
 }
 
-struct Circle { radius: i32 }
-impl Circle {
-    fn area_approx(self: Circle) -> i32 {
-        return 3 * self.radius * self.radius;
-    }
-}
-```
-
-### Memory Management
-
-```ny
-buf := alloc(1024);        // heap allocation
-defer free(buf);           // deterministic cleanup (LIFO)
-*buf = 42 as u8;           // pointer dereference
-
-a := arena_new(4096);      // arena allocator
-defer arena_free(a);
-ptr := arena_alloc(a, 64); // bump allocation
-arena_reset(a);            // free all at once
-```
-
-### Vec\<T\>
-
-```ny
-v :~ Vec<i32> = vec_new();
-v.push(5); v.push(3); v.push(8); v.push(1);
-
-v.sort();              // [1, 3, 5, 8]
-v.reverse();           // [8, 5, 3, 1]
-len := v.len();        // 4
-val := v.get(0);       // 8
-v.set(0, 10);          // [10, 5, 3, 1]
-last := v.pop();       // 1, vec is now [10, 5, 3]
-
-if v.contains(5) { println("found"); }
-idx := v.index_of(3);  // 2
-v.clear();             // empty
-```
-
-### String Methods
-
-```ny
-s := "Hello, World!";
-
-s.len()                    // 13
-s.char_at(0)               // 72 ('H')
-s.substr(0 as i64, 5 as i64) // "Hello"
-s.contains("World")        // true
-s.starts_with("Hello")     // true
-s.ends_with("!")            // true
-s.index_of("World")        // 7
-s.trim()                   // strips whitespace
-s.to_upper()               // "HELLO, WORLD!"
-s.to_lower()               // "hello, world!"
-s.replace("World", "Ny")   // "Hello, Ny!"
-
-// Splitting
-count := str_split_count(s, ",");    // 2
-part := str_split_get(s, ",", 0);    // "Hello"
-```
-
-### File I/O
-
-```ny
-fp := fopen("data.txt\0", "w\0");
-fwrite_str(fp, "hello\0");
-fclose(fp);
-
-fp2 := fopen("data.txt\0", "r\0");
-byte := fread_byte(fp2);  // first byte
-fclose(fp2);
-```
-
-### Concurrency
-
-```ny
-// Threads
-fn worker() -> *u8 { sleep_ms(100); return alloc(1); }
-t := thread_spawn(worker);
-thread_join(t);
-
-// Channels (bounded, blocking)
-ch := channel_new(16);
-channel_send(ch, 42);
-val := channel_recv(ch);
-channel_close(ch);
-
-// Thread pool
-pool := pool_new(4);
-pool_submit(pool, work_fn);
-pool_wait(pool);
-pool_free(pool);
-```
-
-### Async/Await
-
-```ny
-async fn fetch_data(id: i32) -> i32 {
-    // Runs on thread pool automatically
-    return compute_heavy(id);
-}
-
-fn main() -> i32 {
-    // Spawn concurrent tasks
-    f1 := fetch_data(1);
-    f2 := fetch_data(2);
-
-    // Await results
-    a := await f1;
-    b := await f2;
-    return a + b;
-}
-```
-
-### Tensor Operations
-
-```ny
-a := tensor_zeros(3, 3);
-tensor_set(a, 0, 0, 1.0);
-b := tensor_ones(3, 3);
-
-c := tensor_matmul(a, b);     // matrix multiply
-d := tensor_transpose(c);     // transpose
-sum := tensor_sum(d);          // sum all elements
-norm := tensor_norm(a);        // Frobenius norm
-```
-
-### SIMD
-
-```ny
-a := simd_splat_f32x4(3.0);   // [3, 3, 3, 3]
-b := simd_splat_f32x4(2.0);   // [2, 2, 2, 2]
-c := a * b;                     // [6, 6, 6, 6]
-total := simd_reduce_add_f32(c); // 24.0
-```
-
-### Package Manager
-
-```bash
-ny pkg init                    # Create ny.pkg manifest
-ny pkg add https://github.com/user/math-extra.git
-ny pkg build                   # Fetch dependencies
-ny pkg list                    # Show installed packages
-```
-
-Packages are git repos with `ny.pkg` at root. Dependencies stored in `.ny_deps/` and auto-discovered by `ny build`.
-
-## Editor Support
-
-### VS Code
-
-The [`editors/vscode/`](editors/vscode/) directory contains a VS Code extension with:
-- Syntax highlighting (TextMate grammar)
-- Language Server Protocol (diagnostics, hover, go-to-definition, completion, document symbols)
-- Auto-closing pairs, bracket matching, indentation
-
-Install locally:
-```bash
-cd editors/vscode
-npm install
-# Then in VS Code: "Developer: Install Extension from Location..."
-```
-
-## Examples
-
-| File | What it shows |
-|------|--------------|
-| [`examples/mandelbrot.ny`](examples/mandelbrot.ny) | ASCII Mandelbrot set — math, loops, extern FFI |
-| [`examples/word_count.ny`](examples/word_count.ny) | Word counting — HashMap, File I/O, string processing |
-| [`examples/csv_parser.ny`](examples/csv_parser.ny) | CSV parsing — string split, HashMap, f-strings |
-| [`examples/fibonacci_bench.ny`](examples/fibonacci_bench.ny) | Performance benchmark with `clock_ms()` timing |
-| [`examples/matmul_bench.ny`](examples/matmul_bench.ny) | Matrix multiply — Vec, nested loops, f-strings |
-| [`examples/todo_app.ny`](examples/todo_app.ny) | **Complete app (234 lines, 15 features)** — structs, enums, Vec, HashMap, closures, JSON, file I/O, math, f-strings |
-| [`examples/calculator.ny`](examples/calculator.ny) | Interactive REPL — read_line, string split, loops |
-| [`examples/benchmark/`](examples/benchmark/) | Full suite — generics, sorting, modules, enums |
-
-## Running Tests
-
-```bash
-cargo test    # 127 tests (111 integration + 16 error)
-cargo clippy  # Zero warnings
-```
-
-## Project Structure
-
-```
-src/
-├── main.rs              # CLI (build/run/check/test/fmt/repl + pkg)
-├── lib.rs               # Compiler pipeline + module resolution
-├── lsp.rs               # Language Server Protocol (6 capabilities)
-├── formatter.rs         # ny fmt (comment-preserving)
-├── monomorphize.rs      # Generic function specialization
-├── lexer/               # Tokenization
-├── parser/              # Pratt parser → AST (error recovery)
-├── semantic/            # Name resolution + type checking
-├── codegen/             # LLVM IR (native x86-64 + wasm32)
-├── pkg/                 # Package manager
-├── common/              # Types, spans, errors
-└── diagnostics/         # Error reporting
-runtime/
-├── hashmap.c            # str→i32 HashMap + str→str (smap)
-├── hashmap_generic.c    # Generic HashMap<K,V>
-├── arena.c              # Arena allocator
-├── channel.c            # Bounded channels
-├── threadpool.c         # Thread pool + parallel iterators
-├── string.c             # String helpers + stack traces
-├── json.c               # JSON parser
-├── tensor.c             # Tensor<f64> (22 operations)
-└── future.c             # Async/await runtime
-editors/
-└── vscode/              # VS Code extension + LSP client
-benchmarks/              # 7 benchmarks (Ny + C + Go)
+// Type aliases
+type Meters = f64;
+type UserID = i32;
 ```
 
 ## Performance
-
-Benchmarks on x86-64 Linux, median of 5 runs:
 
 **Ny wins or ties Go in ALL 7 benchmarks** (at `-O2`, median of 3 runs):
 
@@ -404,27 +187,52 @@ Benchmarks on x86-64 Linux, median of 5 runs:
 | Matrix Multiply 256 | 25ms | 19ms | 40ms | **1.6x faster** |
 | Sieve 10M | 112ms | 79ms | 86ms | **1.3x** |
 
-Ny compiles through LLVM 18 (same backend as Clang). At `-O2`, bounds checks and stack traces are disabled for maximum performance (debug builds retain full safety).
+Compiled through LLVM 18 (same backend as Clang). At `-O2`, bounds checks and stack traces are disabled for maximum performance.
 
-See [`benchmarks/`](benchmarks/) for full results, C/Go source equivalents, and methodology.
+## Tooling
 
-## Design Decisions
+| Tool | Command | Description |
+|------|---------|-------------|
+| Build | `ny build file.ny` | Compile to native binary |
+| Run | `ny run file.ny` | Compile and run |
+| Check | `ny check file.ny` | Type-check without compiling |
+| Test | `ny test file.ny` | Run `test_*` functions |
+| Format | `ny fmt file.ny --write` | Auto-format source |
+| REPL | `ny repl` | Interactive mode |
+| LSP | `ny-lsp` | Language server (6 capabilities) |
+| Package | `ny pkg add <url>` | Git-based dependency management |
+| WASM | `ny build file.ny --target wasm32` | Compile to WebAssembly |
 
-- **No GC, no borrow checker** — manual memory with `defer` as ergonomic safety net
-- **Immutable by default** — `:=` is immutable, `:~=` is mutable
-- **Monomorphization** — generics compile to specialized code, zero runtime cost
-- **LLVM backend** — same optimizer as Clang/Rust, O0-O3 optimization levels
-- **All errors are values** — tagged unions + `?` operator, no exceptions
-- **Private by default** — `pub` keyword for exports
+**VS Code extension**: syntax highlighting + LSP client in [`editors/vscode/`](editors/vscode/).
 
-## Roadmap
+## Known Limitations
 
-See [specs/ROADMAP.md](specs/ROADMAP.md) for the full strategic roadmap. Key upcoming items:
+- **Concurrency**: `go` uses a fixed-size OS thread pool, not green threads. Efficient for CPU-bound workloads with few goroutines; not designed for 100k+ lightweight tasks.
+- **GC**: Mark-and-sweep, stop-the-world. No generational collection. Pausas proportional to heap size.
+- **Error handling**: `error_new`/`error_message` use a global table, not typed error objects. Stack traces only in debug builds.
+- **Generics**: Monomorphization (like C++/Rust). Code size grows with type instantiations. Use `dyn Trait` for code-size-sensitive paths.
+- **`async`/`await`**: Deprecated. Use `go` + channels instead.
 
-- GPU compute via LLVM NVPTX backend
-- Iterator trait (map/filter/fold)
-- Package manager (`ny pkg`)
-- WASM target
+## Building from Source
+
+```bash
+# Requirements: Rust 1.75+, LLVM 18, clang
+git clone https://github.com/suportly/ny-lang.git
+cd ny-lang
+cargo build --release
+```
+
+## Project Structure
+
+```text
+src/            Compiler (Rust + inkwell/LLVM 18)
+runtime/        C runtime (12 files: GC, channels, threadpool, tensors, ...)
+editors/vscode/ VS Code extension + syntax highlighting
+tests/          146 tests (integration + negative)
+benchmarks/     7 benchmarks with C + Go equivalents
+examples/       Example programs
+specs/          Roadmap and feature specifications
+```
 
 ## License
 

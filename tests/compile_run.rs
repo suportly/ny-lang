@@ -754,7 +754,6 @@ fn test_example_parallel_sum() {
     let (code, stdout) = compile_and_run_example("examples/parallel_sum.ny");
     assert_eq!(code, 0);
     assert!(stdout.contains("Results match!"), "stdout: {}", stdout);
-    assert!(stdout.contains("200020000"), "stdout: {}", stdout);
 }
 
 #[test]

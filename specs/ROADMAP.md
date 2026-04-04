@@ -123,7 +123,7 @@ Ny wins or ties Go in ALL 7 benchmarks (at -O2, median of 3 runs):
 
 | Metric | Value |
 |--------|-------|
-| Tests | 142 |
+| Tests | 146 |
 | Lines of Rust | ~23,000 |
 | Runtime C files | 12 (hashmap, hashmap_generic, arena, channel, threadpool, string, json, tensor, future, gc, chan, error) |
 | Builtins | 115 |

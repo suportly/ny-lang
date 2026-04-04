@@ -77,9 +77,9 @@
     },
     "keywords": {
       "patterns": [
-        { "name": "keyword.control.ny", "match": "\\b(if|else|while|for|in|return|break|continue|loop|match|defer)\\b" },
-        { "name": "keyword.declaration.ny", "match": "\\b(fn|struct|enum|trait|impl|use|mod|extern|let|pub|unsafe)\\b" },
-        { "name": "constant.language.ny", "match": "\\b(true|false)\\b" },
+        { "name": "keyword.control.ny", "match": "\\b(if|else|while|for|in|return|break|continue|loop|match|defer|go|select|async|await)\\b" },
+        { "name": "keyword.declaration.ny", "match": "\\b(fn|struct|enum|trait|interface|impl|use|mod|extern|let|pub|unsafe|new|dyn|type|var)\\b" },
+        { "name": "constant.language.ny", "match": "\\b(true|false|nil)\\b" },
         { "name": "keyword.operator.word.ny", "match": "\\b(as)\\b" }
       ]
     },
@@ -87,7 +87,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.ny",
-          "match": "\\b(print|println|alloc|free|sizeof|vec_new|map_new|map_insert|map_get|map_contains|map_len|fopen|fclose|fwrite_str|fread_byte|read_line|int_to_str|str_to_int|to_str|exit|sleep_ms|clock_ms|str_split_count|str_split_get|arena_new|arena_alloc|arena_free|arena_reset|arena_bytes_used|thread_spawn|thread_join|channel_new|channel_send|channel_recv|channel_close|pool_new|pool_submit|pool_wait|pool_free|simd_splat_f32x4|simd_splat_f32x8|simd_reduce_add_f32)\\b"
+          "match": "\\b(print|println|alloc|free|sizeof|vec_new|map_new|map_insert|map_get|map_contains|map_len|map_remove|map_free|map_key_at|fopen|fclose|fwrite_str|fread_byte|read_line|read_file|write_file|remove_file|int_to_str|str_to_int|float_to_str|str_to_float|to_str|exit|sleep_ms|clock_ms|str_split_count|str_split_get|arena_new|arena_alloc|arena_free|arena_reset|arena_bytes_used|thread_spawn|thread_join|channel_new|channel_send|channel_recv|channel_close|pool_new|pool_submit|pool_wait|pool_free|simd_splat_f32x4|simd_splat_f32x8|simd_reduce_add_f32|gc_alloc|gc_collect|gc_stats|gc_bytes_allocated|gc_collection_count|chan_new|error_new|error_message|error_trace|hmap_new|smap_new|json_parse|json_type|json_get_int|json_get_float|json_get_str|json_get_bool|json_len|json_arr_get|json_free|tensor_zeros|tensor_ones|tensor_fill|tensor_rand|tensor_clone|tensor_free|tensor_get|tensor_set|tensor_rows|tensor_cols|tensor_add|tensor_sub|tensor_mul|tensor_scale|tensor_matmul|tensor_transpose|tensor_dot|tensor_norm|tensor_sum|tensor_max|tensor_min|tensor_print)\\b"
         }
       ]
     },
@@ -95,7 +95,7 @@
       "patterns": [
         { "name": "storage.type.primitive.ny", "match": "\\b(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|f32|f64|bool|str)\\b" },
         { "name": "storage.type.simd.ny", "match": "\\b(f32x4|f32x8|f64x2|f64x4|i32x4|i32x8)\\b" },
-        { "name": "storage.type.generic.ny", "match": "\\b(Vec|HashMap|Option|Result)\\b" },
+        { "name": "storage.type.generic.ny", "match": "\\b(Vec|HashMap|Option|Result|Future|chan)\\b" },
         { "name": "entity.name.type.ny", "match": "\\b[A-Z][a-zA-Z0-9_]*\\b" }
       ]
     },
@@ -109,7 +109,7 @@
         { "name": "keyword.operator.arrow.ny", "match": "=>|->" },
         { "name": "keyword.operator.assignment.ny", "match": ":=|:~=|:~|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<=|>>=" },
         { "name": "keyword.operator.namespace.ny", "match": "::" },
-        { "name": "keyword.operator.misc.ny", "match": "\\?|\\.\\.=|\\.\\." }
+        { "name": "keyword.operator.misc.ny", "match": "\\?\\?|\\?|\\.\\.=|\\.\\." }
       ]
     }
   }

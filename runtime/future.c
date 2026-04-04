@@ -9,6 +9,7 @@
 typedef struct NyPool NyPool;
 extern NyPool *ny_pool_new(int32_t num_threads);
 extern void ny_pool_submit_arg(NyPool *pool, void *(*fn)(void *), void *arg);
+extern void ny_pool_wait(NyPool *pool);
 extern void ny_pool_free(NyPool *pool);
 
 // --- Global async pool (lazy init) ---
@@ -31,6 +32,15 @@ void ny_async_init(int32_t num_threads) {
 NyPool *ny_async_pool(void) {
     pthread_once(&ny_async_once, ny_async_init_internal);
     return ny_global_async_pool;
+}
+
+// Wait for all goroutines, then free the pool. Safe if pool was never created.
+void ny_async_pool_shutdown(void) {
+    if (ny_global_async_pool) {
+        ny_pool_wait(ny_global_async_pool);
+        ny_pool_free(ny_global_async_pool);
+        ny_global_async_pool = NULL;
+    }
 }
 
 // --- Future ---

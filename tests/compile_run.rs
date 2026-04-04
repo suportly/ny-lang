@@ -856,6 +856,26 @@ fn test_var_keyword() {
 }
 
 #[test]
+fn test_optional_if_let() {
+    assert_eq!(compile_and_run("optional_if_let.ny"), 42);
+}
+
+#[test]
+fn test_error_trace() {
+    assert_eq!(compile_and_run("error_trace.ny"), 42);
+}
+
+#[test]
+fn test_result_str_error() {
+    assert_eq!(compile_and_run("result_str_error.ny"), 42);
+}
+
+#[test]
+fn test_interface_alias() {
+    assert_eq!(compile_and_run("interface_alias.ny"), 42);
+}
+
+#[test]
 fn test_optional_negative() {
     // Accessing field on ?*T without unwrap should be compile error
     let tmp = tempfile::TempDir::new().unwrap();

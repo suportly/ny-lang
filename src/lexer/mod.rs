@@ -170,6 +170,7 @@ impl Lexer {
             "select" => TokenKind::Select,
             "type" => TokenKind::Type,
             "var" => TokenKind::Var,
+            "interface" => TokenKind::Trait,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
             "nil" => TokenKind::Ident("nil".to_string()),

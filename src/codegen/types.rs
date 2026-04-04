@@ -34,21 +34,20 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
         }
         NyType::Enum { variants, .. } => {
             // If any variant has a payload, use struct type { i32, payload... }
+            // Use the LARGEST type at each payload position (union-like layout)
             let has_payload = variants.iter().any(|(_, p)| !p.is_empty());
             if has_payload {
                 let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
                 let mut field_types: Vec<BasicTypeEnum> = vec![context.i32_type().into()];
                 for i in 0..max_fields {
-                    let mut found = false;
-                    for (_, payload) in variants {
-                        if let Some(ty) = payload.get(i) {
-                            field_types.push(ny_to_llvm(context, ty));
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
+                    let candidates: Vec<&NyType> = variants
+                        .iter()
+                        .filter_map(|(_, p)| p.get(i))
+                        .collect();
+                    if candidates.is_empty() {
                         field_types.push(context.i32_type().into());
+                    } else {
+                        field_types.push(largest_llvm_type(context, &candidates));
                     }
                 }
                 context.struct_type(&field_types, false).into()
@@ -133,6 +132,37 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
         NyType::Unit => {
             panic!("cannot convert {} to LLVM basic type", ty)
         }
+    }
+}
+
+/// Pick the LLVM type with the largest store size among candidates.
+pub fn largest_llvm_type<'ctx>(context: &'ctx Context, candidates: &[&NyType]) -> BasicTypeEnum<'ctx> {
+    let mut best_ty = ny_to_llvm(context, candidates[0]);
+    let mut best_size = llvm_type_size(context, candidates[0]);
+    for &ty in &candidates[1..] {
+        let sz = llvm_type_size(context, ty);
+        if sz > best_size {
+            best_ty = ny_to_llvm(context, ty);
+            best_size = sz;
+        }
+    }
+    best_ty
+}
+
+/// Approximate byte size of an NyType (for enum union layout decisions).
+fn llvm_type_size(_context: &Context, ty: &NyType) -> u64 {
+    match ty {
+        NyType::I8 | NyType::U8 | NyType::Bool => 1,
+        NyType::I16 | NyType::U16 => 2,
+        NyType::I32 | NyType::U32 | NyType::F32 => 4,
+        NyType::I64 | NyType::U64 | NyType::F64 => 8,
+        NyType::I128 | NyType::U128 => 16,
+        NyType::Str | NyType::Slice(_) => 16, // {ptr, i64}
+        NyType::Pointer(_) => 8,
+        NyType::Struct { fields, .. } => fields.iter().map(|(_, t)| llvm_type_size(_context, t)).sum(),
+        NyType::Tuple(elems) => elems.iter().map(|t| llvm_type_size(_context, t)).sum(),
+        NyType::Vec(_) => 32, // {ptr, i64, i64, i64}
+        _ => 8, // default pointer-sized
     }
 }
 

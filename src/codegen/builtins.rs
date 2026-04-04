@@ -124,6 +124,7 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         // Error handling
         "error_new" => Some(NyType::I32),
         "error_message" => Some(NyType::Str),
+        "error_trace" => Some(NyType::Str),
 
         _ => None,
     }
@@ -251,4 +252,5 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "chan_new",
     "error_new",
     "error_message",
+    "error_trace",
 ];

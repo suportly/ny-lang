@@ -644,6 +644,53 @@ impl<'ctx> CodeGen<'ctx> {
                 else_body,
                 ..
             } => {
+                // Special case: OptionalBind — null check on ?T
+                if let Pattern::OptionalBind { name, .. } = pattern {
+                    let opt_val = self.compile_expr(match_expr, function)?.unwrap();
+                    let opt_ty = self.infer_expr_type(match_expr);
+
+                    let inner_ty = match &opt_ty {
+                        NyType::Optional(inner) => *inner.clone(),
+                        // Also allow plain pointer types (for convenience)
+                        NyType::Pointer(_) => opt_ty.clone(),
+                        _ => opt_ty.clone(),
+                    };
+
+                    let ptr = opt_val.into_pointer_value();
+                    let is_null = self.builder.build_is_null(ptr, "opt_null").unwrap();
+
+                    let then_bb = self.context.append_basic_block(*function, "iflet_some");
+                    let else_bb = self.context.append_basic_block(*function, "iflet_none");
+                    let merge_bb = self.context.append_basic_block(*function, "iflet_merge");
+
+                    self.builder.build_conditional_branch(is_null, else_bb, then_bb).unwrap();
+
+                    // Then: bind unwrapped value
+                    self.builder.position_at_end(then_bb);
+                    let inner_llvm = ny_to_llvm(self.context, &inner_ty);
+                    let alloca = self.builder.build_alloca(inner_llvm, name).unwrap();
+                    self.builder.build_store(alloca, ptr).unwrap();
+                    let outer_vars = self.variables.clone();
+                    self.variables.insert(name.clone(), (alloca, inner_ty));
+                    self.compile_expr(then_body, function)?;
+                    self.variables = outer_vars;
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    }
+
+                    // Else
+                    self.builder.position_at_end(else_bb);
+                    if let Some(eb) = else_body {
+                        self.compile_expr(eb, function)?;
+                    }
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(merge_bb).unwrap();
+                    }
+
+                    self.builder.position_at_end(merge_bb);
+                    return Ok(());
+                }
+
                 // Desugar if let to: match expr { pattern => then, _ => else }
                 let wildcard_body = if let Some(eb) = else_body {
                     eb.clone()

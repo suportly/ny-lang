@@ -886,6 +886,12 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_chan_recv", fn_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_async_pool_shutdown(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_async_pool_shutdown") { return f; }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_async_pool_shutdown", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_chan_try_recv(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_chan_try_recv") { return f; }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());

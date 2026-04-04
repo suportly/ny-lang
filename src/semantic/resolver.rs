@@ -664,8 +664,8 @@ impl Resolver {
                                 continue; // skip the resolve_expr below
                             }
                         }
-                        Pattern::IntLit(_, _) | Pattern::Wildcard(_) => {
-                            // Nothing to resolve
+                        Pattern::IntLit(_, _) | Pattern::Wildcard(_) | Pattern::OptionalBind { .. } => {
+                            // Nothing to resolve in match context
                         }
                     }
                     self.resolve_expr(&arm.body);
@@ -919,6 +919,16 @@ impl Resolver {
                             },
                         );
                     }
+                    self.resolve_expr(then_body);
+                    self.pop_scope();
+                } else if let Pattern::OptionalBind { name, span: pspan } = pattern {
+                    self.push_scope();
+                    self.declare(name, Symbol {
+                        name: name.clone(),
+                        ty: NyType::Pointer(Box::new(NyType::U8)),
+                        mutability: Mutability::Immutable,
+                        span: *pspan,
+                    });
                     self.resolve_expr(then_body);
                     self.pop_scope();
                 } else {

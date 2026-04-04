@@ -554,6 +554,27 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(Some(s1.into_struct_value().into()));
                 }
 
+                // Handle error_trace(code) -> str
+                if callee == "error_trace" {
+                    let code_val = self.compile_expr(&args[0], function)?.unwrap();
+                    let out_len_alloca = self.builder.build_alloca(self.context.i64_type(), "etrace_len").unwrap();
+                    let error_trace_fn = self.get_or_declare_c_fn(
+                        "ny_error_trace",
+                        self.context.ptr_type(AddressSpace::default()).fn_type(
+                            &[self.context.i32_type().into(), self.context.ptr_type(AddressSpace::default()).into()],
+                            false,
+                        ),
+                    );
+                    let trace_ptr = self.builder
+                        .build_call(error_trace_fn, &[code_val.into(), out_len_alloca.into()], "etrace_ptr")
+                        .unwrap().try_as_basic_value().basic().unwrap();
+                    let trace_len = self.builder.build_load(self.context.i64_type(), out_len_alloca, "etrace_len_v").unwrap();
+                    let str_ty = super::types::str_type(self.context);
+                    let s0 = self.builder.build_insert_value(str_ty.get_undef(), trace_ptr, 0, "et_p").unwrap();
+                    let s1 = self.builder.build_insert_value(s0.into_struct_value(), trace_len, 1, "et_l").unwrap();
+                    return Ok(Some(s1.into_struct_value().into()));
+                }
+
                 // Handle chan_new(capacity) -> chan<T>
                 if callee == "chan_new" {
                     let cap_val = self.compile_expr(&args[0], function)?.unwrap();
@@ -6118,7 +6139,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let const_val = self.context.i32_type().const_int(*n as u64, true);
                             cases.push((const_val, arm_bbs[i]));
                         }
-                        Pattern::Wildcard(_) => {}
+                        Pattern::Wildcard(_) | Pattern::OptionalBind { .. } => {}
                     }
                 }
 

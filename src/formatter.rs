@@ -857,6 +857,7 @@ fn format_pattern(out: &mut String, pattern: &Pattern) {
         }
         Pattern::IntLit(v, _) => out.push_str(&v.to_string()),
         Pattern::Wildcard(_) => out.push('_'),
+        Pattern::OptionalBind { name, .. } => out.push_str(name),
     }
 }
 

@@ -440,6 +440,11 @@ pub enum Pattern {
     },
     IntLit(i128, Span),
     Wildcard(Span),
+    /// if let name = optional_expr — binds unwrapped value
+    OptionalBind {
+        name: String,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

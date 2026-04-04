@@ -670,6 +670,12 @@ impl TypeChecker {
                     return NyType::Str;
                 }
 
+                // Built-in error_trace(code) -> str
+                if callee == "error_trace" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
+
                 // Built-in chan_new(capacity) -> chan<T>
                 if callee == "chan_new" {
                     if args.len() != 1 {
@@ -1609,6 +1615,9 @@ impl TypeChecker {
                         Pattern::Wildcard(_) => {
                             has_wildcard = true;
                         }
+                        Pattern::OptionalBind { .. } => {
+                            // Handled by IfLet, not match
+                        }
                     }
 
                     let body_ty = self.check_expr(&arm.body);
@@ -2395,6 +2404,7 @@ impl TypeChecker {
                 if ret_ty != self.current_return_type
                     && !(ret_ty.is_numeric() && self.current_return_type.is_numeric())
                     && !matches!(&self.current_return_type, NyType::DynTrait(_))
+                    && !matches!(&self.current_return_type, NyType::Optional(_))
                 {
                     self.errors.push(CompileError::type_error(
                         format!(
@@ -2588,6 +2598,17 @@ impl TypeChecker {
                             self.check_expr(then_body);
                         }
                     }
+                } else if let Pattern::OptionalBind { name, .. } = pattern {
+                    // ?T unwrap: bind the inner type
+                    let inner = match &expr_ty {
+                        NyType::Optional(inner) => *inner.clone(),
+                        NyType::Pointer(_) => expr_ty.clone(),
+                        _ => expr_ty.clone(),
+                    };
+                    self.push_scope();
+                    self.declare(name, inner);
+                    self.check_expr(then_body);
+                    self.pop_scope();
                 } else {
                     self.check_expr(then_body);
                 }

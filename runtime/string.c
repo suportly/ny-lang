@@ -67,8 +67,8 @@ NyStrSlice *ny_str_split(const char *hay, long hay_len,
 // --- Call stack tracking for stack traces ---
 
 #define NY_TRACE_MAX 256
-static const char *ny_trace_stack[NY_TRACE_MAX];
-static int ny_trace_depth = 0;
+const char *ny_trace_stack[NY_TRACE_MAX];
+int ny_trace_depth = 0;
 
 void ny_trace_push(const char *name) {
     if (ny_trace_depth < NY_TRACE_MAX) {

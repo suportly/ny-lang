@@ -475,18 +475,14 @@ impl<'ctx> CodeGen<'ctx> {
         let max_fields = variants.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
         let mut field_types: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()]; // tag
         for i in 0..max_fields {
-            // Find the largest type at position i across all variants
-            // For simplicity, use the first variant that has this position
-            let mut found = false;
-            for (_, payload) in variants {
-                if let Some(ty) = payload.get(i) {
-                    field_types.push(ny_to_llvm(self.context, ty));
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                field_types.push(self.context.i32_type().into()); // fallback
+            let candidates: Vec<&NyType> = variants
+                .iter()
+                .filter_map(|(_, p)| p.get(i))
+                .collect();
+            if candidates.is_empty() {
+                field_types.push(self.context.i32_type().into());
+            } else {
+                field_types.push(types::largest_llvm_type(self.context, &candidates));
             }
         }
         self.context.struct_type(&field_types, false)
@@ -854,6 +850,12 @@ impl<'ctx> CodeGen<'ctx> {
                     let gc_shutdown = self.get_or_declare_ny_gc_shutdown();
                     self.builder
                         .build_call(atexit, &[gc_shutdown.as_global_value().as_pointer_value().into()], "")
+                        .unwrap();
+                    // Register async pool shutdown (waits for goroutines before GC runs)
+                    // atexit is LIFO: registered after gc_shutdown → runs before gc_shutdown
+                    let async_shutdown = self.get_or_declare_ny_async_pool_shutdown();
+                    self.builder
+                        .build_call(atexit, &[async_shutdown.as_global_value().as_pointer_value().into()], "")
                         .unwrap();
                 }
 

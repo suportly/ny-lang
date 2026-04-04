@@ -1813,6 +1813,11 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 let name = name.clone();
+                // Lookahead: if NOT followed by ::, this is an OptionalBind
+                if self.pos + 1 < self.tokens.len() && self.tokens[self.pos + 1].kind != TokenKind::ColonColon {
+                    let span = self.advance().span;
+                    return Ok(Pattern::OptionalBind { name, span });
+                }
                 let start = self.advance().span;
                 self.expect(&TokenKind::ColonColon)?;
                 let (variant, variant_span) = self.expect_ident()?;

@@ -132,6 +132,23 @@ void ny_map_remove(NyHashMap *m, const char *key, int64_t key_len) {
     }
 }
 
+// Get the key at position `index` (iterating over occupied entries).
+// Returns: pointer to key, sets *out_len. Returns NULL if index out of range.
+const char *ny_map_key_at(NyHashMap *m, int64_t index, int64_t *out_len) {
+    int64_t count = 0;
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied) {
+            if (count == index) {
+                *out_len = m->entries[i].key_len;
+                return m->entries[i].key;
+            }
+            count++;
+        }
+    }
+    *out_len = 0;
+    return "";
+}
+
 void ny_map_free(NyHashMap *m) {
     for (int64_t i = 0; i < m->cap; i++) {
         if (m->entries[i].occupied && m->entries[i].key) {

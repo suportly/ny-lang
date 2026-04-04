@@ -24,6 +24,7 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         // File I/O
         "fclose" | "fread_byte" | "fwrite_str" | "map_get" | "str_to_int" => Some(NyType::I32),
         "map_contains" => Some(NyType::Bool),
+        "map_key_at" => Some(NyType::Str),
 
         // Strings
         "read_line" | "int_to_str" | "float_to_str" | "read_file" => Some(NyType::Str),
@@ -130,6 +131,7 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "map_contains",
     "map_remove",
     "map_free",
+    "map_key_at",
     "map_len",
     "arena_new",
     "arena_alloc",

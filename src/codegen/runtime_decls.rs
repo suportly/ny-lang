@@ -177,6 +177,17 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_map_remove", fn_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_map_key_at(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_map_key_at") {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        // const char *ny_map_key_at(NyHashMap *m, i64 index, i64 *out_len)
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_map_key_at", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_map_free(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_map_free") {
             return f;

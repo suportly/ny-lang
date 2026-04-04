@@ -761,6 +761,11 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
+                // map_key_at(m, index) -> str
+                if callee == "map_key_at" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
                 // JSON builtins
                 if callee == "json_parse" || callee == "json_arr_get" {
                     for arg in args { self.check_expr(arg); }
@@ -1636,7 +1641,7 @@ impl TypeChecker {
                     }
                     return NyType::Unit;
                 }
-                "pop" => return *elem.clone(),
+                "pop" | "sum" => return *elem.clone(),
                 "sort" | "reverse" | "clear" => return NyType::Unit,
                 "map" | "filter" => {
                     if args.len() == 1 {

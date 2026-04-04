@@ -758,6 +758,51 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
+                // map_key_at(m, index) -> str
+                if callee == "map_key_at" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let idx_val = self.compile_expr(&args[1], function)?.unwrap().into_int_value();
+                    let idx_i64 = self
+                        .builder
+                        .build_int_z_extend_or_bit_cast(
+                            idx_val,
+                            self.context.i64_type(),
+                            "mka_idx",
+                        )
+                        .unwrap();
+                    let i64_ty = self.context.i64_type();
+                    let out_len_ptr = self.builder.build_alloca(i64_ty, "mka_olp").unwrap();
+                    let fn_val = self.get_or_declare_ny_map_key_at();
+                    let key_ptr = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[map_ptr.into(), idx_i64.into(), out_len_ptr.into()],
+                            "mka_kp",
+                        )
+                        .unwrap()
+                        .try_as_basic_value()
+                        .basic()
+                        .unwrap()
+                        .into_pointer_value();
+                    let key_len = self
+                        .builder
+                        .build_load(i64_ty, out_len_ptr, "mka_kl")
+                        .unwrap()
+                        .into_int_value();
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, key_ptr, 0, "mka_sp")
+                        .unwrap();
+                    let result = self
+                        .builder
+                        .build_insert_value(result, key_len, 1, "mka_sl")
+                        .unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+
                 // map_free(m)
                 if callee == "map_free" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
@@ -3742,6 +3787,73 @@ impl<'ctx> CodeGen<'ctx> {
                                 .unwrap();
                             phi.add_incoming(&[(&early_val, early_bb), (&done_val, done_bb)]);
                             return Ok(Some(phi.as_basic_value()));
+                        }
+                        "sum" => {
+                            // v.sum() -> T — sum all elements
+                            let obj_val = self.compile_expr(object, function)?.unwrap();
+                            let sv = obj_val.into_struct_value();
+                            let data_ptr = self
+                                .builder
+                                .build_extract_value(sv, 0, "sum_data")
+                                .unwrap()
+                                .into_pointer_value();
+                            let len = self
+                                .builder
+                                .build_extract_value(sv, 1, "sum_len")
+                                .unwrap()
+                                .into_int_value();
+
+                            let i64_ty = self.context.i64_type();
+                            let zero_i64 = i64_ty.const_int(0, false);
+                            let one = i64_ty.const_int(1, false);
+                            let zero_elem: inkwell::values::BasicValueEnum = if elem_ty.is_float() {
+                                elem_llvm.into_float_type().const_float(0.0).into()
+                            } else {
+                                elem_llvm.into_int_type().const_int(0, false).into()
+                            };
+
+                            let pre_bb = self.builder.get_insert_block().unwrap();
+                            let loop_bb = self.context.append_basic_block(*function, "sum_loop");
+                            let body_bb = self.context.append_basic_block(*function, "sum_body");
+                            let done_bb = self.context.append_basic_block(*function, "sum_done");
+
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(loop_bb);
+                            let i_phi = self.builder.build_phi(i64_ty, "sum_i").unwrap();
+                            i_phi.add_incoming(&[(&zero_i64, pre_bb)]);
+                            let acc_phi = self.builder.build_phi(elem_llvm, "sum_acc").unwrap();
+                            acc_phi.add_incoming(&[(&zero_elem, pre_bb)]);
+                            let i_val = i_phi.as_basic_value().into_int_value();
+
+                            let cond = self.builder
+                                .build_int_compare(IntPredicate::ULT, i_val, len, "sum_cond")
+                                .unwrap();
+                            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+                            self.builder.position_at_end(body_bb);
+                            let ep = unsafe {
+                                self.builder.build_in_bounds_gep(elem_llvm, data_ptr, &[i_val], "sum_ep").unwrap()
+                            };
+                            let ev = self.builder.build_load(elem_llvm, ep, "sum_ev").unwrap();
+                            let new_acc: inkwell::values::BasicValueEnum = if elem_ty.is_float() {
+                                self.builder.build_float_add(
+                                    acc_phi.as_basic_value().into_float_value(),
+                                    ev.into_float_value(), "sum_fa",
+                                ).unwrap().into()
+                            } else {
+                                self.builder.build_int_add(
+                                    acc_phi.as_basic_value().into_int_value(),
+                                    ev.into_int_value(), "sum_ia",
+                                ).unwrap().into()
+                            };
+                            let next_i = self.builder.build_int_add(i_val, one, "sum_next").unwrap();
+                            i_phi.add_incoming(&[(&next_i, body_bb)]);
+                            acc_phi.add_incoming(&[(&new_acc, body_bb)]);
+                            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                            self.builder.position_at_end(done_bb);
+                            return Ok(Some(acc_phi.as_basic_value()));
                         }
                         "contains" | "index_of" => {
                             // v.contains(val) -> bool / v.index_of(val) -> i32

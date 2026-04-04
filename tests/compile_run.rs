@@ -648,6 +648,16 @@ fn test_vec_str2() {
 }
 
 #[test]
+fn test_map_iterate() {
+    assert_eq!(compile_and_run("map_iterate.ny"), 42);
+}
+
+#[test]
+fn test_vec_sum() {
+    assert_eq!(compile_and_run("vec_sum.ny"), 42);
+}
+
+#[test]
 fn test_vec_any_all() {
     assert_eq!(compile_and_run("vec_any_all.ny"), 42);
 }

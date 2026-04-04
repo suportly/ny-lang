@@ -62,6 +62,37 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Package manager — manage project dependencies
+    Pkg {
+        #[command(subcommand)]
+        command: PkgCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PkgCommands {
+    /// Create a ny.pkg manifest in the current directory
+    Init,
+    /// Add a dependency from a git URL
+    Add {
+        /// Git URL of the package
+        url: String,
+        /// Override the package name
+        #[arg(long)]
+        name: Option<String>,
+        /// Git branch or tag
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Fetch all dependencies
+    Build,
+    /// Remove a dependency
+    Remove {
+        /// Package name
+        name: String,
+    },
+    /// List dependencies
+    List,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -507,6 +538,22 @@ fn main() {
                 }
             } else {
                 print!("{}", formatted);
+            }
+        }
+        Commands::Pkg { command } => {
+            let cwd = std::env::current_dir().unwrap();
+            let result = match command {
+                PkgCommands::Init => ny::pkg::commands::cmd_init(&cwd),
+                PkgCommands::Add { url, name, branch } => {
+                    ny::pkg::commands::cmd_add(&cwd, &url, name.as_deref(), branch.as_deref())
+                }
+                PkgCommands::Build => ny::pkg::commands::cmd_build(&cwd),
+                PkgCommands::Remove { name } => ny::pkg::commands::cmd_remove(&cwd, &name),
+                PkgCommands::List => ny::pkg::commands::cmd_list(&cwd),
+            };
+            if let Err(e) = result {
+                eprintln!("error: {}", e);
+                process::exit(1);
             }
         }
     }

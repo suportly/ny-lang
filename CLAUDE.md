@@ -42,6 +42,11 @@ ny fmt file.ny           # Print formatted source
 ny repl                  # Interactive REPL
 ny fmt file.ny --write   # Format in-place
 ny fmt file.ny --check   # Check if formatted (exit 1 if not)
+ny pkg init              # Create ny.pkg manifest
+ny pkg add <url>         # Add git dependency
+ny pkg build             # Fetch all dependencies
+ny pkg remove <name>     # Remove dependency
+ny pkg list              # List dependencies
 ```
 
 ## Code Style

@@ -210,8 +210,9 @@ impl NyType {
                     if let Some(elem_ty) = NyType::from_name(inner) {
                         return Some(NyType::Vec(Box::new(elem_ty)));
                     }
-                    // Also try to match struct names embedded in Vec
-                    return Some(NyType::Vec(Box::new(NyType::Str))); // fallback for unknown
+                    // Unknown inner type (might be a struct) — return None
+                    // so the typechecker can resolve it from struct definitions
+                    return None;
                 }
                 None
             }

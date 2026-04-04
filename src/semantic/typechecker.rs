@@ -86,6 +86,23 @@ impl TypeChecker {
                 if let Some(ty) = NyType::from_name(name) {
                     return Some(ty);
                 }
+                // Check Vec<StructName> pattern — from_name returns None for struct inners
+                if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                    // Try to resolve inner as struct
+                    if let Some(fields) = self.structs.get(inner) {
+                        return Some(NyType::Vec(Box::new(NyType::Struct {
+                            name: inner.to_string(),
+                            fields: fields.clone(),
+                        })));
+                    }
+                    // Try as enum
+                    if let Some(variants) = self.enums.get(inner) {
+                        return Some(NyType::Vec(Box::new(NyType::Enum {
+                            name: inner.to_string(),
+                            variants: variants.clone(),
+                        })));
+                    }
+                }
                 // Check struct types
                 if let Some(fields) = self.structs.get(name) {
                     return Some(NyType::Struct {

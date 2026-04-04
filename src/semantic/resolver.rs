@@ -108,6 +108,21 @@ impl Resolver {
                 if let Some(ty) = NyType::from_name(name) {
                     return Some(ty);
                 }
+                // Check Vec<StructName> pattern
+                if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(fields) = self.structs.get(inner) {
+                        return Some(NyType::Vec(Box::new(NyType::Struct {
+                            name: inner.to_string(),
+                            fields: fields.clone(),
+                        })));
+                    }
+                    if let Some(variants) = self.enums.get(inner) {
+                        return Some(NyType::Vec(Box::new(NyType::Enum {
+                            name: inner.to_string(),
+                            variants: variants.clone(),
+                        })));
+                    }
+                }
                 // Try registered struct types
                 if let Some(fields) = self.structs.get(name) {
                     return Some(NyType::Struct {

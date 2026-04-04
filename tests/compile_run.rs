@@ -638,6 +638,16 @@ fn test_vec_reduce() {
 }
 
 #[test]
+fn test_vec_struct() {
+    assert_eq!(compile_and_run("vec_struct.ny"), 42);
+}
+
+#[test]
+fn test_vec_str2() {
+    assert_eq!(compile_and_run("vec_str2.ny"), 42);
+}
+
+#[test]
 fn test_vec_any_all() {
     assert_eq!(compile_and_run("vec_any_all.ny"), 42);
 }

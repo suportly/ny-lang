@@ -243,6 +243,21 @@ impl<'ctx> CodeGen<'ctx> {
                 if name == "()" {
                     return NyType::Unit;
                 }
+                // Check Vec<StructName> pattern
+                if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                    if let Some(fields) = self.struct_types.get(inner) {
+                        return NyType::Vec(Box::new(NyType::Struct {
+                            name: inner.to_string(),
+                            fields: fields.clone(),
+                        }));
+                    }
+                    if let Some(variants) = self.enum_variants.get(inner) {
+                        return NyType::Vec(Box::new(NyType::Enum {
+                            name: inner.to_string(),
+                            variants: variants.clone(),
+                        }));
+                    }
+                }
                 // Check registered struct types
                 if let Some(fields) = self.struct_types.get(name) {
                     return NyType::Struct {

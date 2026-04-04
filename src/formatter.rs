@@ -106,7 +106,7 @@ impl<'a> Fmt<'a> {
     fn emit_trailing_comment(&self, out: &mut String, line: usize) {
         for c in &self.comments {
             if c.line == line && !c.standalone {
-                out.push_str(" ");
+                out.push(' ');
                 out.push_str(&c.text);
                 return;
             }

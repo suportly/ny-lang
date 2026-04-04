@@ -1033,7 +1033,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                     // Load each parameter from arg struct
                     let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-                    for i in 0..n_params {
+                    for (i, wpt) in wrapper_param_types.iter().enumerate().take(n_params) {
                         let p_gep = self
                             .builder
                             .build_struct_gep(
@@ -1043,7 +1043,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 &format!("t_p{}", i),
                             )
                             .unwrap();
-                        let p_ty = ny_to_llvm(self.context, &wrapper_param_types[i]);
+                        let p_ty = ny_to_llvm(self.context, wpt);
                         let p_val = self
                             .builder
                             .build_load(p_ty, p_gep, &format!("t_v{}", i))

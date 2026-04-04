@@ -2473,11 +2473,11 @@ impl TypeChecker {
                     NyType::Unit
                 };
 
-                if ret_ty != self.current_return_type
-                    && !(ret_ty.is_numeric() && self.current_return_type.is_numeric())
-                    && !matches!(&self.current_return_type, NyType::DynTrait(_))
-                    && !matches!(&self.current_return_type, NyType::Optional(_))
-                {
+                let ret_compatible = ret_ty == self.current_return_type
+                    || (ret_ty.is_numeric() && self.current_return_type.is_numeric())
+                    || matches!(&self.current_return_type, NyType::DynTrait(_))
+                    || matches!(&self.current_return_type, NyType::Optional(_));
+                if !ret_compatible {
                     self.errors.push(CompileError::type_error(
                         format!(
                             "return type mismatch: expected '{}', found '{}'",

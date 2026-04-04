@@ -27,6 +27,10 @@ enum Commands {
         /// Optimization level (0-3)
         #[arg(short = 'O', long = "opt-level", default_value = "0")]
         opt_level: u8,
+
+        /// Target: native (default) or wasm32
+        #[arg(long, default_value = "native")]
+        target: String,
     },
     /// Run all test_* functions in a Ny source file
     Test {
@@ -111,6 +115,7 @@ fn main() {
             output,
             emit,
             opt_level,
+            target,
         } => {
             if !file.exists() {
                 eprintln!(
@@ -128,9 +133,15 @@ fn main() {
                 }
             };
 
-            let output_path = output.unwrap_or_else(|| file.with_extension(""));
+            let output_path = output.unwrap_or_else(|| {
+                if target == "wasm32" {
+                    file.with_extension("wasm")
+                } else {
+                    file.with_extension("")
+                }
+            });
 
-            match ny::compile(&source, &file, &output_path, opt_level, emit_to_str(&emit)) {
+            match ny::compile(&source, &file, &output_path, opt_level, emit_to_str(&emit), &target) {
                 Ok(()) => process::exit(0),
                 Err(errors) => {
                     ny::diagnostics::print_errors(&file, &source, &errors);
@@ -158,7 +169,7 @@ fn main() {
             let tmp_dir = std::env::temp_dir();
             let tmp_out = tmp_dir.join("ny_run_output");
 
-            match ny::compile(&source, &file, &tmp_out, opt_level, "exe") {
+            match ny::compile(&source, &file, &tmp_out, opt_level, "exe", "native") {
                 Ok(()) => {
                     let status = process::Command::new(&tmp_out)
                         .status()
@@ -330,7 +341,7 @@ fn main() {
 
                 std::fs::write(&tmp_src, &wrapper_source).unwrap();
 
-                match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe") {
+                match ny::compile(&wrapper_source, &tmp_src, &tmp_out, 0, "exe", "native") {
                     Ok(()) => {
                         let output = process::Command::new(&tmp_out)
                             .output()
@@ -464,7 +475,7 @@ fn main() {
 
                 std::fs::write(&tmp_src, &source).unwrap();
 
-                match ny::compile(&source, &tmp_src, &tmp_out, 0, "exe") {
+                match ny::compile(&source, &tmp_src, &tmp_out, 0, "exe", "native") {
                     Ok(()) => {
                         let output = process::Command::new(&tmp_out)
                             .output()

@@ -18,7 +18,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{FunctionValue, PointerValue};
@@ -34,6 +34,7 @@ pub fn generate(
     output_path: &Path,
     opt_level: u8,
     emit: &str,
+    target: &str,
 ) -> Result<(), Vec<CompileError>> {
     let context = Context::create();
 
@@ -79,6 +80,10 @@ pub fn generate(
             })?;
     }
 
+    if target == "wasm32" {
+        return emit_wasm(&module, output_path, opt_level);
+    }
+
     match emit {
         "llvm-ir" => {
             print!("{}", module.print_to_string().to_string());
@@ -94,6 +99,84 @@ pub fn generate(
             emit_object_file(&module, &obj_path, opt_level)?;
             link_executable(&obj_path, output_path)?;
             let _ = std::fs::remove_file(&obj_path);
+            Ok(())
+        }
+    }
+}
+
+fn emit_wasm(module: &Module, output_path: &Path, opt_level: u8) -> Result<(), Vec<CompileError>> {
+    // Initialize WASM target
+    Target::initialize_webassembly(&InitializationConfig::default());
+
+    let triple = TargetTriple::create("wasm32-unknown-unknown");
+    let target = Target::from_triple(&triple).map_err(|e| {
+        vec![CompileError::syntax(
+            format!("wasm32 target not available: {}", e.to_string()),
+            Span::empty(0),
+        )]
+    })?;
+
+    let llvm_opt = match opt_level {
+        0 => OptimizationLevel::None,
+        1 => OptimizationLevel::Less,
+        2 => OptimizationLevel::Default,
+        _ => OptimizationLevel::Aggressive,
+    };
+
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            llvm_opt,
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| {
+            vec![CompileError::syntax(
+                "failed to create wasm32 target machine".to_string(),
+                Span::empty(0),
+            )]
+        })?;
+
+    // Set the module's target triple
+    module.set_triple(&triple);
+
+    // Emit object file (.o)
+    let obj_path = output_path.with_extension("o");
+    machine
+        .write_to_file(module, FileType::Object, &obj_path)
+        .map_err(|e| {
+            vec![CompileError::syntax(
+                format!("failed to emit wasm object: {}", e.to_string()),
+                Span::empty(0),
+            )]
+        })?;
+
+    // Link with wasm-ld to produce .wasm
+    let status = Command::new("wasm-ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(output_path)
+        .arg("--no-entry")
+        .arg("--export-all")
+        .arg("--allow-undefined")
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            let _ = std::fs::remove_file(&obj_path);
+            Ok(())
+        }
+        _ => {
+            // wasm-ld not available — keep the .o file
+            eprintln!(
+                "note: wasm-ld not found. Object file saved as {}",
+                obj_path.display()
+            );
+            eprintln!("  To link: wasm-ld {} -o {} --no-entry --export-all --allow-undefined",
+                obj_path.display(), output_path.display());
+            eprintln!("  Install: apt install lld-18 && ln -s /usr/bin/wasm-ld-18 /usr/local/bin/wasm-ld");
             Ok(())
         }
     }

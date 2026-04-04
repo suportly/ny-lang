@@ -374,6 +374,7 @@ fn specialize_function(template: &Item, concrete_types: &[NyType]) -> Option<Ite
         return_type,
         body,
         span,
+        is_async,
     } = template
     {
         let type_map: HashMap<String, NyType> = type_params
@@ -395,10 +396,11 @@ fn specialize_function(template: &Item, concrete_types: &[NyType]) -> Option<Ite
 
         Some(Item::FunctionDef {
             name: mangled_name,
-            type_params: Vec::new(), // Specialized — no more type params
+            is_async: *is_async,
+            type_params: Vec::new(),
             params: new_params,
             return_type: new_return_type,
-            body: body.clone(), // Body stays the same; type annotations in it are substituted
+            body: body.clone(),
             span: *span,
         })
     } else {

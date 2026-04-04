@@ -678,6 +678,7 @@ impl Parser {
         let end_span = body.span();
         Ok(Item::FunctionDef {
             name,
+            is_async: false, // TODO: pass from parse_item
             type_params,
             params,
             return_type,
@@ -1431,6 +1432,15 @@ impl Parser {
                 let span = start.merge(operand.span());
                 Ok(Expr::Deref {
                     operand: Box::new(operand),
+                    span,
+                })
+            }
+            TokenKind::Await => {
+                let start = self.advance().span;
+                let future = self.parse_expr(0)?;
+                let span = start.merge(future.span());
+                Ok(Expr::Await {
+                    future: Box::new(future),
                     span,
                 })
             }

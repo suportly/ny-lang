@@ -271,6 +271,13 @@ impl<'ctx> CodeGen<'ctx> {
                     NyType::I32
                 }
             }
+            Expr::Await { future, .. } => {
+                let ft = self.infer_expr_type(future);
+                match ft {
+                    NyType::Future(inner) => *inner,
+                    _ => NyType::I32,
+                }
+            }
         }
     }
 }

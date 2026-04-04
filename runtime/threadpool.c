@@ -91,6 +91,18 @@ void ny_pool_submit(NyPool *pool, void *(*fn)(void *)) {
     pthread_mutex_unlock(&pool->mutex);
 }
 
+void ny_pool_submit_arg(NyPool *pool, void *(*fn)(void *), void *arg) {
+    pthread_mutex_lock(&pool->mutex);
+    if (pool->queue_count < MAX_QUEUE) {
+        pool->queue[pool->queue_tail].fn = fn;
+        pool->queue[pool->queue_tail].arg = arg;
+        pool->queue_tail = (pool->queue_tail + 1) % MAX_QUEUE;
+        pool->queue_count++;
+        pthread_cond_signal(&pool->work_available);
+    }
+    pthread_mutex_unlock(&pool->mutex);
+}
+
 void ny_pool_wait(NyPool *pool) {
     pthread_mutex_lock(&pool->mutex);
     while (pool->queue_count > 0 || pool->active_count > 0) {

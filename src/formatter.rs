@@ -577,6 +577,10 @@ fn format_expr(out: &mut String, expr: &Expr, depth: usize) {
             format_expr(out, end, depth);
             out.push(']');
         }
+        Expr::Await { future, .. } => {
+            out.push_str("await ");
+            format_expr(out, future, depth);
+        }
     }
 }
 

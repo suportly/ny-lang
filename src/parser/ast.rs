@@ -18,6 +18,7 @@ pub struct TypeParam {
 pub enum Item {
     FunctionDef {
         name: String,
+        is_async: bool,
         type_params: Vec<TypeParam>,
         params: Vec<Param>,
         return_type: TypeAnnotation,
@@ -302,6 +303,11 @@ pub enum Expr {
         end: Box<Expr>,
         span: Span,
     },
+    /// await expr — block until future resolves
+    Await {
+        future: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -328,7 +334,8 @@ impl Expr {
             | Expr::EnumVariant { span, .. }
             | Expr::RangeIndex { span, .. }
             | Expr::Lambda { span, .. }
-            | Expr::Try { span, .. } => *span,
+            | Expr::Try { span, .. }
+            | Expr::Await { span, .. } => *span,
         }
     }
 }

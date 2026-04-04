@@ -37,6 +37,8 @@ pub enum TokenKind {
     Unsafe,
     Extern,
     Let,
+    Async,
+    Await,
 
     // Operators
     Plus,

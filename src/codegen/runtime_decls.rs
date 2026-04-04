@@ -223,6 +223,14 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_ty = self.context.i64_type();
         self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
     }
+    // Async/Await runtime
+    pub(super) fn get_or_declare_ny_future_await(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_future_await") { return f; }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let i64t = self.context.i64_type();
+        self.module.add_function("ny_future_await", i64t.fn_type(&[ptr.into()], false), None)
+    }
+
     pub(super) fn get_or_declare_ny_str_join(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_str_join") { return f; }
         let ptr_ty = self.context.ptr_type(AddressSpace::default());

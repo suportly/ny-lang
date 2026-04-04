@@ -653,6 +653,9 @@ impl Resolver {
             Expr::Try { operand, .. } => {
                 self.resolve_expr(operand);
             }
+            Expr::Await { future, .. } => {
+                self.resolve_expr(future);
+            }
             // ---- Phase 11: Lambda ----
             Expr::Lambda { params, body, .. } => {
                 self.push_scope();

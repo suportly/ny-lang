@@ -78,7 +78,8 @@ fn find_free_vars_inner(expr: &Expr, bound: &[String], free: &mut Vec<String>) {
         Expr::AddrOf { operand, .. }
         | Expr::Deref { operand, .. }
         | Expr::Cast { expr: operand, .. }
-        | Expr::Try { operand, .. } => {
+        | Expr::Try { operand, .. }
+        | Expr::Await { future: operand, .. } => {
             find_free_vars_inner(operand, bound, free);
         }
         Expr::MethodCall { object, args, .. } => {
@@ -5938,6 +5939,38 @@ impl<'ctx> CodeGen<'ctx> {
                     .build_extract_value(struct_val, *index as u32, "tuple_idx")
                     .unwrap();
                 Ok(Some(extracted))
+            }
+
+            // ---- Await ----
+            Expr::Await { future, .. } => {
+                let future_ptr = self.compile_expr(future, function)?.unwrap();
+                let await_fn = self.get_or_declare_ny_future_await();
+                let result = self
+                    .builder
+                    .build_call(await_fn, &[future_ptr.into()], "await_val")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .basic()
+                    .unwrap();
+
+                // The future returns i64. Cast to the expected type.
+                let inner_ty = match self.infer_expr_type(future) {
+                    NyType::Future(inner) => *inner,
+                    _ => NyType::I32,
+                };
+                if inner_ty == NyType::I32 {
+                    let truncated = self
+                        .builder
+                        .build_int_truncate(
+                            result.into_int_value(),
+                            self.context.i32_type(),
+                            "await_i32",
+                        )
+                        .unwrap();
+                    Ok(Some(truncated.into()))
+                } else {
+                    Ok(Some(result))
+                }
             }
         }
     }

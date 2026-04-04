@@ -1552,6 +1552,15 @@ impl TypeChecker {
                 }
             }
 
+            // ── Await ────────────────────────────────────────────────
+            Expr::Await { future, .. } => {
+                let ft = self.check_expr(future);
+                match ft {
+                    NyType::Future(inner) => *inner,
+                    _ => ft, // Allow await on any type for flexibility
+                }
+            }
+
             // ── Lambda ───────────────────────────────────────────────
             Expr::Lambda {
                 params,

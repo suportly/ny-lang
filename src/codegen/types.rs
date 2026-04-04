@@ -78,8 +78,8 @@ pub fn ny_to_llvm<'ctx>(context: &'ctx Context, ty: &NyType) -> BasicTypeEnum<'c
                 )
                 .into()
         }
-        NyType::HashMap(_, _) => {
-            // HashMap is an opaque pointer to NyHMap C struct
+        NyType::HashMap(_, _) | NyType::Future(_) => {
+            // Opaque pointer to C runtime struct
             context.ptr_type(AddressSpace::default()).into()
         }
         NyType::Slice(_) => {

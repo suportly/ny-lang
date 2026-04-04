@@ -43,6 +43,7 @@ pub enum NyType {
     },
     Vec(Box<NyType>),
     HashMap(Box<NyType>, Box<NyType>),
+    Future(Box<NyType>),
 }
 
 impl NyType {
@@ -273,6 +274,7 @@ impl fmt::Display for NyType {
             NyType::Slice(elem) => write!(f, "[]{}", elem),
             NyType::Vec(elem) => write!(f, "Vec<{}>", elem),
             NyType::HashMap(k, v) => write!(f, "HashMap<{},{}>", k, v),
+            NyType::Future(inner) => write!(f, "Future<{}>", inner),
             NyType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {

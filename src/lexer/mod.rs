@@ -162,6 +162,8 @@ impl Lexer {
             "unsafe" => TokenKind::Unsafe,
             "extern" => TokenKind::Extern,
             "let" => TokenKind::Let,
+            "async" => TokenKind::Async,
+            "await" => TokenKind::Await,
             "true" => TokenKind::BoolLit(true),
             "false" => TokenKind::BoolLit(false),
             "_" => TokenKind::Underscore,

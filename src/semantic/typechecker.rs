@@ -761,6 +761,26 @@ impl TypeChecker {
                     }
                     return NyType::F64;
                 }
+                // String→String Map
+                if callee == "smap_new" {
+                    return NyType::Pointer(Box::new(NyType::U8));
+                }
+                if callee == "smap_insert" || callee == "smap_free" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Unit;
+                }
+                if callee == "smap_get" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Str;
+                }
+                if callee == "smap_contains" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::Bool;
+                }
+                if callee == "smap_len" {
+                    for arg in args { self.check_expr(arg); }
+                    return NyType::I64;
+                }
                 // map_key_at(m, index) -> str
                 if callee == "map_key_at" {
                     for arg in args { self.check_expr(arg); }

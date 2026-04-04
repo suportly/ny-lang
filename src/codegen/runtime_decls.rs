@@ -188,6 +188,47 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_map_key_at", fn_ty, None)
     }
 
+    // String→String Map
+    pub(super) fn get_or_declare_ny_smap_new(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_new") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_smap_new", ptr_ty.fn_type(&[], false), None)
+    }
+    pub(super) fn get_or_declare_ny_smap_insert(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_insert") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = self.context.void_type().fn_type(
+            &[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_smap_insert", fn_ty, None)
+    }
+    pub(super) fn get_or_declare_ny_smap_get(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_get") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_ty = ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), ptr_ty.into()], false);
+        self.module.add_function("ny_smap_get", fn_ty, None)
+    }
+    pub(super) fn get_or_declare_ny_smap_contains(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_contains") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let i32_ty = self.context.i32_type();
+        let fn_ty = i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false);
+        self.module.add_function("ny_smap_contains", fn_ty, None)
+    }
+    pub(super) fn get_or_declare_ny_smap_len(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_len") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        self.module.add_function("ny_smap_len", i64_ty.fn_type(&[ptr_ty.into()], false), None)
+    }
+    pub(super) fn get_or_declare_ny_smap_free(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_smap_free") { return f; }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.module.add_function("ny_smap_free", self.context.void_type().fn_type(&[ptr_ty.into()], false), None)
+    }
+
     pub(super) fn get_or_declare_ny_map_free(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_map_free") {
             return f;

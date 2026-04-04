@@ -758,6 +758,66 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(None);
                 }
 
+                // === String→String Map (smap) ===
+                if callee == "smap_new" {
+                    let fn_val = self.get_or_declare_ny_smap_new();
+                    let ptr = self.builder.build_call(fn_val, &[], "smap_ptr").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(ptr));
+                }
+                if callee == "smap_insert" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let val_val = self.compile_expr(&args[2], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "si_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "si_kl").unwrap();
+                    let vp = self.builder.build_extract_value(val_val, 0, "si_vp").unwrap();
+                    let vl = self.builder.build_extract_value(val_val, 1, "si_vl").unwrap();
+                    let fn_val = self.get_or_declare_ny_smap_insert();
+                    self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), vp.into(), vl.into()], "").unwrap();
+                    return Ok(None);
+                }
+                if callee == "smap_get" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "sg_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "sg_kl").unwrap();
+                    let i64_ty = self.context.i64_type();
+                    let out_len = self.builder.build_alloca(i64_ty, "sg_ol").unwrap();
+                    let fn_val = self.get_or_declare_ny_smap_get();
+                    let ptr = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into(), out_len.into()], "sg_r").unwrap()
+                        .try_as_basic_value().basic().unwrap().into_pointer_value();
+                    let len = self.builder.build_load(i64_ty, out_len, "sg_rl").unwrap().into_int_value();
+                    let str_ty = str_type(self.context);
+                    let result = str_ty.const_zero();
+                    let result = self.builder.build_insert_value(result, ptr, 0, "sg_sp").unwrap();
+                    let result = self.builder.build_insert_value(result, len, 1, "sg_sl").unwrap();
+                    return Ok(Some(result.into_struct_value().into()));
+                }
+                if callee == "smap_contains" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let key_val = self.compile_expr(&args[1], function)?.unwrap().into_struct_value();
+                    let kp = self.builder.build_extract_value(key_val, 0, "sc_kp").unwrap();
+                    let kl = self.builder.build_extract_value(key_val, 1, "sc_kl").unwrap();
+                    let fn_val = self.get_or_declare_ny_smap_contains();
+                    let result = self.builder.build_call(fn_val, &[map_ptr.into(), kp.into(), kl.into()], "sc_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "smap_len" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_val = self.get_or_declare_ny_smap_len();
+                    let result = self.builder.build_call(fn_val, &[map_ptr.into()], "sl_r").unwrap()
+                        .try_as_basic_value().basic().unwrap();
+                    return Ok(Some(result));
+                }
+                if callee == "smap_free" {
+                    let map_ptr = self.compile_expr(&args[0], function)?.unwrap();
+                    let fn_val = self.get_or_declare_ny_smap_free();
+                    self.builder.build_call(fn_val, &[map_ptr.into()], "").unwrap();
+                    return Ok(None);
+                }
+
                 // map_key_at(m, index) -> str
                 if callee == "map_key_at" {
                     let map_ptr = self.compile_expr(&args[0], function)?.unwrap();

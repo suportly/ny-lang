@@ -24,6 +24,14 @@ pub fn builtin_return_type(name: &str, _arg_types: &[NyType]) -> Option<NyType> 
         // File I/O
         "fclose" | "fread_byte" | "fwrite_str" | "map_get" | "str_to_int" => Some(NyType::I32),
         "map_contains" => Some(NyType::Bool),
+
+        // String→String Map
+        "smap_new" => Some(NyType::Pointer(Box::new(NyType::U8))),
+        "smap_insert" => Some(NyType::Unit),
+        "smap_get" => Some(NyType::Str),
+        "smap_contains" => Some(NyType::Bool),
+        "smap_len" => Some(NyType::I64),
+        "smap_free" => Some(NyType::Unit),
         "map_key_at" => Some(NyType::Str),
 
         // Strings
@@ -132,6 +140,12 @@ pub const BUILTIN_NAMES: &[&str] = &[
     "map_remove",
     "map_free",
     "map_key_at",
+    "smap_new",
+    "smap_insert",
+    "smap_get",
+    "smap_contains",
+    "smap_len",
+    "smap_free",
     "map_len",
     "arena_new",
     "arena_alloc",

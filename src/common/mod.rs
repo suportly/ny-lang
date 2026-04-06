@@ -1,3 +1,4 @@
+pub mod prompt;
 mod span;
 mod types;
 

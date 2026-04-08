@@ -45,6 +45,11 @@ pub enum Item {
         functions: Vec<ExternFnDecl>,
         span: Span,
     },
+    GpuExternBlock {
+        lib: GpuLib,
+        functions: Vec<GpuFnDecl>,
+        span: Span,
+    },
     ImplBlock {
         type_name: String,
         trait_name: Option<String>,
@@ -61,6 +66,21 @@ pub enum Item {
         target: TypeAnnotation,
         span: Span,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuLib {
+    Cuda,
+    OpenCL,
+}
+
+#[derive(Debug, Clone)]
+pub struct GpuFnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: TypeAnnotation,
+    pub is_kernel: bool,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -249,150 +269,139 @@ pub enum Expr {
     },
     Block {
         stmts: Vec<Stmt>,
-        tail_expr: Option<Box<Expr>>,
+        expr: Option<Box<Expr>>,
         span: Span,
     },
-    ArrayLit {
+    Tuple {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    Array {
         elements: Vec<Expr>,
         span: Span,
     },
     Index {
-        object: Box<Expr>,
+        base: Box<Expr>,
         index: Box<Expr>,
         span: Span,
     },
     FieldAccess {
-        object: Box<Expr>,
+        base: Box<Expr>,
         field: String,
         span: Span,
     },
-    StructInit {
-        name: String,
-        fields: Vec<(String, Expr)>,
-        span: Span,
-    },
-    /// `new Type { fields }` — GC-managed heap allocation, returns *Type
-    New {
-        name: String,
-        fields: Vec<(String, Expr)>,
-        span: Span,
-    },
-    AddrOf {
-        operand: Box<Expr>,
-        span: Span,
-    },
-    Deref {
-        operand: Box<Expr>,
-        span: Span,
-    },
     MethodCall {
-        object: Box<Expr>,
+        receiver: Box<Expr>,
         method: String,
         args: Vec<Expr>,
         span: Span,
     },
+    Lambda {
+        params: Vec<Param>,
+        body: Box<Expr>,
+        return_type: Option<TypeAnnotation>,
+        span: Span,
+    },
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    EnumLiteral {
+        enum_name: String,
+        variant_name: String,
+        payload: Vec<Expr>,
+        span: Span,
+    },
+    /// Pointer dereference: `*ptr`
+    Deref {
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// Address-of operator: `&expr` or `&mut expr`
+    AddrOf {
+        mutability: Mutability,
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// `go func(args)`
+    Go {
+        call: Box<Expr>,
+        span: Span,
+    },
+    /// `expr as Type`
     Cast {
         expr: Box<Expr>,
         target_type: TypeAnnotation,
         span: Span,
     },
-    Match {
-        subject: Box<Expr>,
-        arms: Vec<MatchArm>,
+    /// `sizeof(Type)`
+    SizeOf {
+        ty: TypeAnnotation,
         span: Span,
     },
-    TupleLit {
-        elements: Vec<Expr>,
+    /// `alignof(Type)`
+    AlignOf {
+        ty: TypeAnnotation,
         span: Span,
     },
-    TupleIndex {
-        object: Box<Expr>,
-        index: usize,
-        span: Span,
-    },
-    EnumVariant {
-        enum_name: String,
-        variant: String,
-        args: Vec<Expr>,
-        span: Span,
-    },
-    /// expr? — try operator, extracts Ok or returns Err
-    Try {
-        operand: Box<Expr>,
-        span: Span,
-    },
-    /// |params| -> RetType { body } (non-capturing lambda)
-    Lambda {
-        params: Vec<Param>,
-        return_type: TypeAnnotation,
+    /// `spawn { block }`
+    Spawn {
         body: Box<Expr>,
         span: Span,
     },
-    /// arr[start..end] → creates a slice
-    RangeIndex {
-        object: Box<Expr>,
-        start: Box<Expr>,
-        end: Box<Expr>,
+    /// `chan<T>()` or `chan<T>(capacity)`
+    ChanInit {
+        ty: TypeAnnotation,
+        capacity: Option<Box<Expr>>,
         span: Span,
     },
-    /// await expr — block until future resolves
-    Await {
-        future: Box<Expr>,
-        span: Span,
-    },
-    /// expr ?? default — null coalescing operator
-    NullCoalesce {
+    /// `ch.send(val)`
+    ChanSend {
+        channel: Box<Expr>,
         value: Box<Expr>,
-        default: Box<Expr>,
         span: Span,
     },
-    /// go fn(args) — fire-and-forget goroutine on thread pool
-    Go {
-        call: Box<Expr>,
+    /// `ch.recv()`
+    ChanRecv {
+        channel: Box<Expr>,
         span: Span,
     },
-}
-
-impl Expr {
-    pub fn span(&self) -> Span {
-        match self {
-            Expr::Literal { span, .. }
-            | Expr::Ident { span, .. }
-            | Expr::BinOp { span, .. }
-            | Expr::UnaryOp { span, .. }
-            | Expr::Call { span, .. }
-            | Expr::If { span, .. }
-            | Expr::Block { span, .. }
-            | Expr::ArrayLit { span, .. }
-            | Expr::Index { span, .. }
-            | Expr::FieldAccess { span, .. }
-            | Expr::StructInit { span, .. }
-            | Expr::New { span, .. }
-            | Expr::AddrOf { span, .. }
-            | Expr::Deref { span, .. }
-            | Expr::MethodCall { span, .. }
-            | Expr::Cast { span, .. }
-            | Expr::Match { span, .. }
-            | Expr::TupleLit { span, .. }
-            | Expr::TupleIndex { span, .. }
-            | Expr::EnumVariant { span, .. }
-            | Expr::RangeIndex { span, .. }
-            | Expr::Lambda { span, .. }
-            | Expr::Try { span, .. }
-            | Expr::Await { span, .. }
-            | Expr::Go { span, .. }
-            | Expr::NullCoalesce { span, .. } => *span,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Literal(LitValue, Span),
+    Ident(String, Span),
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        bindings: Vec<String>,
+        span: Span,
+    },
+    Wildcard(Span),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum LitValue {
-    Int(i128),
+    Int(i64),
     Float(f64),
+    String(String),
     Bool(bool),
-    Str(String),
-    Nil,
+    Char(char),
+    Unit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,18 +410,18 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
-    Mod,
+    Rem,
     Eq,
-    Ne,
+    NotEq,
     Lt,
     Gt,
-    Le,
-    Ge,
+    LtEq,
+    GtEq,
     And,
     Or,
-    BitAnd,
-    BitOr,
-    BitXor,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     Shl,
     Shr,
 }
@@ -421,94 +430,16 @@ pub enum BinOp {
 pub enum UnaryOp {
     Neg,
     Not,
-    BitNot,
 }
 
 #[derive(Debug, Clone)]
-pub struct MatchArm {
-    pub pattern: Pattern,
-    pub body: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub enum Pattern {
-    EnumVariant {
-        enum_name: String,
-        variant: String,
-        bindings: Vec<String>,
-        span: Span,
-    },
-    IntLit(i128, Span),
-    Wildcard(Span),
-    /// if let name = optional_expr — binds unwrapped value
-    OptionalBind {
-        name: String,
-        span: Span,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum TypeAnnotation {
-    Named {
-        name: String,
-        span: Span,
-    },
-    Array {
-        elem: Box<TypeAnnotation>,
-        size: usize,
-        span: Span,
-    },
-    Pointer {
-        inner: Box<TypeAnnotation>,
-        span: Span,
-    },
-    Tuple {
-        elements: Vec<Box<TypeAnnotation>>,
-        span: Span,
-    },
-    Slice {
-        elem: Box<TypeAnnotation>,
-        span: Span,
-    },
-    Function {
-        params: Vec<Box<TypeAnnotation>>,
-        ret: Box<TypeAnnotation>,
-        span: Span,
-    },
-    DynTrait {
-        trait_name: String,
-        span: Span,
-    },
-    Optional {
-        inner: Box<TypeAnnotation>,
-        span: Span,
-    },
-}
-
-impl TypeAnnotation {
-    pub fn span(&self) -> Span {
-        match self {
-            TypeAnnotation::Named { span, .. }
-            | TypeAnnotation::Array { span, .. }
-            | TypeAnnotation::Pointer { span, .. }
-            | TypeAnnotation::Tuple { span, .. }
-            | TypeAnnotation::Slice { span, .. }
-            | TypeAnnotation::Function { span, .. }
-            | TypeAnnotation::DynTrait { span, .. }
-            | TypeAnnotation::Optional { span, .. } => *span,
-        }
-    }
-
-    pub fn name_str(&self) -> &str {
-        match self {
-            TypeAnnotation::Named { name, .. } => name.as_str(),
-            TypeAnnotation::Array { .. } => "<array>",
-            TypeAnnotation::Pointer { .. } => "<pointer>",
-            TypeAnnotation::Tuple { .. } => "<tuple>",
-            TypeAnnotation::Slice { .. } => "<slice>",
-            TypeAnnotation::Function { .. } => "<function>",
-            TypeAnnotation::DynTrait { trait_name, .. } => trait_name.as_str(),
-            TypeAnnotation::Optional { .. } => "?",
-        }
-    }
+pub struct TypeAnnotation {
+    pub name: String,
+    pub generic_args: Vec<TypeAnnotation>,
+    pub is_ptr: bool,
+    pub is_mut: bool,
+    pub is_slice: bool,
+    pub is_array: bool,
+    pub array_size: Option<Box<Expr>>,
+    pub span: Span,
 }

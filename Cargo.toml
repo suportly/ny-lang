@@ -1,3 +1,8 @@
+[workspace]
+members = [
+    "ny-build",
+]
+
 [package]
 name = "ny"
 version = "0.1.0"

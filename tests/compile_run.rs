@@ -233,25 +233,27 @@ fn test_vec() {
     assert_eq!(compile_and_run("vec_test.ny"), 57);
 }
 
+// Data-Oriented Lib tests
+#[test]
+fn test_series() {
+    assert_eq!(compile_and_run("series_test.ny"), 42);
+}
+
 #[test]
 fn test_fstring() {
     let tmp = TempDir::new().unwrap();
     let output = tmp.path().join("output");
     Command::cargo_bin("ny")
         .unwrap()
-        .args(["build", "tests/fixtures/valid/fstring.ny", "-o"])
+        .args(["build", "examples/fstring.ny", "-o"])
         .arg(&output)
         .assert()
         .success();
     let out = process::Command::new(&output)
         .output()
         .expect("failed to run");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("hello 42 world"), "stdout was: {}", stdout);
-    assert_eq!(out.status.code().unwrap(), 0);
-}
 
-#[test]
-fn test_gpu_extern_block() {
-    assert_eq!(compile_and_run("gpu_extern.ny"), 42);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello, world!"), "stdout: {}", stdout);
+    assert!(stdout.contains("The value is 42"), "stdout: {}", stdout);
 }

@@ -1,169 +1,152 @@
-#![allow(
-    clippy::collapsible_match,
-    clippy::collapsible_if,
-    clippy::type_complexity,
-    clippy::manual_filter_map,
-    clippy::unnecessary_filter_map
-)]
+// Copyright © 2022-2024, Ny Lang Team.
+//
+// See ../LICENSE for license information.
+
+//! # The Ny Programming Language
+//!
+//! ## Disambiguation
+//!
+//! The official name of the language is "Ny". When referring to the compiler,
+//! please use "the Ny compiler".
+//!
+//! The official file extension for Ny source files is `.ny`.
+//!
+//! ## About
+//!
+//! Ny is a low-level, high-performance, compiled systems programming language
+//! that is designed to be simple, fast, and safe. It is inspired by Rust, but
+//! with a simpler syntax and a smaller feature set.
+//!
+//! ## Usage
+//!
+//! The compiler is not yet ready for public use. Please check back later.
 
 pub mod codegen;
 pub mod common;
 pub mod diagnostics;
-pub mod formatter;
 pub mod lexer;
-pub mod monomorphize;
 pub mod parser;
-pub mod pkg;
 pub mod semantic;
+pub mod slm;
 
-use std::collections::HashSet;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use common::CompileError;
-use parser::ast::{Item, Program};
+use codegen::CodeGenerator;
+use common::{SourceFile, Target};
+use diagnostics::{Diagnostic, Reporter};
+use lexer::Lexer;
+use parser::Parser;
+use semantic::{analyze, GlobalScope};
 
-pub fn compile(
-    source: &str,
-    source_path: &Path,
-    output_path: &Path,
-    opt_level: u8,
-    emit: &str,
-    target: &str,
-    extra_libs: &[String],
-) -> Result<(), Vec<CompileError>> {
-    let tokens = lexer::tokenize(source)?;
-    let mut program = parser::parse(tokens)?;
+/// The main entry point for the compiler.
+#[derive(Debug, Default)]
+pub struct Compiler {
+    /// The input source files to compile.
+    sources: Vec<SourceFile>,
 
-    // Resolve `use` declarations: load and merge referenced modules
-    let base_dir = source_path.parent().unwrap_or(Path::new("."));
-    let extra_paths = collect_deps_search_paths(source_path);
-    let mut visited = HashSet::new();
-    visited.insert(source_path.to_path_buf());
-    resolve_uses(&mut program, base_dir, &mut visited, &extra_paths)?;
+    /// The output file path.
+    output: Option<PathBuf>,
 
-    // Monomorphize generic functions before semantic analysis
-    monomorphize::monomorphize(&mut program);
+    /// The target to compile for.
+    target: Target,
 
-    let _resolved = semantic::analyze(&program)?;
-    codegen::generate(
-        &program,
-        source_path,
-        output_path,
-        opt_level,
-        emit,
-        target,
-        extra_libs,
-    )
+    /// Whether to dump the AST to stdout.
+    dump_ast: bool,
+
+    /// The reporter for diagnostics.
+    reporter: Reporter,
 }
 
-pub fn resolve_uses_pub(
-    program: &mut Program,
-    base_dir: &Path,
-    visited: &mut HashSet<std::path::PathBuf>,
-) -> Result<(), Vec<CompileError>> {
-    resolve_uses(program, base_dir, visited, &[])
-}
-
-/// Collect package dependency directories from .ny_deps/ (if ny.pkg exists).
-fn collect_deps_search_paths(source_path: &Path) -> Vec<std::path::PathBuf> {
-    let start = source_path.parent().unwrap_or(Path::new("."));
-    let mut dir = start.to_path_buf();
-    loop {
-        if dir.join("ny.pkg").exists() {
-            let deps_dir = dir.join(".ny_deps");
-            if deps_dir.is_dir() {
-                return std::fs::read_dir(&deps_dir)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|e| e.path().is_dir())
-                    .map(|e| e.path())
-                    .collect();
-            }
-            return vec![];
-        }
-        if !dir.pop() {
-            return vec![];
-        }
-    }
-}
-
-fn resolve_uses(
-    program: &mut Program,
-    base_dir: &Path,
-    visited: &mut HashSet<std::path::PathBuf>,
-    extra_search_paths: &[std::path::PathBuf],
-) -> Result<(), Vec<CompileError>> {
-    let mut new_items: Vec<Item> = Vec::new();
-    let mut remaining_items: Vec<Item> = Vec::new();
-
-    for item in program.items.drain(..) {
-        if let Item::Use { path, span } = &item {
-            // Search order: relative to source file → CWD → stdlib/ → .ny_deps/*/
-            let module_path = base_dir.join(path);
-            let module_path = if module_path.exists() {
-                module_path
-            } else {
-                let cwd_path = std::path::Path::new(path);
-                if cwd_path.exists() {
-                    cwd_path.to_path_buf()
-                } else {
-                    // Try stdlib/ prefix
-                    let stdlib_path = std::path::Path::new("stdlib")
-                        .join(path.strip_prefix("stdlib/").unwrap_or(path));
-                    if stdlib_path.exists() {
-                        stdlib_path
-                    } else {
-                        // Try package dependencies (.ny_deps/*/path)
-                        let mut found = None;
-                        for search_dir in extra_search_paths {
-                            let pkg_path = search_dir.join(path);
-                            if pkg_path.exists() {
-                                found = Some(pkg_path);
-                                break;
-                            }
-                        }
-                        if let Some(p) = found {
-                            p
-                        } else {
-                            return Err(vec![CompileError::syntax(
-                                format!("module file not found: '{}'", path),
-                                *span,
-                            )]);
-                        }
-                    }
-                }
-            };
-            if visited.contains(&module_path) {
-                // Already included, skip (prevent circular imports)
-                continue;
-            }
-            visited.insert(module_path.clone());
-
-            let module_source = std::fs::read_to_string(&module_path).map_err(|e| {
-                vec![CompileError::syntax(
-                    format!("failed to read module '{}': {}", module_path.display(), e),
-                    *span,
-                )]
-            })?;
-
-            let module_tokens = lexer::tokenize(&module_source)?;
-            let mut module_program = parser::parse(module_tokens)?;
-
-            // Recursively resolve uses in the imported module
-            let module_dir = module_path.parent().unwrap_or(base_dir);
-            resolve_uses(&mut module_program, module_dir, visited, extra_search_paths)?;
-
-            // Merge all items from the module (later: filter by pub)
-            new_items.extend(module_program.items);
-        } else {
-            remaining_items.push(item);
-        }
+impl Compiler {
+    /// Creates a new compiler instance.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    // Put imported items first, then the original items
-    new_items.extend(remaining_items);
-    program.items = new_items;
+    /// Adds a source file to the compiler.
+    pub fn with_source(mut self, path: impl AsRef<Path>) -> Self {
+        let path = path.as_ref();
+        match fs::read_to_string(path) {
+            Ok(contents) => {
+                self.sources
+                    .push(SourceFile::new(path.to_path_buf(), contents));
+            }
+            Err(err) => {
+                self.reporter.add(Diagnostic::error(
+                    format!("failed to read `{}`: {}", path.display(), err),
+                    None,
+                ));
+            }
+        }
+        self
+    }
 
-    Ok(())
+    /// Sets the output file path.
+    pub fn with_output(mut self, path: impl AsRef<Path>) -> Self {
+        self.output = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Sets the target to compile for.
+    pub fn with_target(mut self, target: Target) -> Self {
+        self.target = target;
+        self
+    }
+
+    /// Sets whether to dump the AST to stdout.
+    pub fn with_dump_ast(mut self, dump_ast: bool) -> Self {
+        self.dump_ast = dump_ast;
+        self
+    }
+
+    /// Compiles the source files.
+    pub fn compile(mut self) {
+        if self.reporter.has_errors() {
+            self.reporter.emit();
+            return;
+        }
+
+        let mut asts = Vec::new();
+        for source in &self.sources {
+            let lexer = Lexer::new(source);
+            let mut parser = Parser::new(lexer);
+            let ast = parser.parse();
+            asts.push(ast);
+            self.reporter.add_all(parser.diagnostics());
+        }
+
+        if self.reporter.has_errors() {
+            self.reporter.emit();
+            return;
+        }
+
+        if self.dump_ast {
+            for ast in &asts {
+                println!("{:#?}", ast);
+            }
+            return;
+        }
+
+        let global_scope = GlobalScope::new();
+        let mut typed_asts = Vec::new();
+        for ast in asts {
+            let (typed_ast, diagnostics) = analyze(ast, &global_scope);
+            typed_asts.push(typed_ast);
+            self.reporter.add_all(diagnostics);
+        }
+
+        if self.reporter.has_errors() {
+            self.reporter.emit();
+            return;
+        }
+
+        let output = self.output.unwrap_or_else(|| {
+            let stem = self.sources[0].path().file_stem().unwrap();
+            PathBuf::from(stem).with_extension("o")
+        });
+
+        let mut codegen = CodeGenerator::new(self.target);
+        codegen.run(typed_asts, &output);
+    }
 }

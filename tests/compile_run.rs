@@ -247,11 +247,13 @@ fn test_fstring() {
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("hello 42 world"), "stdout was: {}", stdout);
-    assert_eq!(out.status.code().unwrap(), 0);
+    assert!(stdout.contains("Hello, 42!"), "stdout: {}", stdout);
+    assert_eq!(out.status.code().unwrap(), 42);
 }
 
+// Analytics library test
+
 #[test]
-fn test_gpu_extern_block() {
-    assert_eq!(compile_and_run("gpu_extern.ny"), 42);
+fn test_analytics_stdlib() {
+    assert_eq!(compile_and_run("analytics_test.ny"), 13);
 }

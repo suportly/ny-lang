@@ -1,5 +1,7 @@
 // src/cdp/mod.rs
 
+pub mod activation;
+pub mod identity;
 pub mod ingestion;
 pub mod processing;
 pub mod segmentation;

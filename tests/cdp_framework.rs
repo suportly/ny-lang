@@ -1,6 +1,8 @@
 // tests/cdp_framework.rs
 
 use ny::cdp::{
+    activation::{ActivationTarget, MockApiTarget},
+    identity::resolve_identities,
     ingestion::{CsvSource, IngestionSource},
     processing::process_profiles,
     segmentation::{segment_profiles, Segment},
@@ -28,6 +30,40 @@ fn test_profile_processing() {
     assert_eq!(processed_profiles.len(), 1);
     let profile = &processed_profiles[0];
     assert!(profile.attributes.get("processed_at").is_some());
+}
+
+#[test]
+fn test_identity_resolution() {
+    let profiles = vec![
+        CustomerProfile {
+            id: "user1".to_string(),
+            attributes: json!({"email": "alice@example.com", "first_name": "Alice"}),
+        },
+        CustomerProfile {
+            id: "user2".to_string(),
+            attributes: json!({"email": "bob@example.com", "first_name": "Bob"}),
+        },
+        CustomerProfile {
+            id: "user3".to_string(),
+            attributes: json!({"email": "alice@example.com", "last_name": "Smith"}),
+        },
+    ];
+
+    let resolved_profiles = resolve_identities(profiles, "email");
+    assert_eq!(resolved_profiles.len(), 2);
+
+    let alice_profile = resolved_profiles
+        .iter()
+        .find(|p| p.attributes["email"] == "alice@example.com")
+        .unwrap();
+    assert_eq!(alice_profile.attributes["first_name"], "Alice");
+    assert_eq!(alice_profile.attributes["last_name"], "Smith");
+
+    let bob_profile = resolved_profiles
+        .iter()
+        .find(|p| p.attributes["email"] == "bob@example.com")
+        .unwrap();
+    assert_eq!(bob_profile.attributes["first_name"], "Bob");
 }
 
 #[test]
@@ -75,4 +111,15 @@ fn test_segmentation() {
         .find(|(id, _)| id == "ny_customers")
         .unwrap();
     assert_eq!(ny_customers.1, vec!["user1", "user3"]);
+}
+
+#[test]
+fn test_activation() {
+    let profiles = vec![CustomerProfile {
+        id: "user1".to_string(),
+        attributes: json!({"email": "test@example.com"}),
+    }];
+    let target = MockApiTarget;
+    let result = target.activate(&profiles);
+    assert!(result.is_ok());
 }

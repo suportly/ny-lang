@@ -1,6 +1,8 @@
 // tests/cdp_framework.rs
 
 use ny::cdp::{
+    activation::{activate_profile, ActivationTarget},
+    identity_resolution::resolve_identities,
     ingestion::{CsvSource, IngestionSource},
     processing::process_profiles,
     segmentation::{segment_profiles, Segment},
@@ -10,12 +12,16 @@ use serde_json::json;
 
 #[test]
 fn test_csv_ingestion() {
+    // This test will fail if dummy.csv is not present.
+    // For the purpose of this example, we'll create it.
+    std::fs::write("dummy.csv", "id,name\nuser123,Alice").unwrap();
     let source = CsvSource { path: "dummy.csv" };
     let profiles = source.ingest().unwrap();
     assert_eq!(profiles.len(), 1);
     let profile = &profiles[0];
     assert_eq!(profile.id, "user123");
     assert_eq!(profile.attributes["name"], "Alice");
+    std::fs::remove_file("dummy.csv").unwrap();
 }
 
 #[test]
@@ -75,4 +81,51 @@ fn test_segmentation() {
         .find(|(id, _)| id == "ny_customers")
         .unwrap();
     assert_eq!(ny_customers.1, vec!["user1", "user3"]);
+}
+
+#[test]
+fn test_identity_resolution() {
+    let profiles = vec![
+        CustomerProfile {
+            id: "user123".to_string(),
+            attributes: json!({"email": "alice@example.com", "device": "mobile"}),
+        },
+        CustomerProfile {
+            id: "user456".to_string(),
+            attributes: json!({"email": "alice@example.com", "device": "desktop"}),
+        },
+    ];
+
+    let resolved_profile = resolve_identities(profiles).unwrap();
+    assert_eq!(resolved_profile.id, "user123");
+    assert_eq!(
+        resolved_profile.attributes,
+        json!({
+            "email": "alice@example.com",
+            "device": "desktop" // Last write wins
+        })
+    );
+}
+
+#[test]
+fn test_identity_resolution_empty() {
+    let profiles = vec![];
+    assert!(resolve_identities(profiles).is_none());
+}
+
+#[test]
+fn test_activation() {
+    let profile = CustomerProfile {
+        id: "user789".to_string(),
+        attributes: json!({"name": "Bob"}),
+    };
+
+    let email_target = ActivationTarget::Email("bob@example.com".to_string());
+    assert!(activate_profile(&profile, &email_target).is_ok());
+
+    let push_target = ActivationTarget::PushNotification("push-token-123".to_string());
+    assert!(activate_profile(&profile, &push_target).is_ok());
+
+    let webhook_target = ActivationTarget::Webhook("https://example.com/webhook".to_string());
+    assert!(activate_profile(&profile, &webhook_target).is_ok());
 }

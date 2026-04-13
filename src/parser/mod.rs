@@ -473,7 +473,13 @@ impl Parser {
 
         loop {
             let op_token = self.peek().clone();
-            if op_token == TokenKind::Eof || op_token == TokenKind::RParen || op_token == TokenKind::RBrace || op_token == TokenKind::RBracket || op_token == TokenKind::Comma || op_token == TokenKind::Semi {
+            if op_token == TokenKind::Eof
+                || op_token == TokenKind::RParen
+                || op_token == TokenKind::RBrace
+                || op_token == TokenKind::RBracket
+                || op_token == TokenKind::Comma
+                || op_token == TokenKind::Semi
+            {
                 break;
             }
 
@@ -512,7 +518,13 @@ impl Parser {
         })
     }
 
-    fn parse_infix(&mut self, lhs: Expr, op_token: TokenKind, rhs: Expr, span: Span) -> Result<Expr, CompileError> {
+    fn parse_infix(
+        &mut self,
+        lhs: Expr,
+        op_token: TokenKind,
+        rhs: Expr,
+        span: Span,
+    ) -> Result<Expr, CompileError> {
         let op = match op_token {
             TokenKind::Plus => BinOp::Add,
             TokenKind::Minus => BinOp::Sub,
@@ -535,28 +547,61 @@ impl Parser {
             TokenKind::DotDot => BinOp::Range,
             TokenKind::DotDotEq => BinOp::RangeInclusive,
             TokenKind::LtMinus => BinOp::Send,
-            _ => return Err(CompileError::syntax(format!("unexpected infix operator {:?}", op_token), span)),
+            _ => {
+                return Err(CompileError::syntax(
+                    format!("unexpected infix operator {:?}", op_token),
+                    span,
+                ))
+            }
         };
-        Ok(Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs), span })
+        Ok(Expr::BinOp {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            span,
+        })
     }
-
 
     fn parse_primary(&mut self, token: Token) -> Result<Expr, CompileError> {
         match token.kind {
-            TokenKind::Int(val) => Ok(Expr::Literal { value: LitValue::Int(val), span: token.span }),
-            TokenKind::Float(val) => Ok(Expr::Literal { value: LitValue::Float(val), span: token.span }),
-            TokenKind::String(val) => Ok(Expr::Literal { value: LitValue::String(val), span: token.span }),
-            TokenKind::Char(val) => Ok(Expr::Literal { value: LitValue::Char(val), span: token.span }),
-            TokenKind::True => Ok(Expr::Literal { value: LitValue::Bool(true), span: token.span }),
-            TokenKind::False => Ok(Expr::Literal { value: LitValue::Bool(false), span: token.span }),
-            TokenKind::Ident(name) => Ok(Expr::Ident { name, span: token.span }),
+            TokenKind::Int(val) => Ok(Expr::Literal {
+                value: LitValue::Int(val),
+                span: token.span,
+            }),
+            TokenKind::Float(val) => Ok(Expr::Literal {
+                value: LitValue::Float(val),
+                span: token.span,
+            }),
+            TokenKind::String(val) => Ok(Expr::Literal {
+                value: LitValue::String(val),
+                span: token.span,
+            }),
+            TokenKind::Char(val) => Ok(Expr::Literal {
+                value: LitValue::Char(val),
+                span: token.span,
+            }),
+            TokenKind::True => Ok(Expr::Literal {
+                value: LitValue::Bool(true),
+                span: token.span,
+            }),
+            TokenKind::False => Ok(Expr::Literal {
+                value: LitValue::Bool(false),
+                span: token.span,
+            }),
+            TokenKind::Ident(name) => Ok(Expr::Ident {
+                name,
+                span: token.span,
+            }),
             TokenKind::LParen => {
                 let expr = self.parse_expr(0)?;
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
             TokenKind::LBrace => self.parse_block_expr(token.span),
-            _ => Err(CompileError::syntax(format!("unexpected token in expression: {:?}", token.kind), token.span)),
+            _ => Err(CompileError::syntax(
+                format!("unexpected token in expression: {:?}", token.kind),
+                token.span,
+            )),
         }
     }
 
@@ -569,9 +614,9 @@ impl Parser {
             // Check if the next token is a semicolon. If not, this statement
             // is the trailing expression of the block.
             if *self.peek() != TokenKind::Semi && *self.peek() != TokenKind::RBrace {
-                 if let Stmt::ExprStmt { expr: e, .. } = stmt {
+                if let Stmt::ExprStmt { expr: e, .. } = stmt {
                     expr = Some(Box::new(e));
-                 } else {
+                } else {
                     // This is an error case, a statement that's not an expression
                     // is not followed by a semicolon.
                     self.errors.push(CompileError::syntax(
@@ -579,8 +624,8 @@ impl Parser {
                         self.peek_span(),
                     ));
                     stmts.push(stmt); // still push it to attempt to continue parsing
-                 }
-                 break; // exit loop, as we've found the trailing expression
+                }
+                break; // exit loop, as we've found the trailing expression
             }
 
             stmts.push(stmt);
@@ -627,9 +672,20 @@ impl Parser {
         let span = start.merge(init.span());
 
         if is_const {
-            Ok(Stmt::ConstDecl { name, ty, value: init, span })
+            Ok(Stmt::ConstDecl {
+                name,
+                ty,
+                value: init,
+                span,
+            })
         } else {
-            Ok(Stmt::VarDecl { name, mutability: Mutability::Immutable, ty, init, span })
+            Ok(Stmt::VarDecl {
+                name,
+                mutability: Mutability::Immutable,
+                ty,
+                init,
+                span,
+            })
         }
     }
 
@@ -641,7 +697,10 @@ impl Parser {
             Some(self.parse_expr(0)?)
         };
         let end_span = value.as_ref().map(|v| v.span()).unwrap_or(start);
-        Ok(Stmt::Return { value, span: start.merge(end_span) })
+        Ok(Stmt::Return {
+            value,
+            span: start.merge(end_span),
+        })
     }
 }
 

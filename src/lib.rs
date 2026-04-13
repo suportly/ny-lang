@@ -153,7 +153,12 @@ fn resolve_uses(
 
             // Recursively resolve `use`s in the imported module
             let module_base_dir = module_path.parent().unwrap_or_else(|| Path::new("."));
-            resolve_uses(&mut module_program, module_base_dir, visited, extra_search_paths)?;
+            resolve_uses(
+                &mut module_program,
+                module_base_dir,
+                visited,
+                extra_search_paths,
+            )?;
 
             new_items.extend(module_program.items);
         } else {

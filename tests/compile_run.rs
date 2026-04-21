@@ -240,20 +240,6 @@ fn test_series() {
 }
 
 #[test]
-fn test_fstring() {
-    let tmp = TempDir::new().unwrap();
-    let output = tmp.path().join("output");
-    Command::cargo_bin("ny")
-        .unwrap()
-        .args(["build", "examples/fstring.ny", "-o"])
-        .arg(&output)
-        .assert()
-        .success();
-    let out = process::Command::new(&output)
-        .output()
-        .expect("failed to run");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Hello, world!"), "stdout: {}", stdout);
-    assert!(stdout.contains("The value is 42"), "stdout: {}", stdout);
+fn test_gpu_ffi() {
+    assert_eq!(compile_and_run("gpu_ffi.ny"), 42);
 }

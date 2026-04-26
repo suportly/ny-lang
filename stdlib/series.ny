@@ -37,4 +37,32 @@ impl Series {
     pub fn get(self: &Self, index: usize) -> i64 {
         return self.data[index];
     }
+
+    // Returns a new Series containing only the elements that satisfy the predicate.
+    pub fn filter(self: &Self, predicate: fn(i64) -> bool) -> Self {
+        let mut filtered_data = Vec::new();
+        for item in self.data {
+            if predicate(item) {
+                filtered_data.push(item);
+            }
+        }
+        return Series::new(self.name, filtered_data);
+    }
+
+    // Returns a new Series containing the results of applying the function to each element.
+    pub fn map(self: &Self, func: fn(i64) -> i64) -> Self {
+        let mut mapped_data = Vec::new();
+        for item in self.data {
+            mapped_data.push(func(item));
+        }
+        return Series::new(self.name, mapped_data);
+    }
+
+    // Returns the mean of the elements in the series.
+    pub fn mean(self: &Self) -> i64 {
+        if self.len() == 0 {
+            return 0; // Or handle as an error, depending on desired behavior
+        }
+        return self.sum() / (self.len() as i64);
+    }
 }

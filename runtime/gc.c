@@ -73,6 +73,8 @@ static pthread_key_t g_thread_exit_key;
 static pthread_once_t g_thread_exit_once = PTHREAD_ONCE_INIT;
 
 static void unregister_thread_roots(void *unused);
+static void join_stw(void);
+static void leave_stw(void);
 
 static void make_thread_exit_key(void) {
     pthread_key_create(&g_thread_exit_key, unregister_thread_roots);

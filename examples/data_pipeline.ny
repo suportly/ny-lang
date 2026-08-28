@@ -31,10 +31,8 @@ fn main() -> i32 {
     println("=== Ny Data Pipeline ===");
     println("");
     // 1. Parse config from JSON
-    config := json_parse("{"name": "sensor-data", "samples": 1000, "threshold": 50}");
-    defer {
-        json_free(config);
-    };
+    config := json_parse("{\"name\": \"sensor-data\", \"samples\": 1000, \"threshold\": 50}");
+    defer json_free(config);
     name := json_get_str(config, "name");
     samples := json_get_int(config, "samples");
     threshold := json_get_int(config, "threshold");

@@ -59,9 +59,56 @@ static pthread_cond_t g_resume = PTHREAD_COND_INITIALIZER;
 static int g_participants = 0;
 static int g_running = 0;
 
-// Whether this thread counts towards g_running. A thread joins on its first
-// root push and leaves when it exits.
-static __thread int t_participating = 0;
+// Every participating thread is in exactly one of two states, and g_running
+// counts those in NY_RUNNING. Keeping it to a single variable — rather than
+// several flags that have to agree — is what makes the transitions below
+// checkable by inspection.
+#define NY_OUTSIDE 0   // not participating
+#define NY_RUNNING 1   // running Ny code, counted in g_running
+#define NY_PARKED  2   // at a safepoint or blocked, not counted
+
+static __thread int t_state = NY_OUTSIDE;
+
+// Nesting depth of ny_gc_park, so nested blocking sites stay balanced.
+static __thread int t_park_depth = 0;
+
+// Debug-only invariant check: g_running must equal the number of threads in
+// NY_RUNNING. Build the runtime with -DNY_GC_CHECK_INVARIANT to have every
+// transition verified, aborting at the point the invariant breaks rather than
+// minutes later at a deadlock.
+#ifdef NY_GC_CHECK_INVARIANT
+static int g_dbg_running_states[256];
+static int g_dbg_next_slot = 0;
+static __thread int t_dbg_slot = -1;
+
+static void dbg_set_state(int st) {
+    if (t_dbg_slot < 0) {
+        t_dbg_slot = __sync_fetch_and_add(&g_dbg_next_slot, 1);
+    }
+    if (t_dbg_slot < 256) g_dbg_running_states[t_dbg_slot] = st;
+}
+
+// Caller holds g_stw_mutex.
+static void dbg_check(const char *where) {
+    int counted = 0;
+    for (int i = 0; i < g_dbg_next_slot && i < 256; i++) {
+        if (g_dbg_running_states[i] == NY_RUNNING) counted++;
+    }
+    if (counted != g_running) {
+        fprintf(stderr,
+                "ny: GC invariant violated at %s: g_running=%d but %d threads "
+                "are RUNNING\n", where, g_running, counted);
+        abort();
+    }
+    if (g_running < 0) {
+        fprintf(stderr, "ny: GC g_running went negative at %s\n", where);
+        abort();
+    }
+}
+#else
+#define dbg_set_state(st) ((void)0)
+#define dbg_check(where)  ((void)0)
+#endif
 
 // Per-thread shadow stack. Zero-initialised, so a thread that never roots
 // anything costs nothing and is never registered.
@@ -75,6 +122,8 @@ static pthread_once_t g_thread_exit_once = PTHREAD_ONCE_INIT;
 static void unregister_thread_roots(void *unused);
 static void join_stw(void);
 static void leave_stw(void);
+static void heap_lock(void);
+static void heap_unlock(void);
 
 static void make_thread_exit_key(void) {
     pthread_key_create(&g_thread_exit_key, unregister_thread_roots);
@@ -183,12 +232,12 @@ static void register_thread_roots(void) {
     pthread_once(&g_thread_exit_once, make_thread_exit_key);
     pthread_setspecific(g_thread_exit_key, (void *)&t_roots);
 
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     gc_init_locked();
     t_roots.next = g_heap.thread_roots;
     g_heap.thread_roots = &t_roots;
     t_roots.registered = 1;
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
 
     // From here on this thread has roots the collector must see, so it takes
     // part in the stop-the-world handshake.
@@ -212,11 +261,11 @@ void ny_gc_root_push(void **slot) {
         }
         memcpy(new_entries, t_roots.entries, t_roots.count * sizeof(void *));
 
-        pthread_mutex_lock(&g_heap_mutex);
+        heap_lock();
         void **old_entries = t_roots.entries;
         t_roots.entries = new_entries;
         t_roots.capacity = new_cap;
-        pthread_mutex_unlock(&g_heap_mutex);
+        heap_unlock();
 
         free(old_entries);
     }
@@ -232,103 +281,157 @@ void ny_gc_root_pop(int64_t n) {
 // ---------------------------------------------------------------------------
 // Safepoints
 // ---------------------------------------------------------------------------
+//
+// Transitions all happen under g_stw_mutex and preserve one invariant:
+// g_running is the number of participating threads in NY_RUNNING.
+
+// Caller holds g_stw_mutex.
+static void to_parked(void) {
+    if (t_state != NY_RUNNING) return;
+    t_state = NY_PARKED;
+    dbg_set_state(NY_PARKED);
+    g_running--;
+    if (g_running == 0) {
+        pthread_cond_broadcast(&g_all_parked);
+    }
+    dbg_check("to_parked");
+}
+
+// Caller holds g_stw_mutex. Waits out any collection before running again.
+static void to_running(void) {
+    if (t_state != NY_PARKED) return;
+    while (ny_gc_stw_requested) {
+        pthread_cond_wait(&g_resume, &g_stw_mutex);
+    }
+    t_state = NY_RUNNING;
+    dbg_set_state(NY_RUNNING);
+    g_running++;
+    dbg_check("to_running");
+}
 
 // Join the handshake. Called once per thread, from register_thread_roots.
 static void join_stw(void) {
     pthread_mutex_lock(&g_stw_mutex);
-    // A thread that joins while a collection is already waiting must not be
-    // counted as running, or the collector would wait for a safepoint this
-    // thread has no reason to reach. Park immediately instead.
-    while (ny_gc_stw_requested) {
-        pthread_cond_wait(&g_resume, &g_stw_mutex);
-    }
     g_participants++;
-    g_running++;
-    t_participating = 1;
+    // Enter parked and let to_running wait out any collection in progress,
+    // rather than joining as running and making a collector wait for a
+    // safepoint this thread has no reason to reach.
+    t_state = NY_PARKED;
+    to_running();
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
 static void leave_stw(void) {
-    if (!t_participating) return;
+    if (t_state == NY_OUTSIDE) return;
     pthread_mutex_lock(&g_stw_mutex);
+    to_parked();
     g_participants--;
-    g_running--;
-    t_participating = 0;
-    // A collector may be waiting on exactly this thread.
+    t_state = NY_OUTSIDE;
+    dbg_set_state(NY_OUTSIDE);
     if (g_running == 0) {
         pthread_cond_broadcast(&g_all_parked);
     }
+    dbg_check("leave_stw");
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
 void ny_gc_safepoint(void) {
-    if (!t_participating) return;
+    if (t_state != NY_RUNNING) return;
 
     pthread_mutex_lock(&g_stw_mutex);
-    while (ny_gc_stw_requested) {
-        g_running--;
-        if (g_running == 0) {
-            pthread_cond_broadcast(&g_all_parked);
-        }
-        pthread_cond_wait(&g_resume, &g_stw_mutex);
-        g_running++;
+    if (ny_gc_stw_requested) {
+        to_parked();
+        to_running();
     }
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
+// The depth is counted unconditionally, never gated on the thread's state.
+// A thread can join the handshake between a park and its unpark — a pool
+// worker takes its first root inside the goroutine it is already running — and
+// gating on state would let an unpark run to_running() with no matching park,
+// permanently inflating g_running and stalling every later collection.
+//
+// to_parked/to_running are no-ops unless the thread is in the matching state,
+// so an unbalanced state costs nothing here.
 void ny_gc_park(void) {
-    if (!t_participating) return;
-
     pthread_mutex_lock(&g_stw_mutex);
-    g_running--;
-    if (g_running == 0) {
-        pthread_cond_broadcast(&g_all_parked);
+    if (t_park_depth++ == 0) {
+        to_parked();
     }
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
 void ny_gc_unpark(void) {
-    if (!t_participating) return;
-
     pthread_mutex_lock(&g_stw_mutex);
-    // Do not resume into a collection that is marking this thread's roots.
-    while (ny_gc_stw_requested) {
-        pthread_cond_wait(&g_resume, &g_stw_mutex);
+    if (t_park_depth > 0 && --t_park_depth == 0) {
+        to_running();
     }
-    g_running++;
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
-// Stop every other participating thread. The caller becomes the collector and
-// is itself treated as parked for the duration, so it never waits on itself.
-// Returns with g_stw_mutex released.
+// Acquire the heap lock from a thread that might be counted as running.
+//
+// Blocking on a mutex is not a safepoint: the collector waits for every
+// running thread to park, and a thread stuck acquiring a lock never reaches a
+// poll. Park across the wait so the handshake can always complete, and only
+// rejoin the running set once the lock is held.
+//
+// The unpark inside cannot deadlock on the collection: ny_gc_collect never
+// holds this lock (the world is stopped, so it does not need to), so the
+// thread that owns it will release it independently of any collection.
+// Take the heap lock without ever blocking on it while a collection wants to
+// run.
+//
+// Parking across the wait is not an option: a parked thread is one the
+// collector may mark and sweep alongside, but a thread holding this lock is
+// mutating the object list. So instead of parking, reach a safepoint first —
+// which yields to any pending collection — and only then contend for the lock.
+// The window between the safepoint and acquiring the lock is bounded: the
+// collector holds this same lock, so a collection that starts in that window
+// simply makes this thread wait until it finishes.
+static void heap_lock(void) {
+    ny_gc_safepoint();
+    pthread_mutex_lock(&g_heap_mutex);
+}
+
+static void heap_unlock(void) {
+    pthread_mutex_unlock(&g_heap_mutex);
+}
+
+
+// Stop every other participating thread. The collector stays parked for the
+// whole call — including while waiting its turn behind another collection —
+// so two threads that both want to collect can never wait on each other.
 static void stw_begin(void) {
     pthread_mutex_lock(&g_stw_mutex);
 
-    // Only one collection at a time: wait out any that is already running.
+    to_parked();
     while (ny_gc_stw_requested) {
         pthread_cond_wait(&g_resume, &g_stw_mutex);
     }
-
     ny_gc_stw_requested = 1;
 
-    // The collector does not park itself.
-    if (t_participating) {
-        g_running--;
-    }
     while (g_running > 0) {
         pthread_cond_wait(&g_all_parked, &g_stw_mutex);
     }
+    dbg_check("stw_begin");
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
 static void stw_end(void) {
     pthread_mutex_lock(&g_stw_mutex);
     ny_gc_stw_requested = 0;
-    if (t_participating) {
+    pthread_cond_broadcast(&g_resume);
+    // Rejoin the running set, unless this thread is inside a park bracket —
+    // a blocking site that called into the allocator — in which case the
+    // matching ny_gc_unpark owns that transition.
+    if (t_park_depth == 0 && t_state == NY_PARKED) {
+        t_state = NY_RUNNING;
+        dbg_set_state(NY_RUNNING);
         g_running++;
     }
-    pthread_cond_broadcast(&g_resume);
+    dbg_check("stw_end");
     pthread_mutex_unlock(&g_stw_mutex);
 }
 
@@ -450,8 +553,8 @@ static void sweep(void) {
 // Collection
 // ---------------------------------------------------------------------------
 
-// Caller must hold g_heap_mutex, and every other participating thread must
-// already be parked — see ny_gc_collect, which arranges both.
+// Caller must have stopped the world: every other participating thread parked.
+// That is what makes it safe to touch the heap without holding g_heap_mutex.
 static void gc_collect_locked(void) {
     if (!g_initialized) return;
 
@@ -481,6 +584,10 @@ static void gc_collect_locked(void) {
 void ny_gc_collect(void) {
     stw_begin();
 
+    // The heap lock is still required. Stopping the world parks every thread
+    // running Ny code, but a thread can be inside ny_gc_alloc holding this
+    // lock and linking an object — parked threads are not necessarily idle
+    // with respect to the heap. Marking without it would race with that.
     pthread_mutex_lock(&g_heap_mutex);
     gc_collect_locked();
     pthread_mutex_unlock(&g_heap_mutex);
@@ -493,29 +600,29 @@ void ny_gc_collect(void) {
 // ---------------------------------------------------------------------------
 
 void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
-    // Decide whether to collect without holding the heap lock: ny_gc_collect
-    // needs to stop the world, and doing that while holding g_heap_mutex would
-    // deadlock against threads trying to park.
-    pthread_mutex_lock(&g_heap_mutex);
+    // Every wait for the heap lock happens parked — see heap_lock. Blocking on
+    // a mutex is not a safepoint, so a thread waiting here while counted as
+    // running would stall the handshake until the lock's owner released it.
+    heap_lock();
     gc_init_locked();
     int should_collect = g_heap.bytes_allocated + size > g_heap.threshold;
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
 
     if (should_collect) {
         ny_gc_collect();
     }
 
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     int64_t total = (int64_t)sizeof(NyGcObject) + size;
     NyGcObject *obj = (NyGcObject *)malloc(total);
     if (!obj) {
-        // Try collecting and retrying, again outside the heap lock.
-        pthread_mutex_unlock(&g_heap_mutex);
+        // Retry after a collection, again with the lock released.
+        heap_unlock();
         ny_gc_collect();
-        pthread_mutex_lock(&g_heap_mutex);
+        heap_lock();
         obj = (NyGcObject *)malloc(total);
         if (!obj) {
-            pthread_mutex_unlock(&g_heap_mutex);
+            heap_unlock();
             fprintf(stderr, "ny: out of memory (gc_alloc %lld bytes)\n",
                     (long long)size);
             abort();
@@ -533,7 +640,7 @@ void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
 
     g_heap.bytes_allocated += total;
 
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
     return header_to_payload(obj);
 }
 

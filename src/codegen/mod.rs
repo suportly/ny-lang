@@ -21,7 +21,7 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::types::{BasicType, BasicTypeEnum};
-use inkwell::values::{FunctionValue, InstructionOpcode, PointerValue};
+use inkwell::values::{BasicValue, FunctionValue, InstructionOpcode, PointerValue};
 use inkwell::OptimizationLevel;
 
 use crate::common::{CompileError, NyType, Span};

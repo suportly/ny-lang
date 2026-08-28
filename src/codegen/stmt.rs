@@ -297,6 +297,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Body
                 self.builder.position_at_end(body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
                 self.compile_expr(body, function)?;
                 if self
                     .builder
@@ -374,6 +377,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Body block
                 self.builder.position_at_end(body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
                 self.compile_expr(body, function)?;
                 if self
                     .builder
@@ -490,6 +496,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Body: load element, execute body
                 self.builder.position_at_end(body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
                 // Get element from collection[idx]
                 match &coll_ty {
                     NyType::Array { elem, size } => {
@@ -625,6 +634,9 @@ impl<'ctx> CodeGen<'ctx> {
                 });
 
                 self.builder.position_at_end(loop_body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
 
                 // Build: match expr { pattern => body, _ => break }
                 let break_body = Expr::Block {
@@ -774,6 +786,9 @@ impl<'ctx> CodeGen<'ctx> {
                 });
 
                 self.builder.position_at_end(body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
                 self.compile_expr(body, function)?;
                 if self
                     .builder
@@ -852,6 +867,9 @@ impl<'ctx> CodeGen<'ctx> {
                     .unwrap();
 
                 self.builder.position_at_end(body_bb);
+                // Safepoint on every iteration: bounds how long a loop can keep the
+                // collector waiting for this thread to park.
+                self.emit_gc_safepoint_poll(function);
 
                 let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                 let idx_i64 = self
@@ -1065,6 +1083,10 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder
                     .build_call(sleep_fn, &[i32_ty.const_int(1000, false).into()], "")
                     .unwrap();
+                // This poll loop never reaches a loop back-edge in Ny code, so
+                // it needs its own safepoint or a select would stall the
+                // collector for as long as it waits.
+                self.emit_gc_safepoint_poll(function);
                 self.builder.build_unconditional_branch(poll_bb).unwrap();
 
                 self.builder.position_at_end(merge_bb);

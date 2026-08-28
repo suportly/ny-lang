@@ -816,6 +816,11 @@ fn test_gc_concurrent() {
     assert_eq!(compile_and_run("gc_concurrent.ny"), 42);
 }
 
+#[test]
+fn test_gc_safepoint() {
+    assert_eq!(compile_and_run("gc_safepoint.ny"), 42);
+}
+
 // Phase 27 — dyn Trait
 
 #[test]

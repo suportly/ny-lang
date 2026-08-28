@@ -1,7 +1,7 @@
 // Ny Lang runtime: tracing mark-and-sweep garbage collector
 //
-// Design: mark-and-sweep with per-thread shadow stacks. Not stop-the-world;
-// see gc.c for the synchronisation model and its limits.
+// Design: stop-the-world mark-and-sweep with per-thread shadow stacks and
+// safepoint polling; see gc.c for the synchronisation model.
 //
 // Usage from Ny code:
 //   p := gc_alloc(sizeof(Point));   // GC-managed allocation
@@ -82,6 +82,34 @@ void ny_gc_collect(void);
 // Push a root pointer onto the shadow stack (called at function entry
 // or when a local variable receives a GC pointer).
 void ny_gc_root_push(void **slot);
+
+// ---------------------------------------------------------------------------
+// Safepoints — stop-the-world handshake
+// ---------------------------------------------------------------------------
+//
+// A collection may only mark while every mutator thread is parked at a known
+// point. Generated code polls this flag on loop back-edges and function
+// entries; when it is set, the thread calls ny_gc_safepoint() and blocks until
+// the collection finishes.
+//
+// Read directly by generated code, so it is plain (not atomic): the poll is a
+// load and a branch on the hot path. A thread that observes a stale 0 simply
+// polls again at its next safepoint, and the collector waits for it.
+extern volatile int ny_gc_stw_requested;
+
+// Park the calling thread until any in-progress collection completes.
+// Called from generated code when the poll above sees a request.
+void ny_gc_safepoint(void);
+
+// Mark the calling thread as parked around a blocking operation it cannot
+// poll from — a channel receive, a join, a sleep. A parked thread does not
+// hold up a collection; its shadow stack stays registered and is still
+// scanned, which is safe precisely because it is not running Ny code.
+//
+// Every ny_gc_park() must be matched by ny_gc_unpark(), which waits for any
+// collection in progress before letting the thread run again.
+void ny_gc_park(void);
+void ny_gc_unpark(void);
 
 // Pop `n` roots from the shadow stack (called at function exit).
 void ny_gc_root_pop(int64_t n);

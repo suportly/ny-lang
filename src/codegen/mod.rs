@@ -446,6 +446,50 @@ impl<'ctx> CodeGen<'ctx> {
         self.gc_root_count += 1;
     }
 
+    /// Emit a GC safepoint poll: load the stop-the-world flag and, if set,
+    /// call into the runtime to park until the collection finishes.
+    ///
+    /// The load is volatile so LLVM cannot hoist it out of the loop it guards
+    /// — the whole point is to observe a store made by another thread. The
+    /// cost on the hot path is one load, a compare and a not-taken branch.
+    ///
+    /// Emitted on loop back-edges, which bounds how long a spinning thread can
+    /// delay a collection. Straight-line code needs no poll: it either returns
+    /// or reaches a loop or a call that has one.
+    pub(super) fn emit_gc_safepoint_poll(&mut self, function: &FunctionValue<'ctx>) {
+        let flag = self.get_or_declare_ny_gc_stw_flag();
+        let i32_ty = self.context.i32_type();
+
+        let load = self
+            .builder
+            .build_load(i32_ty, flag.as_pointer_value(), "stw_flag")
+            .unwrap();
+        load.as_instruction_value().unwrap().set_volatile(true).ok();
+
+        let requested = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                load.into_int_value(),
+                i32_ty.const_zero(),
+                "stw_requested",
+            )
+            .unwrap();
+
+        let park_bb = self.context.append_basic_block(*function, "gc_park");
+        let cont_bb = self.context.append_basic_block(*function, "gc_cont");
+        self.builder
+            .build_conditional_branch(requested, park_bb, cont_bb)
+            .unwrap();
+
+        self.builder.position_at_end(park_bb);
+        let safepoint = self.get_or_declare_ny_gc_safepoint();
+        self.builder.build_call(safepoint, &[], "").unwrap();
+        self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+        self.builder.position_at_end(cont_bb);
+    }
+
     /// Release every GC root this function pushed. Emitted before each `ret`.
     pub(super) fn emit_gc_root_pop(&self) {
         if self.gc_root_count == 0 {

@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include "gc.h"
 #include <pthread.h>
 
 typedef struct {
@@ -50,8 +51,14 @@ NyChan *ny_chan_new(int32_t capacity, int64_t elem_size) {
 // `value_ptr` points to the data to copy (elem_size bytes).
 void ny_chan_send(NyChan *ch, const void *value_ptr) {
     pthread_mutex_lock(&ch->mutex);
-    while (ch->count == ch->capacity && !ch->closed) {
-        pthread_cond_wait(&ch->not_full, &ch->mutex);
+    if (ch->count == ch->capacity && !ch->closed) {
+        // Blocking here cannot reach a safepoint poll, so tell the collector
+        // this thread is parked for the duration.
+        ny_gc_park();
+        while (ch->count == ch->capacity && !ch->closed) {
+            pthread_cond_wait(&ch->not_full, &ch->mutex);
+        }
+        ny_gc_unpark();
     }
     if (ch->closed) {
         pthread_mutex_unlock(&ch->mutex);
@@ -68,8 +75,12 @@ void ny_chan_send(NyChan *ch, const void *value_ptr) {
 // Copies elem_size bytes into `out_ptr`.
 void ny_chan_recv(NyChan *ch, void *out_ptr) {
     pthread_mutex_lock(&ch->mutex);
-    while (ch->count == 0 && !ch->closed) {
-        pthread_cond_wait(&ch->not_empty, &ch->mutex);
+    if (ch->count == 0 && !ch->closed) {
+        ny_gc_park();
+        while (ch->count == 0 && !ch->closed) {
+            pthread_cond_wait(&ch->not_empty, &ch->mutex);
+        }
+        ny_gc_unpark();
     }
     if (ch->count == 0 && ch->closed) {
         memset(out_ptr, 0, ch->elem_size);

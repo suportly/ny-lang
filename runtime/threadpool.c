@@ -2,6 +2,7 @@
 // Work queue with pthread mutex + condvar
 
 #include <stdlib.h>
+#include "gc.h"
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
@@ -35,8 +36,15 @@ static void *worker_thread(void *arg) {
     NyPool *pool = (NyPool *)arg;
     while (1) {
         pthread_mutex_lock(&pool->mutex);
-        while (pool->queue_count == 0 && !pool->shutdown) {
-            pthread_cond_wait(&pool->work_available, &pool->mutex);
+        if (pool->queue_count == 0 && !pool->shutdown) {
+            // An idle worker waits here indefinitely. Once it has run a
+            // goroutine it participates in the GC handshake, so without
+            // parking it would block every later collection forever.
+            ny_gc_park();
+            while (pool->queue_count == 0 && !pool->shutdown) {
+                pthread_cond_wait(&pool->work_available, &pool->mutex);
+            }
+            ny_gc_unpark();
         }
         if (pool->shutdown && pool->queue_count == 0) {
             pthread_mutex_unlock(&pool->mutex);
@@ -105,8 +113,12 @@ void ny_pool_submit_arg(NyPool *pool, void *(*fn)(void *), void *arg) {
 
 void ny_pool_wait(NyPool *pool) {
     pthread_mutex_lock(&pool->mutex);
-    while (pool->queue_count > 0 || pool->active_count > 0) {
-        pthread_cond_wait(&pool->all_done, &pool->mutex);
+    if (pool->queue_count > 0 || pool->active_count > 0) {
+        ny_gc_park();
+        while (pool->queue_count > 0 || pool->active_count > 0) {
+            pthread_cond_wait(&pool->all_done, &pool->mutex);
+        }
+        ny_gc_unpark();
     }
     pthread_mutex_unlock(&pool->mutex);
 }

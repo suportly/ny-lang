@@ -1,6 +1,7 @@
 // Ny Lang runtime: async/await — Future<T> backed by thread pool
 
 #include <stdlib.h>
+#include "gc.h"
 #include <stdint.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -69,8 +70,12 @@ void ny_future_signal(NyFuture *f, int64_t result) {
 
 int64_t ny_future_await(NyFuture *f) {
     pthread_mutex_lock(&f->mutex);
-    while (!f->done) {
-        pthread_cond_wait(&f->cond, &f->mutex);
+    if (!f->done) {
+        ny_gc_park();
+        while (!f->done) {
+            pthread_cond_wait(&f->cond, &f->mutex);
+        }
+        ny_gc_unpark();
     }
     int64_t result = f->result;
     pthread_mutex_unlock(&f->mutex);

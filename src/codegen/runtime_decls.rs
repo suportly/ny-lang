@@ -950,6 +950,24 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.add_function("ny_gc_alloc", fn_ty, None)
     }
 
+    pub(super) fn get_or_declare_ny_gc_stw_flag(&self) -> inkwell::values::GlobalValue<'ctx> {
+        if let Some(g) = self.module.get_global("ny_gc_stw_requested") {
+            return g;
+        }
+        let i32_ty = self.context.i32_type();
+        let g = self.module.add_global(i32_ty, None, "ny_gc_stw_requested");
+        g.set_linkage(inkwell::module::Linkage::External);
+        g
+    }
+
+    pub(super) fn get_or_declare_ny_gc_safepoint(&self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("ny_gc_safepoint") {
+            return f;
+        }
+        let fn_ty = self.context.void_type().fn_type(&[], false);
+        self.module.add_function("ny_gc_safepoint", fn_ty, None)
+    }
+
     pub(super) fn get_or_declare_ny_gc_root_push(&self) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function("ny_gc_root_push") {
             return f;

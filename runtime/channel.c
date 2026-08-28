@@ -2,6 +2,7 @@
 // Ring buffer with pthread mutex + condvar for blocking send/recv
 
 #include <stdlib.h>
+#include "gc.h"
 #include <stdint.h>
 #include <pthread.h>
 #include <time.h>
@@ -35,8 +36,13 @@ NyChannel *ny_channel_new(int32_t capacity) {
 
 void ny_channel_send(NyChannel *ch, int32_t value) {
     pthread_mutex_lock(&ch->mutex);
-    while (ch->count == ch->capacity && !ch->closed) {
-        pthread_cond_wait(&ch->not_full, &ch->mutex);
+    if (ch->count == ch->capacity && !ch->closed) {
+        // Cannot reach a safepoint poll while blocked here.
+        ny_gc_park();
+        while (ch->count == ch->capacity && !ch->closed) {
+            pthread_cond_wait(&ch->not_full, &ch->mutex);
+        }
+        ny_gc_unpark();
     }
     if (ch->closed) {
         pthread_mutex_unlock(&ch->mutex);
@@ -51,8 +57,12 @@ void ny_channel_send(NyChannel *ch, int32_t value) {
 
 int32_t ny_channel_recv(NyChannel *ch) {
     pthread_mutex_lock(&ch->mutex);
-    while (ch->count == 0 && !ch->closed) {
-        pthread_cond_wait(&ch->not_empty, &ch->mutex);
+    if (ch->count == 0 && !ch->closed) {
+        ny_gc_park();
+        while (ch->count == 0 && !ch->closed) {
+            pthread_cond_wait(&ch->not_empty, &ch->mutex);
+        }
+        ny_gc_unpark();
     }
     if (ch->count == 0 && ch->closed) {
         pthread_mutex_unlock(&ch->mutex);

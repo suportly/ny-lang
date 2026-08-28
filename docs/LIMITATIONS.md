@@ -14,9 +14,11 @@ Honest documentation of current constraints. These are design decisions and impl
 
 **GC is mark-and-sweep, not generational.** Pauses are proportional to heap size, and `find_object` scans the object list linearly for every marked pointer, so marking is O(n²) in the number of live objects. For latency-sensitive workloads with large heaps (>100MB), consider manual `alloc`/`free` with `defer`.
 
-**The collector is not stop-the-world.** A global mutex keeps the heap structures consistent — concurrent allocations cannot corrupt the object list, and each thread has its own shadow stack, so one thread's roots are never popped by another. But other threads keep running Ny code while a collection marks. If a thread stores a freshly allocated pointer into an already-marked object during the mark, that object can be swept, because nothing re-scans it.
+**Collections are stop-the-world, via safepoint polling.** Generated code polls a flag on every loop back-edge; when a collection is requested, the thread parks until it finishes. Runtime operations that block without reaching a poll — channel send and receive, `await`, pool waits, idle pool workers — mark themselves parked for the duration, so they never hold up a collection.
 
-Closing this window requires safepoints: the codegen must emit polls so every thread can be parked at a known point before marking begins. Until that exists, a program that uses `go` together with `new` carries a small risk of a collection freeing a live object. Single-threaded programs are unaffected — the whole collection runs on the only thread there is.
+The cost of the poll on the hot path is a volatile load, a compare and a not-taken branch per loop iteration.
+
+**Safepoint latency is bounded by loops, not by time.** A thread only parks when it reaches a loop back-edge, so a long stretch of straight-line code or a deep non-looping call chain delays a collection until it finishes. There is no preemption, no poll on function entry, and no time-based fallback — the collector simply waits. In practice this matters for compute-heavy code with no inner loop; Go had the same behaviour before its 1.14 asynchronous preemption.
 
 **No escape analysis.** `new Type { ... }` always allocates on the GC heap. The compiler does not promote small, non-escaping allocations to the stack. This means `new` has overhead even for short-lived objects.
 

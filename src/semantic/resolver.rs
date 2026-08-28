@@ -216,6 +216,17 @@ impl Resolver {
     pub fn resolve(program: &Program) -> Result<ResolvedInfo, Vec<CompileError>> {
         let mut resolver = Resolver::new();
 
+        // ---- Pass 0: Register type aliases that resolve without structs ----
+        // Struct fields may reference aliases (`struct P { score: Score }`),
+        // so aliases to primitives must be known before Pass 1 runs.
+        for item in &program.items {
+            if let Item::TypeAlias { name, target, .. } = item {
+                if let Some(ty) = resolver.resolve_type_annotation(target) {
+                    resolver.type_aliases.insert(name.clone(), ty);
+                }
+            }
+        }
+
         // ---- Pass 1: Register all struct definitions ----
         for item in &program.items {
             if let Item::StructDef {
@@ -278,11 +289,16 @@ impl Resolver {
             }
         }
 
-        // ---- Pass 1b: Register type aliases ----
+
+        // ---- Pass 1b: Register type aliases that point at structs ----
+        // These could not resolve in Pass 0 because the struct was not
+        // registered yet (e.g. `type Point2D = Vec2;`).
         for item in &program.items {
             if let Item::TypeAlias { name, target, .. } = item {
-                if let Some(ty) = resolver.resolve_type_annotation(target) {
-                    resolver.type_aliases.insert(name.clone(), ty);
+                if !resolver.type_aliases.contains_key(name) {
+                    if let Some(ty) = resolver.resolve_type_annotation(target) {
+                        resolver.type_aliases.insert(name.clone(), ty);
+                    }
                 }
             }
         }

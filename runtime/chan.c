@@ -51,17 +51,18 @@ NyChan *ny_chan_new(int32_t capacity, int64_t elem_size) {
 // `value_ptr` points to the data to copy (elem_size bytes).
 void ny_chan_send(NyChan *ch, const void *value_ptr) {
     pthread_mutex_lock(&ch->mutex);
+    // See ny_chan_recv for why the unpark happens after the unlock.
+    int parked = 0;
     if (ch->count == ch->capacity && !ch->closed) {
-        // Blocking here cannot reach a safepoint poll, so tell the collector
-        // this thread is parked for the duration.
         ny_gc_park();
+        parked = 1;
         while (ch->count == ch->capacity && !ch->closed) {
             pthread_cond_wait(&ch->not_full, &ch->mutex);
         }
-        ny_gc_unpark();
     }
     if (ch->closed) {
         pthread_mutex_unlock(&ch->mutex);
+        if (parked) ny_gc_unpark();
         return;
     }
     memcpy(ch->buffer + (int64_t)ch->tail * ch->elem_size, value_ptr, ch->elem_size);
@@ -69,22 +70,29 @@ void ny_chan_send(NyChan *ch, const void *value_ptr) {
     ch->count++;
     pthread_cond_signal(&ch->not_empty);
     pthread_mutex_unlock(&ch->mutex);
+    if (parked) ny_gc_unpark();
 }
 
 // Receive a value from the channel. Blocks if empty.
 // Copies elem_size bytes into `out_ptr`.
 void ny_chan_recv(NyChan *ch, void *out_ptr) {
     pthread_mutex_lock(&ch->mutex);
+
+    // Parked for the wait: this thread cannot reach a safepoint poll while
+    // blocked, so the collector must not count it as running.
+    int parked = 0;
     if (ch->count == 0 && !ch->closed) {
         ny_gc_park();
+        parked = 1;
         while (ch->count == 0 && !ch->closed) {
             pthread_cond_wait(&ch->not_empty, &ch->mutex);
         }
-        ny_gc_unpark();
     }
+
     if (ch->count == 0 && ch->closed) {
         memset(out_ptr, 0, ch->elem_size);
         pthread_mutex_unlock(&ch->mutex);
+        if (parked) ny_gc_unpark();
         return;
     }
     memcpy(out_ptr, ch->buffer + (int64_t)ch->head * ch->elem_size, ch->elem_size);
@@ -92,6 +100,12 @@ void ny_chan_recv(NyChan *ch, void *out_ptr) {
     ch->count--;
     pthread_cond_signal(&ch->not_full);
     pthread_mutex_unlock(&ch->mutex);
+
+    // Unpark only after releasing ch->mutex: ny_gc_unpark blocks until any
+    // collection finishes, and holding a channel lock across that wait would
+    // strand a thread that needs it — which then never reaches a safepoint,
+    // leaving the collector waiting on it forever.
+    if (parked) ny_gc_unpark();
 }
 
 // Close the channel. Wakes all waiting senders/receivers.

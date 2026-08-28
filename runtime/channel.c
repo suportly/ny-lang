@@ -36,16 +36,20 @@ NyChannel *ny_channel_new(int32_t capacity) {
 
 void ny_channel_send(NyChannel *ch, int32_t value) {
     pthread_mutex_lock(&ch->mutex);
+    // Cannot reach a safepoint poll while blocked here. The unpark happens
+    // after ch->mutex is released: it waits out any collection, and holding a
+    // channel lock across that wait would strand another thread on it.
+    int parked = 0;
     if (ch->count == ch->capacity && !ch->closed) {
-        // Cannot reach a safepoint poll while blocked here.
         ny_gc_park();
+        parked = 1;
         while (ch->count == ch->capacity && !ch->closed) {
             pthread_cond_wait(&ch->not_full, &ch->mutex);
         }
-        ny_gc_unpark();
     }
     if (ch->closed) {
         pthread_mutex_unlock(&ch->mutex);
+        if (parked) ny_gc_unpark();
         return;
     }
     ch->buffer[ch->tail] = value;
@@ -53,19 +57,22 @@ void ny_channel_send(NyChannel *ch, int32_t value) {
     ch->count++;
     pthread_cond_signal(&ch->not_empty);
     pthread_mutex_unlock(&ch->mutex);
+    if (parked) ny_gc_unpark();
 }
 
 int32_t ny_channel_recv(NyChannel *ch) {
     pthread_mutex_lock(&ch->mutex);
+    int parked = 0;
     if (ch->count == 0 && !ch->closed) {
         ny_gc_park();
+        parked = 1;
         while (ch->count == 0 && !ch->closed) {
             pthread_cond_wait(&ch->not_empty, &ch->mutex);
         }
-        ny_gc_unpark();
     }
     if (ch->count == 0 && ch->closed) {
         pthread_mutex_unlock(&ch->mutex);
+        if (parked) ny_gc_unpark();
         return 0; // sentinel for closed channel
     }
     int32_t value = ch->buffer[ch->head];
@@ -73,6 +80,7 @@ int32_t ny_channel_recv(NyChannel *ch) {
     ch->count--;
     pthread_cond_signal(&ch->not_full);
     pthread_mutex_unlock(&ch->mutex);
+    if (parked) ny_gc_unpark();
     return value;
 }
 

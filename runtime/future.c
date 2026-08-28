@@ -70,15 +70,19 @@ void ny_future_signal(NyFuture *f, int64_t result) {
 
 int64_t ny_future_await(NyFuture *f) {
     pthread_mutex_lock(&f->mutex);
+    // Unpark after the unlock: it waits out any collection, and holding
+    // f->mutex across that wait would strand a thread that needs it.
+    int parked = 0;
     if (!f->done) {
         ny_gc_park();
+        parked = 1;
         while (!f->done) {
             pthread_cond_wait(&f->cond, &f->mutex);
         }
-        ny_gc_unpark();
     }
     int64_t result = f->result;
     pthread_mutex_unlock(&f->mutex);
+    if (parked) ny_gc_unpark();
     return result;
 }
 

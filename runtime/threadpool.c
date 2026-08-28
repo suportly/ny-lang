@@ -36,18 +36,21 @@ static void *worker_thread(void *arg) {
     NyPool *pool = (NyPool *)arg;
     while (1) {
         pthread_mutex_lock(&pool->mutex);
+        // An idle worker waits here indefinitely. Once it has run a goroutine
+        // it participates in the GC handshake, so without parking it would
+        // block every later collection forever. The unpark is deferred until
+        // pool->mutex is released, for the reason given in ny_chan_recv.
+        int parked = 0;
         if (pool->queue_count == 0 && !pool->shutdown) {
-            // An idle worker waits here indefinitely. Once it has run a
-            // goroutine it participates in the GC handshake, so without
-            // parking it would block every later collection forever.
             ny_gc_park();
+            parked = 1;
             while (pool->queue_count == 0 && !pool->shutdown) {
                 pthread_cond_wait(&pool->work_available, &pool->mutex);
             }
-            ny_gc_unpark();
         }
         if (pool->shutdown && pool->queue_count == 0) {
             pthread_mutex_unlock(&pool->mutex);
+            if (parked) ny_gc_unpark();
             return NULL;
         }
         // Dequeue work item
@@ -56,6 +59,7 @@ static void *worker_thread(void *arg) {
         pool->queue_count--;
         pool->active_count++;
         pthread_mutex_unlock(&pool->mutex);
+        if (parked) ny_gc_unpark();
 
         // Execute
         item.fn(item.arg);
@@ -113,14 +117,17 @@ void ny_pool_submit_arg(NyPool *pool, void *(*fn)(void *), void *arg) {
 
 void ny_pool_wait(NyPool *pool) {
     pthread_mutex_lock(&pool->mutex);
+    int parked = 0;
     if (pool->queue_count > 0 || pool->active_count > 0) {
         ny_gc_park();
+        parked = 1;
         while (pool->queue_count > 0 || pool->active_count > 0) {
             pthread_cond_wait(&pool->all_done, &pool->mutex);
         }
-        ny_gc_unpark();
     }
     pthread_mutex_unlock(&pool->mutex);
+    // Unpark after the unlock; see ny_chan_recv for the reasoning.
+    if (parked) ny_gc_unpark();
 }
 
 void ny_pool_free(NyPool *pool) {

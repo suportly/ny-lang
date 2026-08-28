@@ -182,7 +182,7 @@ impl SimpleTypeEnv {
                 LitValue::Nil => Some(NyType::Pointer(Box::new(NyType::U8))),
             },
             Expr::Ident { name, .. } => self.vars.get(name).cloned(),
-            Expr::Call { callee: _, .. } => {
+            Expr::Call { .. } => {
                 // If calling a known non-generic function, we'd need its return type
                 // For now, fall back to None
                 None

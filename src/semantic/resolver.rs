@@ -218,12 +218,16 @@ impl Resolver {
 
         // ---- Pass 0: Register type aliases that resolve without structs ----
         // Struct fields may reference aliases (`struct P { score: Score }`),
-        // so aliases to primitives must be known before Pass 1 runs.
+        // so aliases to primitives must be known before Pass 1 runs. An alias
+        // targeting a struct cannot resolve yet; Pass 1b picks those up, so
+        // errors raised here are speculative and get discarded.
         for item in &program.items {
             if let Item::TypeAlias { name, target, .. } = item {
+                let errors_before = resolver.errors.len();
                 if let Some(ty) = resolver.resolve_type_annotation(target) {
                     resolver.type_aliases.insert(name.clone(), ty);
                 }
+                resolver.errors.truncate(errors_before);
             }
         }
 

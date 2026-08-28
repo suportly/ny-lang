@@ -405,6 +405,9 @@ impl<'ctx> CodeGen<'ctx> {
         if !Self::ty_holds_gc_pointer(ty) {
             return;
         }
+        // TEMPORARY: disable root registration to prove the tests catch it.
+        #[allow(clippy::needless_return)]
+        return;
 
         // Both the null-init and the push go at the top of the entry block,
         // right after the allocas: they must run once per frame, be dominated

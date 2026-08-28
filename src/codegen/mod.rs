@@ -402,12 +402,10 @@ impl<'ctx> CodeGen<'ctx> {
     /// released together by `emit_gc_root_pop` at each exit point, which keeps
     /// the pop count correct on early returns.
     pub(super) fn push_gc_root(&mut self, slot: PointerValue<'ctx>, ty: &NyType) {
-        if !Self::ty_holds_gc_pointer(ty) {
+        // TEMPORARY: disable root registration to prove the tests catch it.
+        if true || !Self::ty_holds_gc_pointer(ty) {
             return;
         }
-        // TEMPORARY: disable root registration to prove the tests catch it.
-        #[allow(clippy::needless_return)]
-        return;
 
         // Both the null-init and the push go at the top of the entry block,
         // right after the allocas: they must run once per frame, be dominated

@@ -2,7 +2,6 @@
 //
 // Design: mark-and-sweep with per-thread shadow stacks. Not stop-the-world;
 // see gc.c for the synchronisation model and its limits.
-// Inspired by Go's original GC — simple, correct, predictable.
 //
 // Usage from Ny code:
 //   p := gc_alloc(sizeof(Point));   // GC-managed allocation

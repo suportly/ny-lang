@@ -71,8 +71,9 @@ impl<'ctx> CodeGen<'ctx> {
                 };
 
                 let llvm_ty = ny_to_llvm(self.context, &ny_ty);
-                let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                let alloca = self.build_entry_alloca(llvm_ty, name);
                 self.builder.build_store(alloca, val).unwrap();
+                self.push_gc_root(alloca, &ny_ty);
                 self.variables.insert(name.clone(), (alloca, ny_ty.clone()));
 
                 // Fix Vec<T> elem_size: vec_new() hardcodes elem_size=8,
@@ -184,8 +185,9 @@ impl<'ctx> CodeGen<'ctx> {
                     self.infer_expr_type(value)
                 };
                 let llvm_ty = ny_to_llvm(self.context, &ny_ty);
-                let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                let alloca = self.build_entry_alloca(llvm_ty, name);
                 self.builder.build_store(alloca, val).unwrap();
+                self.push_gc_root(alloca, &ny_ty);
                 self.variables.insert(name.clone(), (alloca, ny_ty));
                 Ok(())
             }
@@ -213,6 +215,8 @@ impl<'ctx> CodeGen<'ctx> {
                     self.compile_expr(defer_body, defer_fn)?;
                 }
 
+                // Release GC roots before return
+                self.emit_gc_root_pop();
                 // Pop trace stack before return (debug only)
                 if self.opt_level < 2 {
                     let trace_pop = self.get_or_declare_ny_trace_pop();
@@ -694,9 +698,10 @@ impl<'ctx> CodeGen<'ctx> {
                     // Then: bind unwrapped value
                     self.builder.position_at_end(then_bb);
                     let inner_llvm = ny_to_llvm(self.context, &inner_ty);
-                    let alloca = self.builder.build_alloca(inner_llvm, name).unwrap();
+                    let alloca = self.build_entry_alloca(inner_llvm, name);
                     self.builder.build_store(alloca, ptr).unwrap();
                     let outer_vars = self.variables.clone();
+                    self.push_gc_root(alloca, &inner_ty);
                     self.variables.insert(name.clone(), (alloca, inner_ty));
                     self.compile_expr(then_body, function)?;
                     self.variables = outer_vars;
@@ -1089,8 +1094,9 @@ impl<'ctx> CodeGen<'ctx> {
                         .unwrap();
                     let elem_ty = elem_types.get(i).cloned().unwrap_or(NyType::I32);
                     let llvm_ty = ny_to_llvm(self.context, &elem_ty);
-                    let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                    let alloca = self.build_entry_alloca(llvm_ty, name);
                     self.builder.build_store(alloca, elem_val).unwrap();
+                    self.push_gc_root(alloca, &elem_ty);
                     self.variables.insert(name.clone(), (alloca, elem_ty));
                 }
                 Ok(())

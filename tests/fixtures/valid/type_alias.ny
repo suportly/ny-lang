@@ -15,7 +15,16 @@ fn count_items(n: Count) -> Count {
     return n * 2;
 }
 
+// Aliases must resolve inside struct fields too
+struct Player {
+    score: Count,
+    dist: Meters,
+}
+
 fn main() -> i32 {
+    pl := Player { score: 10, dist: 1.5 };
+    if pl.score != 10 { return 1; }
+
     d : Meters = 3.14;
     e : Meters = 2.86;
     total := distance(d, e);

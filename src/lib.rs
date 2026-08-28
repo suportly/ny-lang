@@ -6,7 +6,6 @@
     clippy::unnecessary_filter_map
 )]
 
-pub mod cdp;
 pub mod codegen;
 pub mod common;
 pub mod diagnostics;
@@ -160,13 +159,16 @@ fn resolve_uses(
                 extra_search_paths,
             )?;
 
+            // Merge all items from the module (later: filter by pub)
             new_items.extend(module_program.items);
         } else {
             remaining_items.push(item);
         }
     }
 
-    program.items = remaining_items;
-    program.items.extend(new_items);
+    // Put imported items first, then the original items
+    new_items.extend(remaining_items);
+    program.items = new_items;
+
     Ok(())
 }

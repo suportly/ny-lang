@@ -6247,10 +6247,11 @@ impl<'ctx> CodeGen<'ctx> {
                 // Set up captured variables as params
                 for (i, (name, ty)) in captures.iter().enumerate() {
                     let llvm_ty = ny_to_llvm(self.context, ty);
-                    let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+                    let alloca = self.build_entry_alloca(llvm_ty, name);
                     self.builder
                         .build_store(alloca, lambda_fn.get_nth_param(i as u32).unwrap())
                         .unwrap();
+                    self.push_gc_root(alloca, ty);
                     self.variables.insert(name.clone(), (alloca, ty.clone()));
                 }
 

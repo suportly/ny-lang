@@ -21,7 +21,7 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::types::{BasicType, BasicTypeEnum};
-use inkwell::values::{FunctionValue, PointerValue};
+use inkwell::values::{FunctionValue, InstructionOpcode, PointerValue};
 use inkwell::OptimizationLevel;
 
 use crate::common::{CompileError, NyType, Span};
@@ -52,6 +52,7 @@ pub fn generate(
         enum_variants: HashMap::new(),
         loop_stack: Vec::new(),
         defer_stack: Vec::new(),
+        gc_root_count: 0,
         closure_captures: HashMap::new(),
         opt_level,
         trait_defs: HashMap::new(),
@@ -336,6 +337,9 @@ pub(crate) struct CodeGen<'ctx> {
     pub(super) loop_stack: Vec<LoopFrame<'ctx>>,
     /// Stack of deferred expressions per function scope
     pub(super) defer_stack: Vec<(Expr, FunctionValue<'ctx>)>,
+    /// Number of GC roots pushed by the function currently being compiled.
+    /// Emitted as a single `ny_gc_root_pop(n)` at every exit point.
+    pub(super) gc_root_count: i64,
     /// Closure captures: closure_var_name → (lambda_fn_name, capture_alloca_names)
     pub(super) closure_captures: HashMap<String, (String, Vec<(String, NyType)>)>,
     /// Optimization level (0-3). At O2+, skip bounds checks and stack traces.
@@ -351,6 +355,101 @@ pub(crate) struct CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> {
+    // ------------------------------------------------------------------
+    // GC shadow stack
+    // ------------------------------------------------------------------
+
+    /// True if a value of this type can hold a pointer into the GC heap,
+    /// and therefore has to keep the object it points at alive.
+    pub(super) fn ty_holds_gc_pointer(ty: &NyType) -> bool {
+        matches!(ty, NyType::Pointer(_) | NyType::Optional(_))
+    }
+
+    /// Allocate a local slot in the function's entry block.
+    ///
+    /// Declarations inside a loop body would otherwise emit their alloca there,
+    /// growing the frame on every iteration and — for GC roots — leaving the
+    /// registered slot unreachable from the entry block. Entry-block allocas are
+    /// the canonical LLVM shape and run exactly once per frame.
+    pub(super) fn build_entry_alloca(
+        &self,
+        llvm_ty: BasicTypeEnum<'ctx>,
+        name: &str,
+    ) -> PointerValue<'ctx> {
+        let current = self.builder.get_insert_block().unwrap();
+        let entry = current.get_parent().unwrap().get_first_basic_block().unwrap();
+        match entry.get_first_instruction() {
+            Some(first) => self.builder.position_before(&first),
+            None => self.builder.position_at_end(entry),
+        }
+        let alloca = self.builder.build_alloca(llvm_ty, name).unwrap();
+        self.builder.position_at_end(current);
+        alloca
+    }
+
+    /// Register a local slot as a GC root so a collection triggered while the
+    /// function is live can still reach the object the slot points at.
+    ///
+    /// The slot itself is registered, not the value in it, so a later
+    /// assignment to the variable is picked up automatically — the collector
+    /// reads whatever the slot holds at collection time.
+    ///
+    /// Roots stay on the shadow stack for the rest of the function and are
+    /// released together by `emit_gc_root_pop` at each exit point, which keeps
+    /// the pop count correct on early returns.
+    pub(super) fn push_gc_root(&mut self, slot: PointerValue<'ctx>, ty: &NyType) {
+        if !Self::ty_holds_gc_pointer(ty) {
+            return;
+        }
+
+        // Both the null-init and the push go at the top of the entry block,
+        // right after the allocas: they must run once per frame, be dominated
+        // by the slot, and — critically — precede the declaration's own store,
+        // which may sit in this very block. Anchoring at the end would clobber
+        // that store with the null whenever the declaration is in the entry
+        // block itself.
+        let current = self.builder.get_insert_block().unwrap();
+        let entry = current.get_parent().unwrap().get_first_basic_block().unwrap();
+        // Skip the leading run of allocas and anchor on the first instruction
+        // after them.
+        let mut anchor = entry.get_first_instruction();
+        while let Some(i) = anchor {
+            if i.get_opcode() != InstructionOpcode::Alloca {
+                break;
+            }
+            anchor = i.get_next_instruction();
+        }
+        match anchor {
+            Some(i) => self.builder.position_before(&i),
+            None => self.builder.position_at_end(entry),
+        }
+
+        // Null the slot before registering it: the declaration's store happens
+        // later, and a collection in between would otherwise trace uninitialised
+        // stack memory as if it were a pointer.
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        self.builder
+            .build_store(slot, ptr_ty.const_null())
+            .unwrap();
+        let root_push = self.get_or_declare_ny_gc_root_push();
+        self.builder
+            .build_call(root_push, &[slot.into()], "")
+            .unwrap();
+        self.builder.position_at_end(current);
+
+        self.gc_root_count += 1;
+    }
+
+    /// Release every GC root this function pushed. Emitted before each `ret`.
+    pub(super) fn emit_gc_root_pop(&self) {
+        if self.gc_root_count == 0 {
+            return;
+        }
+        let root_pop = self.get_or_declare_ny_gc_root_pop();
+        let n = self.context.i64_type().const_int(self.gc_root_count as u64, false);
+        self.builder.build_call(root_pop, &[n.into()], "").unwrap();
+    }
+
     // ------------------------------------------------------------------
     // Type annotation resolution (mirrors resolver logic, but for codegen)
     // ------------------------------------------------------------------
@@ -826,6 +925,7 @@ impl<'ctx> CodeGen<'ctx> {
             let outer_vars = self.variables.clone();
             self.variables.clear();
             let outer_defers = std::mem::take(&mut self.defer_stack);
+            let outer_gc_roots = std::mem::replace(&mut self.gc_root_count, 0);
 
             for (i, param) in params.iter().enumerate() {
                 let ty = &param_types[i];
@@ -834,6 +934,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder
                     .build_store(alloca, function.get_nth_param(i as u32).unwrap())
                     .unwrap();
+                self.push_gc_root(alloca, ty);
                 self.variables
                     .insert(param.name.clone(), (alloca, ty.clone()));
             }
@@ -847,10 +948,12 @@ impl<'ctx> CodeGen<'ctx> {
                 for (defer_body, defer_fn) in &defers {
                     self.compile_expr(defer_body, defer_fn)?;
                 }
+                self.emit_gc_root_pop();
                 self.builder.build_return(None).unwrap();
             }
 
             self.defer_stack = outer_defers;
+            self.gc_root_count = outer_gc_roots;
             self.variables = outer_vars;
         }
 
@@ -877,6 +980,9 @@ impl<'ctx> CodeGen<'ctx> {
                 // Save outer variables, create fresh scope
                 let outer_vars = self.variables.clone();
                 self.variables.clear();
+                // Reset before parameters: a param holding a GC pointer is a
+                // root too, and its push must be counted for this function.
+                let outer_gc_roots = std::mem::replace(&mut self.gc_root_count, 0);
 
                 // Allocate parameters
                 for (i, param) in params.iter().enumerate() {
@@ -886,6 +992,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .build_store(alloca, function.get_nth_param(i as u32).unwrap())
                         .unwrap();
+                    self.push_gc_root(alloca, ty);
                     self.variables
                         .insert(param.name.clone(), (alloca, ty.clone()));
                 }
@@ -941,6 +1048,8 @@ impl<'ctx> CodeGen<'ctx> {
                     for (defer_body, defer_fn) in &defers {
                         self.compile_expr(defer_body, defer_fn)?;
                     }
+                    // Release GC roots before return
+                    self.emit_gc_root_pop();
                     // Pop trace stack before return (debug only)
                     if self.opt_level < 2 {
                         let trace_pop = self.get_or_declare_ny_trace_pop();
@@ -951,6 +1060,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Restore outer scope and defers
                 self.defer_stack = outer_defers;
+                self.gc_root_count = outer_gc_roots;
                 self.variables = outer_vars;
 
                 // For async functions: generate the public wrapper

@@ -801,6 +801,16 @@ fn test_gc_new() {
     assert_eq!(compile_and_run("gc_new.ny"), 42);
 }
 
+#[test]
+fn test_gc_roots() {
+    assert_eq!(compile_and_run("gc_roots.ny"), 42);
+}
+
+#[test]
+fn test_gc_roots_nested() {
+    assert_eq!(compile_and_run("gc_roots_nested.ny"), 42);
+}
+
 // Phase 27 — dyn Trait
 
 #[test]

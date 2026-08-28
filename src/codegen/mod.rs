@@ -377,7 +377,11 @@ impl<'ctx> CodeGen<'ctx> {
         name: &str,
     ) -> PointerValue<'ctx> {
         let current = self.builder.get_insert_block().unwrap();
-        let entry = current.get_parent().unwrap().get_first_basic_block().unwrap();
+        let entry = current
+            .get_parent()
+            .unwrap()
+            .get_first_basic_block()
+            .unwrap();
         match entry.get_first_instruction() {
             Some(first) => self.builder.position_before(&first),
             None => self.builder.position_at_end(entry),
@@ -409,7 +413,11 @@ impl<'ctx> CodeGen<'ctx> {
         // that store with the null whenever the declaration is in the entry
         // block itself.
         let current = self.builder.get_insert_block().unwrap();
-        let entry = current.get_parent().unwrap().get_first_basic_block().unwrap();
+        let entry = current
+            .get_parent()
+            .unwrap()
+            .get_first_basic_block()
+            .unwrap();
         // Skip the leading run of allocas and anchor on the first instruction
         // after them.
         let mut anchor = entry.get_first_instruction();
@@ -428,9 +436,7 @@ impl<'ctx> CodeGen<'ctx> {
         // later, and a collection in between would otherwise trace uninitialised
         // stack memory as if it were a pointer.
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
-        self.builder
-            .build_store(slot, ptr_ty.const_null())
-            .unwrap();
+        self.builder.build_store(slot, ptr_ty.const_null()).unwrap();
         let root_push = self.get_or_declare_ny_gc_root_push();
         self.builder
             .build_call(root_push, &[slot.into()], "")
@@ -446,7 +452,10 @@ impl<'ctx> CodeGen<'ctx> {
             return;
         }
         let root_pop = self.get_or_declare_ny_gc_root_pop();
-        let n = self.context.i64_type().const_int(self.gc_root_count as u64, false);
+        let n = self
+            .context
+            .i64_type()
+            .const_int(self.gc_root_count as u64, false);
         self.builder.build_call(root_pop, &[n.into()], "").unwrap();
     }
 

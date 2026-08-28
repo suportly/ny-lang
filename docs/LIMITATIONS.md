@@ -12,7 +12,11 @@ Honest documentation of current constraints. These are design decisions and impl
 
 ## Memory Management
 
-**GC is mark-and-sweep, stop-the-world.** No generational collection, no concurrent marking. GC pauses are proportional to heap size. For latency-sensitive workloads with large heaps (>100MB), consider manual `alloc`/`free` with `defer`.
+**GC is mark-and-sweep, not generational.** Pauses are proportional to heap size, and `find_object` scans the object list linearly for every marked pointer, so marking is O(n²) in the number of live objects. For latency-sensitive workloads with large heaps (>100MB), consider manual `alloc`/`free` with `defer`.
+
+**The collector is not stop-the-world.** A global mutex keeps the heap structures consistent — concurrent allocations cannot corrupt the object list, and each thread has its own shadow stack, so one thread's roots are never popped by another. But other threads keep running Ny code while a collection marks. If a thread stores a freshly allocated pointer into an already-marked object during the mark, that object can be swept, because nothing re-scans it.
+
+Closing this window requires safepoints: the codegen must emit polls so every thread can be parked at a known point before marking begins. Until that exists, a program that uses `go` together with `new` carries a small risk of a collection freeing a live object. Single-threaded programs are unaffected — the whole collection runs on the only thread there is.
 
 **No escape analysis.** `new Type { ... }` always allocates on the GC heap. The compiler does not promote small, non-escaping allocations to the stack. This means `new` has overhead even for short-lived objects.
 

@@ -1,7 +1,7 @@
 // Ny Lang runtime: tracing mark-and-sweep garbage collector
 //
-// Design: conservative, stop-the-world, mark-and-sweep with shadow stack.
-// Inspired by Go's original GC — simple, correct, predictable.
+// Design: mark-and-sweep with per-thread shadow stacks. Not stop-the-world;
+// see gc.c for the synchronisation model and its limits.
 //
 // Usage from Ny code:
 //   p := gc_alloc(sizeof(Point));   // GC-managed allocation
@@ -34,13 +34,20 @@ typedef struct NyGcObject {
 // ---------------------------------------------------------------------------
 // Shadow stack — root registration for precise GC roots
 // ---------------------------------------------------------------------------
+//
+// Each thread owns its shadow stack: a thread's roots track its own call
+// stack, so a shared one would let one thread's root_pop drop another's
+// entries. The per-thread stacks are linked into a global list that the
+// collector walks, so a collection sees the roots of every live thread.
 
 #define NY_GC_SHADOW_STACK_MAX 4096
 
-typedef struct {
+typedef struct NyGcShadowStack {
     void **entries;             // array of pointers to GC-managed objects
     int64_t count;
     int64_t capacity;
+    struct NyGcShadowStack *next;  // next registered thread stack
+    int registered;             // 1 once linked into the global list
 } NyGcShadowStack;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +60,7 @@ typedef struct {
     int64_t threshold;          // collect when bytes_allocated > threshold
     int64_t collections;        // number of collections performed
     int64_t total_freed;        // cumulative bytes freed
-    NyGcShadowStack roots;     // shadow stack for GC roots
+    NyGcShadowStack *thread_roots;  // list of every thread's shadow stack
 } NyGcHeap;
 
 // ---------------------------------------------------------------------------

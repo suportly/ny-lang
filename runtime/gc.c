@@ -1,7 +1,10 @@
 // Ny Lang runtime: tracing mark-and-sweep garbage collector
 //
-// A simple, correct, stop-the-world mark-and-sweep collector with a shadow
-// stack for precise root enumeration.
+// A mark-and-sweep collector with per-thread shadow stacks for precise root
+// enumeration. It is NOT stop-the-world: a mutex serialises allocation and
+// collection so the heap structures stay consistent, but mutator threads keep
+// running while a collection marks. See gc_collect_locked for what that costs
+// and what closing the gap would take.
 //
 // Memory layout of a GC-managed object:
 //   [ NyGcObject header | payload (user data) ]
@@ -16,13 +19,39 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
 
 // ---------------------------------------------------------------------------
-// Global heap (single-threaded for now; will add per-thread heaps later)
+// Global heap
 // ---------------------------------------------------------------------------
+//
+// g_heap and everything reachable from it — the object list, the counters and
+// the list of per-thread shadow stacks — are guarded by g_heap_mutex.
+// Allocation and collection both take it, so a collection never runs while
+// another thread is splicing an object into the list.
+//
+// Root push/pop stay off the lock: they only touch the calling thread's own
+// shadow stack. The one exception is the first push on a thread, which links
+// that stack into the global list and does take the lock.
 
 static NyGcHeap g_heap;
 static int g_initialized = 0;
+static pthread_mutex_t g_heap_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Per-thread shadow stack. Zero-initialised, so a thread that never roots
+// anything costs nothing and is never registered.
+static __thread NyGcShadowStack t_roots;
+
+// Key whose only job is to run a destructor when a thread exits, so its
+// shadow stack is unlinked before the thread's storage goes away.
+static pthread_key_t g_thread_exit_key;
+static pthread_once_t g_thread_exit_once = PTHREAD_ONCE_INIT;
+
+static void unregister_thread_roots(void *unused);
+
+static void make_thread_exit_key(void) {
+    pthread_key_create(&g_thread_exit_key, unregister_thread_roots);
+}
 
 // Default threshold: trigger collection after 1MB of allocations
 #define NY_GC_DEFAULT_THRESHOLD (1024 * 1024)
@@ -34,23 +63,31 @@ static int g_initialized = 0;
 // Init / Shutdown
 // ---------------------------------------------------------------------------
 
-void ny_gc_init(void) {
+// Caller must hold g_heap_mutex.
+static void gc_init_locked(void) {
     if (g_initialized) return;
     g_heap.objects = NULL;
     g_heap.bytes_allocated = 0;
     g_heap.threshold = NY_GC_DEFAULT_THRESHOLD;
     g_heap.collections = 0;
     g_heap.total_freed = 0;
-
-    g_heap.roots.capacity = NY_GC_SHADOW_STACK_MAX;
-    g_heap.roots.entries = (void **)calloc(NY_GC_SHADOW_STACK_MAX, sizeof(void *));
-    g_heap.roots.count = 0;
+    g_heap.thread_roots = NULL;
 
     g_initialized = 1;
 }
 
+void ny_gc_init(void) {
+    pthread_mutex_lock(&g_heap_mutex);
+    gc_init_locked();
+    pthread_mutex_unlock(&g_heap_mutex);
+}
+
 void ny_gc_shutdown(void) {
-    if (!g_initialized) return;
+    pthread_mutex_lock(&g_heap_mutex);
+    if (!g_initialized) {
+        pthread_mutex_unlock(&g_heap_mutex);
+        return;
+    }
 
     // Free all remaining objects
     NyGcObject *obj = g_heap.objects;
@@ -60,39 +97,101 @@ void ny_gc_shutdown(void) {
         obj = next;
     }
 
-    free(g_heap.roots.entries);
-    memset(&g_heap, 0, sizeof(g_heap));
+    // Thread shadow stacks are owned by their threads; just drop the list.
+    // Each entries array is released by the thread's exit destructor.
+    g_heap.objects = NULL;
+    g_heap.bytes_allocated = 0;
+    g_heap.collections = 0;
+    g_heap.total_freed = 0;
+    g_heap.thread_roots = NULL;
     g_initialized = 0;
+    pthread_mutex_unlock(&g_heap_mutex);
 }
 
 // ---------------------------------------------------------------------------
 // Shadow stack operations
 // ---------------------------------------------------------------------------
 
-void ny_gc_root_push(void **slot) {
-    if (!g_initialized) ny_gc_init();
+// Unlink a dead thread's shadow stack and release it. Runs as the thread's
+// pthread key destructor, so the collector never walks freed storage.
+static void unregister_thread_roots(void *unused) {
+    (void)unused;
+    if (!t_roots.registered) return;
 
-    if (g_heap.roots.count >= g_heap.roots.capacity) {
-        // Grow shadow stack
-        int64_t new_cap = g_heap.roots.capacity * 2;
-        void **new_entries = (void **)realloc(
-            g_heap.roots.entries, new_cap * sizeof(void *)
-        );
-        if (!new_entries) {
-            fprintf(stderr, "ny: GC shadow stack overflow (%lld roots)\n",
-                    (long long)g_heap.roots.count);
-            abort();
+    pthread_mutex_lock(&g_heap_mutex);
+    NyGcShadowStack **link = &g_heap.thread_roots;
+    while (*link) {
+        if (*link == &t_roots) {
+            *link = t_roots.next;
+            break;
         }
-        g_heap.roots.entries = new_entries;
-        g_heap.roots.capacity = new_cap;
+        link = &(*link)->next;
+    }
+    pthread_mutex_unlock(&g_heap_mutex);
+
+    free(t_roots.entries);
+    t_roots.entries = NULL;
+    t_roots.count = 0;
+    t_roots.capacity = 0;
+    t_roots.next = NULL;
+    t_roots.registered = 0;
+}
+
+// Link this thread's shadow stack into the global list on first use.
+static void register_thread_roots(void) {
+    t_roots.capacity = NY_GC_SHADOW_STACK_MAX;
+    t_roots.entries = (void **)calloc(NY_GC_SHADOW_STACK_MAX, sizeof(void *));
+    if (!t_roots.entries) {
+        fprintf(stderr, "ny: out of memory allocating GC shadow stack\n");
+        abort();
+    }
+    t_roots.count = 0;
+
+    // Arrange for the destructor to run when this thread exits. The value is
+    // only a non-NULL marker; the data itself lives in the __thread struct.
+    pthread_once(&g_thread_exit_once, make_thread_exit_key);
+    pthread_setspecific(g_thread_exit_key, (void *)&t_roots);
+
+    pthread_mutex_lock(&g_heap_mutex);
+    gc_init_locked();
+    t_roots.next = g_heap.thread_roots;
+    g_heap.thread_roots = &t_roots;
+    t_roots.registered = 1;
+    pthread_mutex_unlock(&g_heap_mutex);
+}
+
+void ny_gc_root_push(void **slot) {
+    if (!t_roots.registered) {
+        register_thread_roots();
     }
 
-    g_heap.roots.entries[g_heap.roots.count++] = slot;
+    if (t_roots.count >= t_roots.capacity) {
+        // Grow this thread's shadow stack. The collector reads `entries`
+        // under the heap lock, so swap it there rather than in place.
+        int64_t new_cap = t_roots.capacity * 2;
+        void **new_entries = (void **)malloc(new_cap * sizeof(void *));
+        if (!new_entries) {
+            fprintf(stderr, "ny: GC shadow stack overflow (%lld roots)\n",
+                    (long long)t_roots.count);
+            abort();
+        }
+        memcpy(new_entries, t_roots.entries, t_roots.count * sizeof(void *));
+
+        pthread_mutex_lock(&g_heap_mutex);
+        void **old_entries = t_roots.entries;
+        t_roots.entries = new_entries;
+        t_roots.capacity = new_cap;
+        pthread_mutex_unlock(&g_heap_mutex);
+
+        free(old_entries);
+    }
+
+    t_roots.entries[t_roots.count++] = slot;
 }
 
 void ny_gc_root_pop(int64_t n) {
-    g_heap.roots.count -= n;
-    if (g_heap.roots.count < 0) g_heap.roots.count = 0;
+    t_roots.count -= n;
+    if (t_roots.count < 0) t_roots.count = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,11 +268,14 @@ static void mark_object(void *payload) {
     obj->mark = NY_GC_BLACK;
 }
 
+// Caller must hold g_heap_mutex, which also keeps the thread list stable.
 static void mark_roots(void) {
-    for (int64_t i = 0; i < g_heap.roots.count; i++) {
-        void **slot = (void **)g_heap.roots.entries[i];
-        if (slot && *slot) {
-            mark_object(*slot);
+    for (NyGcShadowStack *st = g_heap.thread_roots; st; st = st->next) {
+        for (int64_t i = 0; i < st->count; i++) {
+            void **slot = (void **)st->entries[i];
+            if (slot && *slot) {
+                mark_object(*slot);
+            }
         }
     }
 }
@@ -210,12 +312,24 @@ static void sweep(void) {
 // Collection
 // ---------------------------------------------------------------------------
 
-void ny_gc_collect(void) {
+// Caller must hold g_heap_mutex.
+//
+// NOT stop-the-world. The lock keeps the heap structures consistent — no two
+// threads splice the object list or sweep at once — but other threads keep
+// running Ny code while this marks. A thread that stores a freshly allocated
+// pointer into an already-marked object during the mark can have that object
+// swept, because nothing re-scans it.
+//
+// Closing that window needs safepoints: the codegen has to emit polls that
+// let every thread be parked at a known point before marking starts. Until
+// then, `go` + `new` in the same program carries this risk. See
+// docs/LIMITATIONS.md.
+static void gc_collect_locked(void) {
     if (!g_initialized) return;
 
     g_heap.collections++;
 
-    // Mark all reachable objects from roots
+    // Mark all reachable objects from every thread's roots
     mark_roots();
 
     // Sweep unreachable objects
@@ -230,25 +344,33 @@ void ny_gc_collect(void) {
     g_heap.threshold = new_threshold;
 }
 
+void ny_gc_collect(void) {
+    pthread_mutex_lock(&g_heap_mutex);
+    gc_collect_locked();
+    pthread_mutex_unlock(&g_heap_mutex);
+}
+
 // ---------------------------------------------------------------------------
 // Allocation
 // ---------------------------------------------------------------------------
 
 void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
-    if (!g_initialized) ny_gc_init();
+    pthread_mutex_lock(&g_heap_mutex);
+    gc_init_locked();
 
     // Check if we should collect before allocating
     if (g_heap.bytes_allocated + size > g_heap.threshold) {
-        ny_gc_collect();
+        gc_collect_locked();
     }
 
     int64_t total = (int64_t)sizeof(NyGcObject) + size;
     NyGcObject *obj = (NyGcObject *)malloc(total);
     if (!obj) {
         // Try collecting and retrying
-        ny_gc_collect();
+        gc_collect_locked();
         obj = (NyGcObject *)malloc(total);
         if (!obj) {
+            pthread_mutex_unlock(&g_heap_mutex);
             fprintf(stderr, "ny: out of memory (gc_alloc %lld bytes)\n",
                     (long long)size);
             abort();
@@ -266,6 +388,7 @@ void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
 
     g_heap.bytes_allocated += total;
 
+    pthread_mutex_unlock(&g_heap_mutex);
     return header_to_payload(obj);
 }
 
@@ -274,17 +397,33 @@ void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
 // ---------------------------------------------------------------------------
 
 void ny_gc_stats(void) {
-    fprintf(stderr, "[gc] allocated: %lld bytes | collections: %lld | freed: %lld bytes | roots: %lld\n",
+    pthread_mutex_lock(&g_heap_mutex);
+    int64_t roots = 0;
+    int64_t threads = 0;
+    for (NyGcShadowStack *st = g_heap.thread_roots; st; st = st->next) {
+        roots += st->count;
+        threads++;
+    }
+    fprintf(stderr,
+            "[gc] allocated: %lld bytes | collections: %lld | freed: %lld bytes | roots: %lld (%lld threads)\n",
             (long long)g_heap.bytes_allocated,
             (long long)g_heap.collections,
             (long long)g_heap.total_freed,
-            (long long)g_heap.roots.count);
+            (long long)roots,
+            (long long)threads);
+    pthread_mutex_unlock(&g_heap_mutex);
 }
 
 int64_t ny_gc_bytes_allocated(void) {
-    return g_heap.bytes_allocated;
+    pthread_mutex_lock(&g_heap_mutex);
+    int64_t n = g_heap.bytes_allocated;
+    pthread_mutex_unlock(&g_heap_mutex);
+    return n;
 }
 
 int64_t ny_gc_collection_count(void) {
-    return g_heap.collections;
+    pthread_mutex_lock(&g_heap_mutex);
+    int64_t n = g_heap.collections;
+    pthread_mutex_unlock(&g_heap_mutex);
+    return n;
 }

@@ -435,7 +435,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Null the slot before registering it: the declaration's store happens
         // later, and a collection in between would otherwise trace uninitialised
         // stack memory as if it were a pointer.
-        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
         self.builder.build_store(slot, ptr_ty.const_null()).unwrap();
         let root_push = self.get_or_declare_ny_gc_root_push();
         self.builder

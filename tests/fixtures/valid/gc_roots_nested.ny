@@ -6,31 +6,35 @@
 // its own, rather than relying on an explicit gc_collect().
 
 struct Box {
-    a: i64,
-    b: i64,
-    c: i64,
-    d: i64,
+    a: i32,
+    b: i32,
+    c: i32,
+    d: i32,
+    e: i32,
+    f: i32,
+    g: i32,
+    h: i32,
 }
 
-// ~48 bytes per object (32 payload + header): 40000 rounds is well past 1MB,
-// so this triggers several automatic collections.
+// ~56 bytes per object (32 payload + 24 header): 40000 rounds is well past
+// 1MB, so this triggers several automatic collections.
 fn churn(rounds: i32) -> i32 {
     i :~ i32 = 0;
     while i < rounds {
-        new Box { a: 1, b: 2, c: 3, d: 4 };
+        new Box { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 };
         i = i + 1;
     }
     return rounds;
 }
 
 // `b` arrives as a parameter: it has to be a root for this frame too.
-fn use_after_churn(b: *Box) -> i64 {
+fn use_after_churn(b: *Box) -> i32 {
     churn(40000);
     return b.a;
 }
 
 fn main() -> i32 {
-    outer := new Box { a: 21, b: 0, c: 0, d: 0 };
+    outer := new Box { a: 21, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0 };
 
     // Collections happen one frame below.
     churn(40000);

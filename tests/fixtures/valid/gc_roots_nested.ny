@@ -1,41 +1,49 @@
 // GC roots across call frames: an object held by a caller must survive a
-// collection triggered deeper in the call stack, and a pointer passed as a
-// parameter must keep its object alive too.
+// collection triggered deeper in the call stack, including when the pointer
+// only reaches the callee as a parameter.
+//
+// The churn loop allocates past the 1MB threshold so ny_gc_alloc collects on
+// its own, rather than relying on an explicit gc_collect().
 
 struct Box {
-    n: i32,
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
 }
 
-// Allocates enough garbage to cross the 1MB threshold while the caller's
-// locals are live further up the stack.
+// ~48 bytes per object (32 payload + header): 40000 rounds is well past 1MB,
+// so this triggers several automatic collections.
 fn churn(rounds: i32) -> i32 {
     i :~ i32 = 0;
     while i < rounds {
-        new Box { n: i };
+        new Box { a: 1, b: 2, c: 3, d: 4 };
         i = i + 1;
     }
     return rounds;
 }
 
-// `b` arrives as a parameter: it is a root for this frame as well.
-fn use_after_churn(b: *Box) -> i32 {
-    churn(8000);
-    return b.n;
+// `b` arrives as a parameter: it has to be a root for this frame too.
+fn use_after_churn(b: *Box) -> i64 {
+    churn(40000);
+    return b.a;
 }
 
 fn main() -> i32 {
-    outer := new Box { n: 21 };
+    outer := new Box { a: 21, b: 0, c: 0, d: 0 };
 
-    // Collection happens inside churn(), one frame below.
-    churn(8000);
-    if outer.n != 21 { return 1; }
+    // Collections happen one frame below.
+    churn(40000);
+    if gc_collection_count() < 1 { return 1; }
+    if outer.a != 21 { return 2; }
 
-    // Collection happens two frames below, with the pointer passed as an arg.
-    if use_after_churn(outer) != 21 { return 2; }
+    // Live bytes must still account for `outer` after all that churn.
+    if gc_bytes_allocated() <= 0 { return 3; }
 
-    // Still intact after everything.
-    gc_collect();
-    if outer.n != 21 { return 3; }
+    // Collections happen two frames below, pointer passed as an argument.
+    if use_after_churn(outer) != 21 { return 4; }
+
+    if outer.a != 21 { return 5; }
 
     return 42;
 }

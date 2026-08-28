@@ -40,7 +40,8 @@ static pthread_mutex_t g_heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Per-thread shadow stack. Zero-initialised, so a thread that never roots
 // anything costs nothing and is never registered.
-static __thread NyGcShadowStack t_roots;
+// TEMPORARY: shared stack, reproducing the pre-fix bug.
+static NyGcShadowStack t_roots;
 
 // Key whose only job is to run a destructor when a thread exits, so its
 // shadow stack is unlinked before the thread's storage goes away.

@@ -289,16 +289,16 @@ impl Resolver {
             }
         }
 
-
         // ---- Pass 1b: Register type aliases that point at structs ----
         // These could not resolve in Pass 0 because the struct was not
         // registered yet (e.g. `type Point2D = Vec2;`).
         for item in &program.items {
             if let Item::TypeAlias { name, target, .. } = item {
-                if !resolver.type_aliases.contains_key(name) {
-                    if let Some(ty) = resolver.resolve_type_annotation(target) {
-                        resolver.type_aliases.insert(name.clone(), ty);
-                    }
+                if resolver.type_aliases.contains_key(name) {
+                    continue;
+                }
+                if let Some(ty) = resolver.resolve_type_annotation(target) {
+                    resolver.type_aliases.insert(name.clone(), ty);
                 }
             }
         }

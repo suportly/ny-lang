@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <sched.h>
 
 // ---------------------------------------------------------------------------
 // Global heap
@@ -198,7 +199,7 @@ static void unregister_thread_roots(void *unused) {
     // collector is not left waiting on a thread that has exited.
     leave_stw();
 
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     NyGcShadowStack **link = &g_heap.thread_roots;
     while (*link) {
         if (*link == &t_roots) {
@@ -207,7 +208,7 @@ static void unregister_thread_roots(void *unused) {
         }
         link = &(*link)->next;
     }
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
 
     free(t_roots.entries);
     t_roots.entries = NULL;
@@ -300,7 +301,7 @@ static void to_parked(void) {
 // Caller holds g_stw_mutex. Waits out any collection before running again.
 static void to_running(void) {
     if (t_state != NY_PARKED) return;
-    while (ny_gc_stw_requested) {
+    while (__atomic_load_n(&ny_gc_stw_requested, __ATOMIC_SEQ_CST)) {
         pthread_cond_wait(&g_resume, &g_stw_mutex);
     }
     t_state = NY_RUNNING;
@@ -339,7 +340,7 @@ void ny_gc_safepoint(void) {
     if (t_state != NY_RUNNING) return;
 
     pthread_mutex_lock(&g_stw_mutex);
-    if (ny_gc_stw_requested) {
+    if (__atomic_load_n(&ny_gc_stw_requested, __ATOMIC_SEQ_CST)) {
         to_parked();
         to_running();
     }
@@ -390,14 +391,27 @@ void ny_gc_unpark(void) {
 // The window between the safepoint and acquiring the lock is bounded: the
 // collector holds this same lock, so a collection that starts in that window
 // simply makes this thread wait until it finishes.
+// Hold the heap lock only while parked.
+//
+// The two roles must not overlap: a thread that is RUNNING can be waited on by
+// a collector, and a thread holding this lock blocks a collector that needs
+// it. Staying parked for the whole critical section removes the cycle — the
+// collector never waits for this thread, and this thread never waits for the
+// collector.
+//
+// Safety: the collector also takes this lock, so it cannot mark while the
+// section is in flight, even though the thread is parked. "Parked" here means
+// "not running Ny code"; mutual exclusion on the heap comes from the lock.
 static void heap_lock(void) {
-    ny_gc_safepoint();
+    ny_gc_park();
     pthread_mutex_lock(&g_heap_mutex);
 }
 
 static void heap_unlock(void) {
     pthread_mutex_unlock(&g_heap_mutex);
+    ny_gc_unpark();
 }
+
 
 
 // Stop every other participating thread. The collector stays parked for the
@@ -407,10 +421,10 @@ static void stw_begin(void) {
     pthread_mutex_lock(&g_stw_mutex);
 
     to_parked();
-    while (ny_gc_stw_requested) {
+    while (__atomic_load_n(&ny_gc_stw_requested, __ATOMIC_SEQ_CST)) {
         pthread_cond_wait(&g_resume, &g_stw_mutex);
     }
-    ny_gc_stw_requested = 1;
+    __atomic_store_n(&ny_gc_stw_requested, 1, __ATOMIC_SEQ_CST);
 
     while (g_running > 0) {
         pthread_cond_wait(&g_all_parked, &g_stw_mutex);
@@ -421,7 +435,7 @@ static void stw_begin(void) {
 
 static void stw_end(void) {
     pthread_mutex_lock(&g_stw_mutex);
-    ny_gc_stw_requested = 0;
+    __atomic_store_n(&ny_gc_stw_requested, 0, __ATOMIC_SEQ_CST);
     pthread_cond_broadcast(&g_resume);
     // Rejoin the running set, unless this thread is inside a park bracket —
     // a blocking site that called into the allocator — in which case the
@@ -649,7 +663,7 @@ void *ny_gc_alloc(int64_t size, int8_t has_pointers) {
 // ---------------------------------------------------------------------------
 
 void ny_gc_stats(void) {
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     int64_t roots = 0;
     int64_t threads = 0;
     for (NyGcShadowStack *st = g_heap.thread_roots; st; st = st->next) {
@@ -663,19 +677,19 @@ void ny_gc_stats(void) {
             (long long)g_heap.total_freed,
             (long long)roots,
             (long long)threads);
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
 }
 
 int64_t ny_gc_bytes_allocated(void) {
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     int64_t n = g_heap.bytes_allocated;
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
     return n;
 }
 
 int64_t ny_gc_collection_count(void) {
-    pthread_mutex_lock(&g_heap_mutex);
+    heap_lock();
     int64_t n = g_heap.collections;
-    pthread_mutex_unlock(&g_heap_mutex);
+    heap_unlock();
     return n;
 }
